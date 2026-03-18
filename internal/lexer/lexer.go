@@ -138,6 +138,10 @@ func (l *lexer) lexKey() {
 			l.pos++
 			l.emit(TokenBracketClose, start)
 		}
+	case ch == '}':
+		// Closing brace for inline table — switch back to value state
+		// so lexValue can handle it with proper braceDepth tracking.
+		l.state = stateValue
 	default:
 		l.consumeBareKey()
 	}
@@ -205,8 +209,8 @@ func (l *lexer) lexValue() {
 		start := l.pos
 		l.pos++
 		l.emit(TokenComma, start)
-		if l.braceDepth > 0 {
-			// Inside inline table, next thing is a key
+		if l.braceDepth > 0 && l.bracketDepth == 0 {
+			// Inside inline table (not nested in an array), next thing is a key
 			l.state = stateKey
 		}
 	case ch == '=':
