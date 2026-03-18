@@ -5,10 +5,13 @@ build: build-go
 build-go:
   go build ./cmd/tommy
 
-test: test-go
+test: test-go test-bats
 
 test-go:
   go test -v ./...
+
+test-bats: build
+  just zz-tests_bats/test
 
 clean: clean-go
 
