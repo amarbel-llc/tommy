@@ -13,8 +13,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "fmt":
-		fmt.Fprintf(os.Stderr, "tommy fmt: not yet implemented\n")
-		os.Exit(1)
+		os.Exit(runFmt(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		os.Exit(1)
