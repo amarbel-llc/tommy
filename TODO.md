@@ -1,0 +1,4 @@
+- [ ] LSP: diagnostics, completions, hover, go-to-definition
+- [ ] CLI: validate, get/set, diff, merge, JSON/TOML conversion
+- [ ] Programmatic comment add/modify via Codegen C field wrappers
+- [ ] Hyphence-native integration (Mock A — tommy as dodder's single TOML parser)
