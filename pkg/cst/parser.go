@@ -1,8 +1,7 @@
-package parser
+package cst
 
 import (
 	"github.com/amarbel-llc/tommy/internal/lexer"
-	"github.com/amarbel-llc/tommy/pkg/cst"
 )
 
 type parser struct {
@@ -13,7 +12,7 @@ type parser struct {
 // Parse consumes raw TOML input and returns a CST document node.
 // Every token becomes a leaf node; structural nodes group their children.
 // Concatenating all leaf Raw bytes reproduces the original input byte-for-byte.
-func Parse(input []byte) (*cst.Node, error) {
+func Parse(input []byte) (*Node, error) {
 	tokens := lexer.Lex(input)
 	p := &parser{tokens: tokens}
 	return p.parseDocument(), nil
@@ -32,8 +31,8 @@ func (p *parser) advance() lexer.Token {
 	return tok
 }
 
-func (p *parser) parseDocument() *cst.Node {
-	doc := &cst.Node{Kind: cst.NodeDocument}
+func (p *parser) parseDocument() *Node {
+	doc := &Node{Kind: NodeDocument}
 
 	for p.pos < len(p.tokens) {
 		tok, _ := p.peek()
@@ -53,8 +52,8 @@ func (p *parser) parseDocument() *cst.Node {
 	return doc
 }
 
-func (p *parser) parseTable() *cst.Node {
-	table := &cst.Node{Kind: cst.NodeTable}
+func (p *parser) parseTable() *Node {
+	table := &Node{Kind: NodeTable}
 
 	// Consume [ key... ] and trailing trivia/newline on the header line
 	table.Children = append(table.Children, p.leafFromToken(p.advance())) // [
@@ -73,14 +72,14 @@ func (p *parser) parseTable() *cst.Node {
 	return table
 }
 
-func (p *parser) parseArrayTable() *cst.Node {
-	table := &cst.Node{Kind: cst.NodeArrayTable}
+func (p *parser) parseArrayTable() *Node {
+	table := &Node{Kind: NodeArrayTable}
 
 	// [[ is a single token (TokenDoubleBracketOpen) — emit as two NodeBracketOpen
 	openTok := p.advance()
 	table.Children = append(table.Children,
-		&cst.Node{Kind: cst.NodeBracketOpen, Raw: openTok.Raw[:1]},
-		&cst.Node{Kind: cst.NodeBracketOpen, Raw: openTok.Raw[1:2]},
+		&Node{Kind: NodeBracketOpen, Raw: openTok.Raw[:1]},
+		&Node{Kind: NodeBracketOpen, Raw: openTok.Raw[1:2]},
 	)
 
 	p.consumeKeyTokensInto(table)
@@ -89,8 +88,8 @@ func (p *parser) parseArrayTable() *cst.Node {
 	if tok, ok := p.peek(); ok && tok.Kind == lexer.TokenDoubleBracketClose {
 		closeTok := p.advance()
 		table.Children = append(table.Children,
-			&cst.Node{Kind: cst.NodeBracketClose, Raw: closeTok.Raw[:1]},
-			&cst.Node{Kind: cst.NodeBracketClose, Raw: closeTok.Raw[1:2]},
+			&Node{Kind: NodeBracketClose, Raw: closeTok.Raw[:1]},
+			&Node{Kind: NodeBracketClose, Raw: closeTok.Raw[1:2]},
 		)
 	}
 
@@ -100,7 +99,7 @@ func (p *parser) parseArrayTable() *cst.Node {
 	return table
 }
 
-func (p *parser) consumeTableBodyInto(parent *cst.Node) {
+func (p *parser) consumeTableBodyInto(parent *Node) {
 	for p.pos < len(p.tokens) {
 		tok, _ := p.peek()
 		switch tok.Kind {
@@ -114,8 +113,8 @@ func (p *parser) consumeTableBodyInto(parent *cst.Node) {
 	}
 }
 
-func (p *parser) parseKeyValue() *cst.Node {
-	kv := &cst.Node{Kind: cst.NodeKeyValue}
+func (p *parser) parseKeyValue() *Node {
+	kv := &Node{Kind: NodeKeyValue}
 
 	// Parse key (possibly dotted)
 	kv.Children = append(kv.Children, p.parseKey())
@@ -140,14 +139,14 @@ func (p *parser) parseKeyValue() *cst.Node {
 	return kv
 }
 
-func (p *parser) parseKey() *cst.Node {
+func (p *parser) parseKey() *Node {
 	// Collect key tokens: could be bare key, quoted string, or dotted key
 	// First key part
 	firstKey := p.consumeOneKeyPart()
 
 	// Check if dotted
 	if tok, ok := p.peek(); ok && tok.Kind == lexer.TokenDot {
-		dotted := &cst.Node{Kind: cst.NodeDottedKey}
+		dotted := &Node{Kind: NodeDottedKey}
 		dotted.Children = append(dotted.Children, firstKey)
 
 		for {
@@ -166,42 +165,42 @@ func (p *parser) parseKey() *cst.Node {
 	return firstKey
 }
 
-func (p *parser) consumeOneKeyPart() *cst.Node {
+func (p *parser) consumeOneKeyPart() *Node {
 	tok := p.advance()
 	switch tok.Kind {
 	case lexer.TokenBareKey:
-		return &cst.Node{Kind: cst.NodeKey, Raw: tok.Raw}
+		return &Node{Kind: NodeKey, Raw: tok.Raw}
 	case lexer.TokenBasicString, lexer.TokenLiteralString:
-		return &cst.Node{Kind: cst.NodeKey, Raw: tok.Raw}
+		return &Node{Kind: NodeKey, Raw: tok.Raw}
 	default:
 		// Fallback: treat as key
-		return &cst.Node{Kind: cst.NodeKey, Raw: tok.Raw}
+		return &Node{Kind: NodeKey, Raw: tok.Raw}
 	}
 }
 
-func (p *parser) parseValue() *cst.Node {
+func (p *parser) parseValue() *Node {
 	tok, ok := p.peek()
 	if !ok {
-		return &cst.Node{Kind: cst.NodeString}
+		return &Node{Kind: NodeString}
 	}
 
 	switch tok.Kind {
 	case lexer.TokenBasicString, lexer.TokenMultilineBasicString,
 		lexer.TokenLiteralString, lexer.TokenMultilineLiteralString:
 		t := p.advance()
-		return &cst.Node{Kind: cst.NodeString, Raw: t.Raw}
+		return &Node{Kind: NodeString, Raw: t.Raw}
 	case lexer.TokenInteger:
 		t := p.advance()
-		return &cst.Node{Kind: cst.NodeInteger, Raw: t.Raw}
+		return &Node{Kind: NodeInteger, Raw: t.Raw}
 	case lexer.TokenFloat:
 		t := p.advance()
-		return &cst.Node{Kind: cst.NodeFloat, Raw: t.Raw}
+		return &Node{Kind: NodeFloat, Raw: t.Raw}
 	case lexer.TokenBool:
 		t := p.advance()
-		return &cst.Node{Kind: cst.NodeBool, Raw: t.Raw}
+		return &Node{Kind: NodeBool, Raw: t.Raw}
 	case lexer.TokenDateTime:
 		t := p.advance()
-		return &cst.Node{Kind: cst.NodeDateTime, Raw: t.Raw}
+		return &Node{Kind: NodeDateTime, Raw: t.Raw}
 	case lexer.TokenBracketOpen:
 		return p.parseArray()
 	case lexer.TokenBraceOpen:
@@ -209,12 +208,12 @@ func (p *parser) parseValue() *cst.Node {
 	default:
 		// Consume unknown as string fallback
 		t := p.advance()
-		return &cst.Node{Kind: cst.NodeString, Raw: t.Raw}
+		return &Node{Kind: NodeString, Raw: t.Raw}
 	}
 }
 
-func (p *parser) parseArray() *cst.Node {
-	arr := &cst.Node{Kind: cst.NodeArray}
+func (p *parser) parseArray() *Node {
+	arr := &Node{Kind: NodeArray}
 
 	// [
 	arr.Children = append(arr.Children, p.leafFromToken(p.advance()))
@@ -241,8 +240,8 @@ func (p *parser) parseArray() *cst.Node {
 	return arr
 }
 
-func (p *parser) parseInlineTable() *cst.Node {
-	tbl := &cst.Node{Kind: cst.NodeInlineTable}
+func (p *parser) parseInlineTable() *Node {
+	tbl := &Node{Kind: NodeInlineTable}
 
 	// {
 	tbl.Children = append(tbl.Children, p.leafFromToken(p.advance()))
@@ -271,8 +270,8 @@ func (p *parser) parseInlineTable() *cst.Node {
 	return tbl
 }
 
-func (p *parser) parseInlineKeyValue() *cst.Node {
-	kv := &cst.Node{Kind: cst.NodeKeyValue}
+func (p *parser) parseInlineKeyValue() *Node {
+	kv := &Node{Kind: NodeKeyValue}
 
 	kv.Children = append(kv.Children, p.parseKey())
 	p.consumeWhitespaceInto(kv)
@@ -289,7 +288,7 @@ func (p *parser) parseInlineKeyValue() *cst.Node {
 
 // consumeKeyTokensInto consumes key tokens (bare keys, strings, dots, whitespace)
 // inside a table header [ ... ] or [[ ... ]].
-func (p *parser) consumeKeyTokensInto(parent *cst.Node) {
+func (p *parser) consumeKeyTokensInto(parent *Node) {
 	for p.pos < len(p.tokens) {
 		tok, ok := p.peek()
 		if !ok {
@@ -297,7 +296,7 @@ func (p *parser) consumeKeyTokensInto(parent *cst.Node) {
 		}
 		switch tok.Kind {
 		case lexer.TokenBareKey, lexer.TokenBasicString, lexer.TokenLiteralString:
-			parent.Children = append(parent.Children, &cst.Node{Kind: cst.NodeKey, Raw: tok.Raw})
+			parent.Children = append(parent.Children, &Node{Kind: NodeKey, Raw: tok.Raw})
 			p.pos++
 		case lexer.TokenDot:
 			parent.Children = append(parent.Children, p.leafFromToken(p.advance()))
@@ -309,7 +308,7 @@ func (p *parser) consumeKeyTokensInto(parent *cst.Node) {
 	}
 }
 
-func (p *parser) consumeWhitespaceInto(parent *cst.Node) {
+func (p *parser) consumeWhitespaceInto(parent *Node) {
 	for p.pos < len(p.tokens) {
 		tok, ok := p.peek()
 		if !ok || tok.Kind != lexer.TokenWhitespace {
@@ -319,7 +318,7 @@ func (p *parser) consumeWhitespaceInto(parent *cst.Node) {
 	}
 }
 
-func (p *parser) consumeTrailingTriviaInto(parent *cst.Node) {
+func (p *parser) consumeTrailingTriviaInto(parent *Node) {
 	for p.pos < len(p.tokens) {
 		tok, ok := p.peek()
 		if !ok {
@@ -337,36 +336,36 @@ func (p *parser) consumeTrailingTriviaInto(parent *cst.Node) {
 	}
 }
 
-func (p *parser) leafFromToken(tok lexer.Token) *cst.Node {
-	return &cst.Node{
+func (p *parser) leafFromToken(tok lexer.Token) *Node {
+	return &Node{
 		Kind: tokenToNodeKind(tok.Kind),
 		Raw:  tok.Raw,
 	}
 }
 
-func tokenToNodeKind(tk lexer.TokenKind) cst.NodeKind {
+func tokenToNodeKind(tk lexer.TokenKind) NodeKind {
 	switch tk {
 	case lexer.TokenEquals:
-		return cst.NodeEquals
+		return NodeEquals
 	case lexer.TokenDot:
-		return cst.NodeDot
+		return NodeDot
 	case lexer.TokenComma:
-		return cst.NodeComma
+		return NodeComma
 	case lexer.TokenBracketOpen:
-		return cst.NodeBracketOpen
+		return NodeBracketOpen
 	case lexer.TokenBracketClose:
-		return cst.NodeBracketClose
+		return NodeBracketClose
 	case lexer.TokenBraceOpen:
-		return cst.NodeBraceOpen
+		return NodeBraceOpen
 	case lexer.TokenBraceClose:
-		return cst.NodeBraceClose
+		return NodeBraceClose
 	case lexer.TokenComment:
-		return cst.NodeComment
+		return NodeComment
 	case lexer.TokenWhitespace:
-		return cst.NodeWhitespace
+		return NodeWhitespace
 	case lexer.TokenNewline:
-		return cst.NodeNewline
+		return NodeNewline
 	default:
-		return cst.NodeKey
+		return NodeKey
 	}
 }

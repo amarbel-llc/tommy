@@ -1,13 +1,11 @@
-package parser
+package cst
 
 import (
 	"bytes"
 	"testing"
-
-	"github.com/amarbel-llc/tommy/pkg/cst"
 )
 
-func assertRoundTrip(t *testing.T, input string, doc *cst.Node) {
+func assertRoundTrip(t *testing.T, input string, doc *Node) {
 	t.Helper()
 	got := doc.Bytes()
 	if !bytes.Equal(got, []byte(input)) {
@@ -15,9 +13,9 @@ func assertRoundTrip(t *testing.T, input string, doc *cst.Node) {
 	}
 }
 
-func assertDocKind(t *testing.T, doc *cst.Node) {
+func assertDocKind(t *testing.T, doc *Node) {
 	t.Helper()
-	if doc.Kind != cst.NodeDocument {
+	if doc.Kind != NodeDocument {
 		t.Fatalf("expected NodeDocument, got %d", doc.Kind)
 	}
 }
@@ -34,7 +32,7 @@ func TestParseSimpleKeyValue(t *testing.T) {
 	// Should contain a NodeKeyValue child (among possible trivia)
 	found := false
 	for _, child := range doc.Children {
-		if child.Kind == cst.NodeKeyValue {
+		if child.Kind == NodeKeyValue {
 			found = true
 		}
 	}
@@ -74,7 +72,7 @@ func TestParseArrayTable(t *testing.T) {
 
 	found := false
 	for _, child := range doc.Children {
-		if child.Kind == cst.NodeArrayTable {
+		if child.Kind == NodeArrayTable {
 			found = true
 		}
 	}
@@ -94,7 +92,7 @@ func TestParseNestedTables(t *testing.T) {
 
 	tableCount := 0
 	for _, child := range doc.Children {
-		if child.Kind == cst.NodeTable {
+		if child.Kind == NodeTable {
 			tableCount++
 		}
 	}
