@@ -386,10 +386,8 @@ func classifyNumericValue(raw []byte) TokenKind {
 		return TokenInteger
 	}
 
-	s := string(raw)
-
 	// DateTime patterns: contains T or has date-like pattern (YYYY-MM-DD)
-	if len(s) >= 10 {
+	if len(raw) >= 10 {
 		// Check for date pattern: digit-digit-digit-digit-dash
 		if isDigit(raw[0]) && isDigit(raw[1]) && isDigit(raw[2]) && isDigit(raw[3]) && raw[4] == '-' {
 			return TokenDateTime
@@ -397,7 +395,7 @@ func classifyNumericValue(raw []byte) TokenKind {
 	}
 
 	// Check for time-only values (HH:MM:SS)
-	if len(s) >= 5 && isDigit(raw[0]) && isDigit(raw[1]) && raw[2] == ':' {
+	if len(raw) >= 5 && isDigit(raw[0]) && isDigit(raw[1]) && raw[2] == ':' {
 		return TokenDateTime
 	}
 
