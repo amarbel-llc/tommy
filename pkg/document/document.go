@@ -85,6 +85,29 @@ func (doc *Document) Delete(key string) error {
 	return deleteFromContainer(tableNode, leafKey)
 }
 
+// GetFromContainer reads a value from a specific table or array-table node.
+func GetFromContainer[T any](doc *Document, container *cst.Node, key string) (T, error) {
+	var zero T
+	valueNode, err := findValueInContainer(container, key)
+	if err != nil {
+		return zero, err
+	}
+	result, err := convertNode[T](valueNode)
+	if err != nil {
+		return zero, fmt.Errorf("key %q: %w", key, err)
+	}
+	return result, nil
+}
+
+// SetInContainer sets a key-value within a specific table or array-table node.
+func (doc *Document) SetInContainer(container *cst.Node, key string, value any) error {
+	encoded, nodeKind, err := encodeValue(value)
+	if err != nil {
+		return err
+	}
+	return setInContainer(container, key, encoded, nodeKind)
+}
+
 func findValueNode(root *cst.Node, key string) (*cst.Node, error) {
 	parts := strings.Split(key, ".")
 

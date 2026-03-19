@@ -331,6 +331,75 @@ func TestFindArrayTableNodesEmpty(t *testing.T) {
 	}
 }
 
+func TestGetFromContainer(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\nport = 8080\n\n[[servers]]\nname = \"lux\"\nport = 9090\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+
+	name0, err := GetFromContainer[string](doc, nodes[0], "name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name0 != "grit" {
+		t.Fatalf("expected %q, got %q", "grit", name0)
+	}
+
+	name1, err := GetFromContainer[string](doc, nodes[1], "name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name1 != "lux" {
+		t.Fatalf("expected %q, got %q", "lux", name1)
+	}
+
+	port0, err := GetFromContainer[int](doc, nodes[0], "port")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port0 != 8080 {
+		t.Fatalf("expected 8080, got %d", port0)
+	}
+}
+
+func TestSetInContainer(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n\n[[servers]]\nname = \"lux\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+
+	if err := doc.SetInContainer(nodes[1], "name", "moxy"); err != nil {
+		t.Fatal(err)
+	}
+	expected := "[[servers]]\nname = \"grit\"\n\n[[servers]]\nname = \"moxy\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestSetInContainerNewKey(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+
+	if err := doc.SetInContainer(nodes[0], "port", 8080); err != nil {
+		t.Fatal(err)
+	}
+	expected := "[[servers]]\nname = \"grit\"\nport = 8080\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
 func TestDeleteKeyNotFound(t *testing.T) {
 	input := []byte("a = 1\n")
 	doc, err := Parse(input)
