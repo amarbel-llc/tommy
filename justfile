@@ -3,7 +3,7 @@ default: build
 build: build-go
 
 build-go:
-  go build ./cmd/tommy
+  go build -o build/tommy ./cmd/tommy
 
 test: test-go test-bats
 
