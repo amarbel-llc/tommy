@@ -411,3 +411,78 @@ func TestDeleteKeyNotFound(t *testing.T) {
 		t.Fatal("expected error for missing key")
 	}
 }
+
+func TestAppendArrayTableEntry(t *testing.T) {
+	input := []byte("# config\n[[servers]]\nname = \"grit\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newNode := doc.AppendArrayTableEntry("servers")
+	if err := doc.SetInContainer(newNode, "name", "lux"); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "# config\n[[servers]]\nname = \"grit\"\n\n[[servers]]\nname = \"lux\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestAppendArrayTableEntryFirst(t *testing.T) {
+	input := []byte("title = \"test\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newNode := doc.AppendArrayTableEntry("servers")
+	if err := doc.SetInContainer(newNode, "name", "grit"); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "title = \"test\"\n\n[[servers]]\nname = \"grit\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestRemoveArrayTableEntry(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"a\"\n\n[[servers]]\nname = \"b\"\n\n[[servers]]\nname = \"c\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nodes := doc.FindArrayTableNodes("servers")
+	if err := doc.RemoveArrayTableEntry(nodes[1]); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "[[servers]]\nname = \"a\"\n\n[[servers]]\nname = \"c\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestRemoveArrayTableEntryLast(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"only\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nodes := doc.FindArrayTableNodes("servers")
+	if err := doc.RemoveArrayTableEntry(nodes[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(doc.Bytes())
+	if got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+}

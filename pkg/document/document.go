@@ -395,6 +395,72 @@ func appendKeyValue(container *cst.Node, key string, encoded []byte, kind cst.No
 	container.Children = append(container.Children, kv)
 }
 
+// AppendArrayTableEntry adds a new [[key]] section after the last existing
+// one, or at the end of the document. Returns the new node.
+func (doc *Document) AppendArrayTableEntry(key string) *cst.Node {
+	newNode := &cst.Node{
+		Kind: cst.NodeArrayTable,
+		Children: []*cst.Node{
+			{Kind: cst.NodeBracketOpen, Raw: []byte("[")},
+			{Kind: cst.NodeBracketOpen, Raw: []byte("[")},
+			{Kind: cst.NodeKey, Raw: []byte(key)},
+			{Kind: cst.NodeBracketClose, Raw: []byte("]")},
+			{Kind: cst.NodeBracketClose, Raw: []byte("]")},
+			{Kind: cst.NodeNewline, Raw: []byte("\n")},
+		},
+	}
+
+	// Find the last [[key]] node to insert after it
+	lastIdx := -1
+	for i, child := range doc.root.Children {
+		if child.Kind == cst.NodeArrayTable && tableHeaderKey(child) == key {
+			lastIdx = i
+		}
+	}
+
+	blankLine := &cst.Node{Kind: cst.NodeNewline, Raw: []byte("\n")}
+
+	if lastIdx >= 0 {
+		// Insert after the last entry
+		insertIdx := lastIdx + 1
+		newChildren := make([]*cst.Node, 0, len(doc.root.Children)+2)
+		newChildren = append(newChildren, doc.root.Children[:insertIdx]...)
+		newChildren = append(newChildren, blankLine, newNode)
+		newChildren = append(newChildren, doc.root.Children[insertIdx:]...)
+		doc.root.Children = newChildren
+	} else {
+		// No existing entries — append at end
+		doc.root.Children = append(doc.root.Children, blankLine, newNode)
+	}
+
+	return newNode
+}
+
+// RemoveArrayTableEntry removes a [[key]] section and its body from the document.
+func (doc *Document) RemoveArrayTableEntry(node *cst.Node) error {
+	startIdx := -1
+	for i, child := range doc.root.Children {
+		if child == node {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return fmt.Errorf("node not found in document")
+	}
+
+	endIdx := startIdx + 1
+
+	// Remove a preceding blank-line node if present
+	removeFrom := startIdx
+	if removeFrom > 0 && doc.root.Children[removeFrom-1].Kind == cst.NodeNewline {
+		removeFrom--
+	}
+
+	doc.root.Children = append(doc.root.Children[:removeFrom], doc.root.Children[endIdx:]...)
+	return nil
+}
+
 func deleteFromContainer(container *cst.Node, key string) error {
 	for i, child := range container.Children {
 		if child.Kind != cst.NodeKeyValue {
