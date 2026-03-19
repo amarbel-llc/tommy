@@ -8,6 +8,8 @@ import (
 	"github.com/amarbel-llc/tommy/pkg/cst"
 )
 
+var ErrNotFound = fmt.Errorf("not found")
+
 type Document struct {
 	root *cst.Node
 }
@@ -233,12 +235,12 @@ func findValueNode(root *cst.Node, key string) (*cst.Node, error) {
 
 	tableNode := findTableNode(root, tableName)
 	if tableNode == nil {
-		return nil, fmt.Errorf("key %q not found", key)
+		return nil, fmt.Errorf("key %q: %w", key, ErrNotFound)
 	}
 
 	node, err := findValueInContainer(tableNode, leafKey)
 	if err != nil {
-		return nil, fmt.Errorf("key %q not found", key)
+		return nil, fmt.Errorf("key %q: %w", key, ErrNotFound)
 	}
 
 	return node, nil
@@ -290,7 +292,7 @@ func findValueInContainer(container *cst.Node, key string) (*cst.Node, error) {
 			return keyValueValueNode(child), nil
 		}
 	}
-	return nil, fmt.Errorf("key %q not found", key)
+	return nil, fmt.Errorf("key %q: %w", key, ErrNotFound)
 }
 
 func keyValueName(kv *cst.Node) string {

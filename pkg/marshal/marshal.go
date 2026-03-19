@@ -1,6 +1,7 @@
 package marshal
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -97,7 +98,7 @@ func decodeStruct(doc *document.Document, rv reflect.Value, prefix string) error
 }
 
 func isNotFoundError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "not found")
+	return errors.Is(err, document.ErrNotFound)
 }
 
 func decodeField(doc *document.Document, fv reflect.Value, key string) error {
@@ -367,17 +368,15 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 	}
 
 	// Remove trailing entries if slice shrank
-	removed := 0
 	for i := fv.Len(); i < len(nodes); i++ {
 		if err := doc.RemoveArrayTableEntry(nodes[i]); err != nil {
 			return err
 		}
-		removed++
 	}
 
 	// If entries were removed, strip trailing blank line from the last
 	// remaining entry so we don't leave a stray separator.
-	if removed > 0 && fv.Len() > 0 {
+	if fv.Len() < len(nodes) && fv.Len() > 0 {
 		lastNode := nodes[fv.Len()-1]
 		trimTrailingBlankLine(lastNode)
 	}
