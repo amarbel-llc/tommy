@@ -25,9 +25,8 @@ func (doc *Document) Bytes() []byte {
 }
 
 type keySegment struct {
-	key      string
-	hasIndex bool
-	index    int // -1 means append ([])
+	key   string
+	index int // -1 means append ([])
 }
 
 // parseKeyPath parses keys like "servers[0].name" into segments.
@@ -47,7 +46,7 @@ func parseKeyPath(key string) ([]keySegment, bool) {
 	}
 
 	indexStr := rest[1:closeIdx]
-	seg := keySegment{key: first, hasIndex: true}
+	seg := keySegment{key: first}
 
 	if indexStr == "" {
 		seg.index = -1
@@ -56,12 +55,18 @@ func parseKeyPath(key string) ([]keySegment, bool) {
 		if err != nil {
 			return nil, false
 		}
+		if idx < 0 {
+			return nil, false
+		}
 		seg.index = idx
 	}
 
 	segments = append(segments, seg)
 
 	remaining := rest[closeIdx+1:]
+	if len(remaining) > 0 && remaining[0] != '.' {
+		return nil, false
+	}
 	if len(remaining) > 0 && remaining[0] == '.' {
 		remaining = remaining[1:]
 		if remaining != "" {
