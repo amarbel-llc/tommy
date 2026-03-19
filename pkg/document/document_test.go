@@ -488,6 +488,152 @@ func TestRemoveArrayTableEntryFirst(t *testing.T) {
 	}
 }
 
+func TestGetArrayTableByIndex(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\nport = 8080\n\n[[servers]]\nname = \"lux\"\nport = 9090\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name, err := Get[string](doc, "servers[0].name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "grit" {
+		t.Fatalf("expected %q, got %q", "grit", name)
+	}
+
+	name, err = Get[string](doc, "servers[1].name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "lux" {
+		t.Fatalf("expected %q, got %q", "lux", name)
+	}
+
+	port, err := Get[int](doc, "servers[1].port")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port != 9090 {
+		t.Fatalf("expected 9090, got %d", port)
+	}
+}
+
+func TestGetArrayTableIndexOutOfRange(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Get[string](doc, "servers[5].name")
+	if err == nil {
+		t.Fatal("expected error for out of range index")
+	}
+}
+
+func TestSetArrayTableByIndex(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n\n[[servers]]\nname = \"lux\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := doc.Set("servers[1].name", "moxy"); err != nil {
+		t.Fatal(err)
+	}
+	expected := "[[servers]]\nname = \"grit\"\n\n[[servers]]\nname = \"moxy\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestSetArrayTableAppend(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := doc.Set("servers[].name", "lux"); err != nil {
+		t.Fatal(err)
+	}
+	expected := "[[servers]]\nname = \"grit\"\n\n[[servers]]\nname = \"lux\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestSetArrayTableAppendErrorOnGet(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Get[string](doc, "servers[].name")
+	if err == nil {
+		t.Fatal("expected error for append syntax in Get")
+	}
+}
+
+func TestDeleteArrayTableEntry(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"a\"\n\n[[servers]]\nname = \"b\"\n\n[[servers]]\nname = \"c\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := doc.Delete("servers[1]"); err != nil {
+		t.Fatal(err)
+	}
+
+	// After deletion, what was [2] is now [1] (slice reindexing)
+	name, err := Get[string](doc, "servers[1].name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "c" {
+		t.Fatalf("expected %q after reindex, got %q", "c", name)
+	}
+
+	expected := "[[servers]]\nname = \"a\"\n\n[[servers]]\nname = \"c\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestDeleteArrayTableKey(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\nport = 8080\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := doc.Delete("servers[0].port"); err != nil {
+		t.Fatal(err)
+	}
+	expected := "[[servers]]\nname = \"grit\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
+func TestDeleteArrayTableAppendSyntaxErrors(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = doc.Delete("servers[]")
+	if err == nil {
+		t.Fatal("expected error for append syntax in Delete")
+	}
+}
+
 func TestRemoveArrayTableEntryLast(t *testing.T) {
 	input := []byte("[[servers]]\nname = \"only\"\n")
 	doc, err := Parse(input)

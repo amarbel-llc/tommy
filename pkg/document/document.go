@@ -24,9 +24,74 @@ func (doc *Document) Bytes() []byte {
 	return doc.root.Bytes()
 }
 
+type keySegment struct {
+	key      string
+	hasIndex bool
+	index    int // -1 means append ([])
+}
+
+// parseKeyPath parses keys like "servers[0].name" into segments.
+func parseKeyPath(key string) ([]keySegment, bool) {
+	bracketIdx := strings.IndexByte(key, '[')
+	if bracketIdx < 0 {
+		return nil, false
+	}
+
+	var segments []keySegment
+	first := key[:bracketIdx]
+	rest := key[bracketIdx:]
+
+	closeIdx := strings.IndexByte(rest, ']')
+	if closeIdx < 0 {
+		return nil, false
+	}
+
+	indexStr := rest[1:closeIdx]
+	seg := keySegment{key: first, hasIndex: true}
+
+	if indexStr == "" {
+		seg.index = -1
+	} else {
+		idx, err := strconv.Atoi(indexStr)
+		if err != nil {
+			return nil, false
+		}
+		seg.index = idx
+	}
+
+	segments = append(segments, seg)
+
+	remaining := rest[closeIdx+1:]
+	if len(remaining) > 0 && remaining[0] == '.' {
+		remaining = remaining[1:]
+		if remaining != "" {
+			segments = append(segments, keySegment{key: remaining})
+		}
+	}
+
+	return segments, true
+}
+
 // Get retrieves a value by dotted key path and converts it to the requested Go type.
 func Get[T any](doc *Document, key string) (T, error) {
 	var zero T
+
+	if segments, ok := parseKeyPath(key); ok {
+		if segments[0].index == -1 {
+			return zero, fmt.Errorf("append syntax [] only valid in Set")
+		}
+		nodes := doc.FindArrayTableNodes(segments[0].key)
+		if len(nodes) == 0 {
+			return zero, fmt.Errorf("no array-of-tables entries for key %q", segments[0].key)
+		}
+		if segments[0].index >= len(nodes) {
+			return zero, fmt.Errorf("index %d out of range (%d entries)", segments[0].index, len(nodes))
+		}
+		if len(segments) < 2 || segments[1].key == "" {
+			return zero, fmt.Errorf("cannot Get entire array-table entry")
+		}
+		return GetFromContainer[T](doc, nodes[segments[0].index], segments[1].key)
+	}
 
 	valueNode, err := findValueNode(doc.root, key)
 	if err != nil {
@@ -43,6 +108,26 @@ func Get[T any](doc *Document, key string) (T, error) {
 
 // Set updates or creates a key-value pair in the document.
 func (doc *Document) Set(key string, value any) error {
+	if segments, ok := parseKeyPath(key); ok {
+		var container *cst.Node
+		if segments[0].index == -1 {
+			container = doc.AppendArrayTableEntry(segments[0].key)
+		} else {
+			nodes := doc.FindArrayTableNodes(segments[0].key)
+			if len(nodes) == 0 {
+				return fmt.Errorf("no array-of-tables entries for key %q", segments[0].key)
+			}
+			if segments[0].index >= len(nodes) {
+				return fmt.Errorf("index %d out of range (%d entries)", segments[0].index, len(nodes))
+			}
+			container = nodes[segments[0].index]
+		}
+		if len(segments) < 2 || segments[1].key == "" {
+			return fmt.Errorf("cannot Set entire array-table entry, specify a field")
+		}
+		return doc.SetInContainer(container, segments[1].key, value)
+	}
+
 	encoded, nodeKind, err := encodeValue(value)
 	if err != nil {
 		return err
@@ -68,6 +153,23 @@ func (doc *Document) Set(key string, value any) error {
 
 // Delete removes a key-value pair from the document.
 func (doc *Document) Delete(key string) error {
+	if segments, ok := parseKeyPath(key); ok {
+		if segments[0].index == -1 {
+			return fmt.Errorf("append syntax [] only valid in Set")
+		}
+		nodes := doc.FindArrayTableNodes(segments[0].key)
+		if len(nodes) == 0 {
+			return fmt.Errorf("no array-of-tables entries for key %q", segments[0].key)
+		}
+		if segments[0].index >= len(nodes) {
+			return fmt.Errorf("index %d out of range (%d entries)", segments[0].index, len(nodes))
+		}
+		if len(segments) > 1 && segments[1].key != "" {
+			return deleteFromContainer(nodes[segments[0].index], segments[1].key)
+		}
+		return doc.RemoveArrayTableEntry(nodes[segments[0].index])
+	}
+
 	parts := strings.Split(key, ".")
 
 	if len(parts) == 1 {
