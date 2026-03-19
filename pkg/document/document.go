@@ -120,6 +120,21 @@ func findTableNode(root *cst.Node, name string) *cst.Node {
 	return nil
 }
 
+// FindArrayTableNodes returns all [[key]] CST nodes in document order.
+// Returns nil if none exist.
+func (doc *Document) FindArrayTableNodes(key string) []*cst.Node {
+	var nodes []*cst.Node
+	for _, child := range doc.root.Children {
+		if child.Kind != cst.NodeArrayTable {
+			continue
+		}
+		if tableHeaderKey(child) == key {
+			nodes = append(nodes, child)
+		}
+	}
+	return nodes
+}
+
 func tableHeaderKey(table *cst.Node) string {
 	var parts []string
 	for _, child := range table.Children {

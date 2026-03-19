@@ -307,6 +307,30 @@ func TestGetKeyNotFound(t *testing.T) {
 	}
 }
 
+func TestFindArrayTableNodes(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"a\"\n\n[[servers]]\nname = \"b\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+}
+
+func TestFindArrayTableNodesEmpty(t *testing.T) {
+	input := []byte("name = \"test\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+	if nodes != nil {
+		t.Fatalf("expected nil, got %v", nodes)
+	}
+}
+
 func TestDeleteKeyNotFound(t *testing.T) {
 	input := []byte("a = 1\n")
 	doc, err := Parse(input)
