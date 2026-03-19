@@ -154,6 +154,16 @@ type Server struct {
 	Command string `toml:"command"`
 }
 
+type ServerWithOptional struct {
+	Name         string `toml:"name"`
+	Command      string `toml:"command"`
+	ReadOnlyHint bool   `toml:"readOnlyHint"`
+}
+
+type ServersOptionalConfig struct {
+	Servers []ServerWithOptional `toml:"servers"`
+}
+
 type ServersConfig struct {
 	Title   string   `toml:"title"`
 	Servers []Server `toml:"servers"`
@@ -258,6 +268,27 @@ func TestRoundTripArrayOfTablesNoChanges(t *testing.T) {
 	}
 	if string(out) != string(input) {
 		t.Fatalf("expected byte-for-byte identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestUnmarshalArrayOfTablesSkipsMissingKeys(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n")
+	var cfg ServersOptionalConfig
+	_, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(cfg.Servers))
+	}
+	if cfg.Servers[0].Name != "grit" {
+		t.Fatalf("expected Name %q, got %q", "grit", cfg.Servers[0].Name)
+	}
+	if cfg.Servers[0].Command != "grit mcp" {
+		t.Fatalf("expected Command %q, got %q", "grit mcp", cfg.Servers[0].Command)
+	}
+	if cfg.Servers[0].ReadOnlyHint != false {
+		t.Fatalf("expected ReadOnlyHint false, got %v", cfg.Servers[0].ReadOnlyHint)
 	}
 }
 

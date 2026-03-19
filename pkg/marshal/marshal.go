@@ -223,30 +223,45 @@ func decodeContainerField(doc *document.Document, container *cst.Node, fv reflec
 	switch fv.Kind() {
 	case reflect.String:
 		v, err := document.GetFromContainer[string](doc, container, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 		fv.SetString(v)
 	case reflect.Int:
 		v, err := document.GetFromContainer[int](doc, container, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 		fv.SetInt(int64(v))
 	case reflect.Int64:
 		v, err := document.GetFromContainer[int64](doc, container, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 		fv.SetInt(v)
 	case reflect.Float64:
 		v, err := document.GetFromContainer[float64](doc, container, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 		fv.SetFloat(v)
 	case reflect.Bool:
 		v, err := document.GetFromContainer[bool](doc, container, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
