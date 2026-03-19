@@ -96,10 +96,17 @@ func decodeStruct(doc *document.Document, rv reflect.Value, prefix string) error
 	return nil
 }
 
+func isNotFoundError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not found")
+}
+
 func decodeField(doc *document.Document, fv reflect.Value, key string) error {
 	switch fv.Kind() {
 	case reflect.String:
 		v, err := document.Get[string](doc, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -107,6 +114,9 @@ func decodeField(doc *document.Document, fv reflect.Value, key string) error {
 
 	case reflect.Int:
 		v, err := document.Get[int](doc, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -114,6 +124,9 @@ func decodeField(doc *document.Document, fv reflect.Value, key string) error {
 
 	case reflect.Int64:
 		v, err := document.Get[int64](doc, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -121,6 +134,9 @@ func decodeField(doc *document.Document, fv reflect.Value, key string) error {
 
 	case reflect.Float64:
 		v, err := document.Get[float64](doc, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -128,6 +144,9 @@ func decodeField(doc *document.Document, fv reflect.Value, key string) error {
 
 	case reflect.Bool:
 		v, err := document.Get[bool](doc, key)
+		if isNotFoundError(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -285,6 +304,11 @@ func encodeField(doc *document.Document, fv reflect.Value, key string) error {
 		return fmt.Errorf("unsupported field type %s for key %q", fv.Kind(), key)
 	}
 
+	// Skip zero-value fields that don't already exist in the document
+	if fv.IsZero() && !doc.Has(key) {
+		return nil
+	}
+
 	return doc.Set(key, val)
 }
 
@@ -306,8 +330,82 @@ func encodeSliceField(doc *document.Document, fv reflect.Value, key string) erro
 		}
 		return doc.Set(key, s)
 
+	case reflect.Struct:
+		return encodeStructSliceField(doc, fv, key)
+
 	default:
 		return fmt.Errorf("unsupported slice element type %s for key %q", elemType.Kind(), key)
+	}
+}
+
+func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string) error {
+	nodes := doc.FindArrayTableNodes(key)
+	elemType := fv.Type().Elem()
+
+	for i := range fv.Len() {
+		var container *cst.Node
+		if i < len(nodes) {
+			container = nodes[i]
+		} else {
+			container = doc.AppendArrayTableEntry(key)
+		}
+		elem := fv.Index(i)
+		for j := range elemType.NumField() {
+			field := elemType.Field(j)
+			name, ok := fieldTomlKey(field)
+			if !ok {
+				continue
+			}
+			val := encodeFieldValue(elem.Field(j))
+			if val == nil {
+				continue
+			}
+			if err := doc.SetInContainer(container, name, val); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Remove trailing entries if slice shrank
+	removed := 0
+	for i := fv.Len(); i < len(nodes); i++ {
+		if err := doc.RemoveArrayTableEntry(nodes[i]); err != nil {
+			return err
+		}
+		removed++
+	}
+
+	// If entries were removed, strip trailing blank line from the last
+	// remaining entry so we don't leave a stray separator.
+	if removed > 0 && fv.Len() > 0 {
+		lastNode := nodes[fv.Len()-1]
+		trimTrailingBlankLine(lastNode)
+	}
+
+	return nil
+}
+
+func trimTrailingBlankLine(node *cst.Node) {
+	n := len(node.Children)
+	if n > 0 && node.Children[n-1].Kind == cst.NodeNewline {
+		node.Children = node.Children[:n-1]
+	}
+}
+
+func encodeFieldValue(fv reflect.Value) any {
+	switch fv.Kind() {
+	case reflect.String:
+		return fv.String()
+	case reflect.Int:
+		return int(fv.Int())
+	case reflect.Int64:
+		return fv.Int()
+	case reflect.Float64:
+		return fv.Float()
+	case reflect.Bool:
+		return fv.Bool()
+	default:
+		return nil
 	}
 }
 

@@ -186,6 +186,81 @@ func TestUnmarshalArrayOfTables(t *testing.T) {
 	}
 }
 
+func TestRoundTripArrayOfTables(t *testing.T) {
+	input := []byte("# my servers\ntitle = \"config\"\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux serve\"\n")
+	var cfg ServersConfig
+	doc, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify existing entry
+	cfg.Servers[1].Command = "lux mcp"
+	out, err := MarshalDocument(doc, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "# my servers\ntitle = \"config\"\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux mcp\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+
+func TestRoundTripArrayOfTablesAppend(t *testing.T) {
+	input := []byte("# my servers\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n")
+	var cfg ServersConfig
+	doc, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg.Servers = append(cfg.Servers, Server{Name: "lux", Command: "lux serve"})
+	out, err := MarshalDocument(doc, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "# my servers\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux serve\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+
+func TestRoundTripArrayOfTablesRemove(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"a\"\ncommand = \"a\"\n\n[[servers]]\nname = \"b\"\ncommand = \"b\"\n\n[[servers]]\nname = \"c\"\ncommand = \"c\"\n")
+	var cfg ServersConfig
+	doc, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove middle entry
+	cfg.Servers = []Server{cfg.Servers[0], cfg.Servers[2]}
+	out, err := MarshalDocument(doc, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "[[servers]]\nname = \"a\"\ncommand = \"a\"\n\n[[servers]]\nname = \"c\"\ncommand = \"c\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+
+func TestRoundTripArrayOfTablesNoChanges(t *testing.T) {
+	input := []byte("# preserved\n\n[[servers]]\nname = \"grit\"  # inline\ncommand = \"grit mcp\"\n")
+	var cfg ServersConfig
+	doc, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := MarshalDocument(doc, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-for-byte identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
 func TestMarshalNestedNoChangesPreserves(t *testing.T) {
 	input := []byte("[storage]\n# comment\nhash_buckets = [2, 4]\nbase_path = \"/data\"  # path\n")
 	var cfg FullConfig

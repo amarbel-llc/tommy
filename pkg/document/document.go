@@ -206,6 +206,12 @@ func GetFromContainer[T any](doc *Document, container *cst.Node, key string) (T,
 	return result, nil
 }
 
+// Has returns true if the key exists in the document.
+func (doc *Document) Has(key string) bool {
+	_, err := findValueNode(doc.root, key)
+	return err == nil
+}
+
 // SetInContainer sets a key-value within a specific table or array-table node.
 func (doc *Document) SetInContainer(container *cst.Node, key string, value any) error {
 	encoded, nodeKind, err := encodeValue(value)
