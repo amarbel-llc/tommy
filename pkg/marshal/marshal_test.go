@@ -149,6 +149,43 @@ func TestUnmarshalRequiresPointer(t *testing.T) {
 	}
 }
 
+type Server struct {
+	Name    string `toml:"name"`
+	Command string `toml:"command"`
+}
+
+type ServersConfig struct {
+	Title   string   `toml:"title"`
+	Servers []Server `toml:"servers"`
+}
+
+func TestUnmarshalArrayOfTables(t *testing.T) {
+	input := []byte("title = \"config\"\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux serve\"\n")
+	var cfg ServersConfig
+	_, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Title != "config" {
+		t.Fatalf("expected Title %q, got %q", "config", cfg.Title)
+	}
+	if len(cfg.Servers) != 2 {
+		t.Fatalf("expected 2 servers, got %d", len(cfg.Servers))
+	}
+	if cfg.Servers[0].Name != "grit" {
+		t.Fatalf("expected Servers[0].Name %q, got %q", "grit", cfg.Servers[0].Name)
+	}
+	if cfg.Servers[0].Command != "grit mcp" {
+		t.Fatalf("expected Servers[0].Command %q, got %q", "grit mcp", cfg.Servers[0].Command)
+	}
+	if cfg.Servers[1].Name != "lux" {
+		t.Fatalf("expected Servers[1].Name %q, got %q", "lux", cfg.Servers[1].Name)
+	}
+	if cfg.Servers[1].Command != "lux serve" {
+		t.Fatalf("expected Servers[1].Command %q, got %q", "lux serve", cfg.Servers[1].Command)
+	}
+}
+
 func TestMarshalNestedNoChangesPreserves(t *testing.T) {
 	input := []byte("[storage]\n# comment\nhash_buckets = [2, 4]\nbase_path = \"/data\"  # path\n")
 	var cfg FullConfig

@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/amarbel-llc/tommy/pkg/cst"
 	"github.com/amarbel-llc/tommy/pkg/document"
 )
 
@@ -160,10 +161,79 @@ func decodeSliceField(doc *document.Document, fv reflect.Value, key string) erro
 		}
 		fv.Set(reflect.ValueOf(v))
 
+	case reflect.Struct:
+		return decodeStructSliceField(doc, fv, key)
+
 	default:
 		return fmt.Errorf("unsupported slice element type %s for key %q", elemType.Kind(), key)
 	}
 
+	return nil
+}
+
+func decodeStructSliceField(doc *document.Document, fv reflect.Value, key string) error {
+	nodes := doc.FindArrayTableNodes(key)
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	slice := reflect.MakeSlice(fv.Type(), len(nodes), len(nodes))
+	elemType := fv.Type().Elem()
+
+	for i, node := range nodes {
+		elem := slice.Index(i)
+		for j := range elemType.NumField() {
+			field := elemType.Field(j)
+			name, ok := fieldTomlKey(field)
+			if !ok {
+				continue
+			}
+			fieldVal := elem.Field(j)
+			if err := decodeContainerField(doc, node, fieldVal, name); err != nil {
+				return fmt.Errorf("field %q in %q[%d]: %w", name, key, i, err)
+			}
+		}
+	}
+
+	fv.Set(slice)
+	return nil
+}
+
+func decodeContainerField(doc *document.Document, container *cst.Node, fv reflect.Value, key string) error {
+	switch fv.Kind() {
+	case reflect.String:
+		v, err := document.GetFromContainer[string](doc, container, key)
+		if err != nil {
+			return err
+		}
+		fv.SetString(v)
+	case reflect.Int:
+		v, err := document.GetFromContainer[int](doc, container, key)
+		if err != nil {
+			return err
+		}
+		fv.SetInt(int64(v))
+	case reflect.Int64:
+		v, err := document.GetFromContainer[int64](doc, container, key)
+		if err != nil {
+			return err
+		}
+		fv.SetInt(v)
+	case reflect.Float64:
+		v, err := document.GetFromContainer[float64](doc, container, key)
+		if err != nil {
+			return err
+		}
+		fv.SetFloat(v)
+	case reflect.Bool:
+		v, err := document.GetFromContainer[bool](doc, container, key)
+		if err != nil {
+			return err
+		}
+		fv.SetBool(v)
+	default:
+		return fmt.Errorf("unsupported field type %s", fv.Kind())
+	}
 	return nil
 }
 
