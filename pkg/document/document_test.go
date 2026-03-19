@@ -469,6 +469,25 @@ func TestRemoveArrayTableEntry(t *testing.T) {
 	}
 }
 
+func TestRemoveArrayTableEntryFirst(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"a\"\n\n[[servers]]\nname = \"b\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nodes := doc.FindArrayTableNodes("servers")
+	if err := doc.RemoveArrayTableEntry(nodes[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "[[servers]]\nname = \"b\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
 func TestRemoveArrayTableEntryLast(t *testing.T) {
 	input := []byte("[[servers]]\nname = \"only\"\n")
 	doc, err := Parse(input)

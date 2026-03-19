@@ -449,6 +449,8 @@ func (doc *Document) RemoveArrayTableEntry(node *cst.Node) error {
 		return fmt.Errorf("node not found in document")
 	}
 
+	// The array-table node contains its key-value body as children,
+	// so removing it removes the entire section.
 	endIdx := startIdx + 1
 
 	// Remove a preceding blank-line node if present
