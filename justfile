@@ -1,4 +1,4 @@
-default: build
+default: build test
 
 build: build-go
 
