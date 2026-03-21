@@ -34,6 +34,8 @@ func Lex(input []byte) []Token {
 
 func (l *lexer) lex() {
 	for l.pos < len(l.input) {
+		prevPos := l.pos
+		prevState := l.state
 		switch l.state {
 		case stateLineStart:
 			l.lexLineStart()
@@ -43,6 +45,13 @@ func (l *lexer) lex() {
 			l.lexAfterEquals()
 		case stateValue:
 			l.lexValue()
+		}
+		if l.pos == prevPos && l.state == prevState {
+			// Neither position nor state advanced — emit the byte as
+			// invalid to guarantee forward progress and prevent infinite loops.
+			start := l.pos
+			l.pos++
+			l.emit(TokenInvalid, start)
 		}
 	}
 }
@@ -266,7 +275,9 @@ func (l *lexer) consumeBareKey() {
 	for l.pos < len(l.input) && isBareKeyChar(l.input[l.pos]) {
 		l.pos++
 	}
-	l.emit(TokenBareKey, start)
+	if l.pos > start {
+		l.emit(TokenBareKey, start)
+	}
 }
 
 func (l *lexer) consumeBasicString() {

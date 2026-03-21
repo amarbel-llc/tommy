@@ -260,6 +260,17 @@ func TestLexBlankLines(t *testing.T) {
 	})
 }
 
+func TestLexMalformedTripleBracket(t *testing.T) {
+	input := "[[["
+	tokens := Lex([]byte(input))
+	assertRoundTrip(t, input, tokens)
+	// [[ emits DoubleBracketOpen, then [ is invalid in key state
+	assertTokenKinds(t, tokens, []TokenKind{
+		TokenDoubleBracketOpen,
+		TokenInvalid,
+	})
+}
+
 func TestLexCommentAfterValue(t *testing.T) {
 	input := "key = \"val\" # trailing\n"
 	tokens := Lex([]byte(input))
