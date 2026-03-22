@@ -228,6 +228,18 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 	}
 }
 
+func hasMarshalTOML(obj types.Object) bool {
+	for _, typ := range []types.Type{obj.Type(), types.NewPointer(obj.Type())} {
+		mset := types.NewMethodSet(typ)
+		for i := range mset.Len() {
+			if mset.At(i).Obj().Name() == "MarshalTOML" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (FieldInfo, error) {
 	obj := pkg.Types.Scope().Lookup(typeName)
 	if obj == nil {
@@ -239,6 +251,9 @@ func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (Fi
 	mset := types.NewMethodSet(ptrType)
 	for i := range mset.Len() {
 		if mset.At(i).Obj().Name() == "UnmarshalTOML" {
+			if !hasMarshalTOML(obj) {
+				return fi, fmt.Errorf("type %s has UnmarshalTOML but no MarshalTOML — Encode() requires both", typeName)
+			}
 			fi.Kind = FieldCustom
 			fi.TypeName = typeName
 			return fi, nil
@@ -249,10 +264,17 @@ func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (Fi
 	vmset := types.NewMethodSet(obj.Type())
 	for i := range vmset.Len() {
 		if vmset.At(i).Obj().Name() == "UnmarshalTOML" {
+			if !hasMarshalTOML(obj) {
+				return fi, fmt.Errorf("type %s has UnmarshalTOML but no MarshalTOML — Encode() requires both", typeName)
+			}
 			fi.Kind = FieldCustom
 			fi.TypeName = typeName
 			return fi, nil
 		}
+	}
+
+	if hasMarshalTOML(obj) {
+		return fi, fmt.Errorf("type %s has MarshalTOML but no UnmarshalTOML — Decode() requires both", typeName)
 	}
 
 	fi.Kind = FieldStruct

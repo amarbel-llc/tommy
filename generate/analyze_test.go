@@ -3,6 +3,7 @@ package generate
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,102 @@ func TestAnalyzeSliceOfStructs(t *testing.T) {
 	}
 	if len(f.InnerInfo.Fields) != 2 {
 		t.Fatalf("expected 2 inner fields, got %d", len(f.InnerInfo.Fields))
+	}
+}
+
+func TestAnalyzeUnmarshalWithoutMarshalErrors(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	Command Command `+"`"+`toml:"command"`+"`"+`
+}
+
+type Command struct {
+	value string
+}
+
+func (c *Command) UnmarshalTOML(v interface{}) error {
+	c.value = v.(string)
+	return nil
+}
+`)
+
+	_, err := Analyze(dir, "config.go")
+	if err == nil {
+		t.Fatal("expected error for type with UnmarshalTOML but no MarshalTOML")
+	}
+	expected := "has UnmarshalTOML but no MarshalTOML"
+	if !strings.Contains(err.Error(), expected) {
+		t.Fatalf("expected error containing %q, got: %s", expected, err)
+	}
+}
+
+func TestAnalyzeUnmarshalWithMarshalSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	Command Command `+"`"+`toml:"command"`+"`"+`
+}
+
+type Command struct {
+	value string
+}
+
+func (c *Command) UnmarshalTOML(v interface{}) error {
+	c.value = v.(string)
+	return nil
+}
+
+func (c Command) MarshalTOML() (string, error) {
+	return c.value, nil
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldCustom {
+		t.Fatalf("expected FieldCustom, got %v", f.Kind)
+	}
+}
+
+func TestAnalyzeMarshalWithoutUnmarshalErrors(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	Command Command `+"`"+`toml:"command"`+"`"+`
+}
+
+type Command struct {
+	value string
+}
+
+func (c Command) MarshalTOML() (string, error) {
+	return c.value, nil
+}
+`)
+
+	_, err := Analyze(dir, "config.go")
+	if err == nil {
+		t.Fatal("expected error for type with MarshalTOML but no UnmarshalTOML")
+	}
+	expected := "has MarshalTOML but no UnmarshalTOML"
+	if !strings.Contains(err.Error(), expected) {
+		t.Fatalf("expected error containing %q, got: %s", expected, err)
 	}
 }
 
