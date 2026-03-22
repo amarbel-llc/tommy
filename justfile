@@ -8,7 +8,7 @@ build-go:
 test: test-go test-bats
 
 test-go:
-  go test -v ./...
+  tap-dancer go-test -skip-empty -v ./...
 
 test-bats: build
   just zz-tests_bats/test

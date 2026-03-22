@@ -61,6 +61,7 @@
           ];
           packages = [
             bob.packages.${system}.batman
+            bob.packages.${system}.tap-dancer
           ];
         };
       }
