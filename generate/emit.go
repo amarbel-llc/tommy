@@ -68,6 +68,16 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 				buf.WriteString("\t" + code)
 			}
 			fmt.Fprintf(&buf, "\t\t%s = %s\n", target, localVar)
+			fmt.Fprintf(&buf, "\t} else {\n")
+			fmt.Fprintf(&buf, "\t\t%s := &%s{}\n", localVar, fi.TypeName)
+			fmt.Fprintf(&buf, "\t\tfound := false\n")
+			for _, inner := range fi.InnerInfo.Fields {
+				code := emitFlatKeyDecodeField(inner, localVar, docVar, containerExpr)
+				buf.WriteString("\t" + code)
+			}
+			fmt.Fprintf(&buf, "\t\tif found {\n")
+			fmt.Fprintf(&buf, "\t\t\t%s = %s\n", target, localVar)
+			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		}
 
@@ -92,6 +102,38 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 				buf.WriteString("\t" + code)
 			}
 		}
+		fmt.Fprintf(&buf, "\t}\n")
+	}
+
+	return buf.String()
+}
+
+func emitFlatKeyDecodeField(fi FieldInfo, localVar, docVar, containerExpr string) string {
+	var buf bytes.Buffer
+	target := localVar + "." + fi.GoName
+
+	switch fi.Kind {
+	case FieldPrimitive:
+		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
+			fi.TypeName, docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		fmt.Fprintf(&buf, "\t\tfound = true\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldPointerPrimitive:
+		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
+			fi.TypeName, docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t%s = &v\n", target)
+		fmt.Fprintf(&buf, "\t\tfound = true\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldCustom:
+		fmt.Fprintf(&buf, "\tif raw, err := document.GetRawFromContainer(%s, %s, %q); err == nil {\n",
+			docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\tif err := %s.UnmarshalTOML(raw); err != nil {\n", target)
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t\tfound = true\n")
 		fmt.Fprintf(&buf, "\t}\n")
 	}
 

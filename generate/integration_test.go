@@ -596,6 +596,7 @@ func TestWriteServerEquivalent(t *testing.T) {
 }
 
 func TestDecodeNoAnnotationSubTable(t *testing.T) {
+	// Flat annotation keys in the server table should be picked up as a fallback.
 	input := []byte("[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\nreadOnlyHint = true\ndestructiveHint = false\n")
 
 	doc, err := DecodeConfig(input)
@@ -604,8 +605,173 @@ func TestDecodeNoAnnotationSubTable(t *testing.T) {
 	}
 
 	cfg := doc.Data()
+	if cfg.Servers[0].Annotations == nil {
+		t.Fatal("expected non-nil Annotations from flat keys")
+	}
+	if cfg.Servers[0].Annotations.ReadOnlyHint == nil || *cfg.Servers[0].Annotations.ReadOnlyHint != true {
+		t.Fatal("expected ReadOnlyHint true")
+	}
+	if cfg.Servers[0].Annotations.DestructiveHint == nil || *cfg.Servers[0].Annotations.DestructiveHint != false {
+		t.Fatal("expected DestructiveHint false")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationFlatKeyFallback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/flatkey",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package flatkey
+
+import (
+	"fmt"
+	"strings"
+)
+
+//go:generate tommy generate
+type Config struct {
+	Servers []ServerConfig `+"`"+`toml:"servers"`+"`"+`
+}
+
+type ServerConfig struct {
+	Name        string            `+"`"+`toml:"name"`+"`"+`
+	Command     Command           `+"`"+`toml:"command"`+"`"+`
+	Annotations *AnnotationFilter `+"`"+`toml:"annotations"`+"`"+`
+}
+
+type Command struct {
+	parts []string
+}
+
+func (c *Command) UnmarshalTOML(data any) error {
+	switch v := data.(type) {
+	case string:
+		c.parts = strings.Fields(v)
+		return nil
+	case []any:
+		c.parts = make([]string, len(v))
+		for i, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				return fmt.Errorf("element %d not a string", i)
+			}
+			c.parts[i] = s
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported type %T", data)
+	}
+}
+
+func (c Command) MarshalTOML() (any, error) {
+	return strings.Join(c.parts, " "), nil
+}
+
+func (c Command) String() string {
+	return strings.Join(c.parts, " ")
+}
+
+type AnnotationFilter struct {
+	ReadOnlyHint    *bool `+"`"+`toml:"readOnlyHint"`+"`"+`
+	DestructiveHint *bool `+"`"+`toml:"destructiveHint"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "flatkey_test.go", `package flatkey
+
+import "testing"
+
+func TestFlatKeysDecoded(t *testing.T) {
+	// Flat annotation keys directly in the server table (no [servers.annotations] sub-table).
+	// The codegen should fall back to reading these from the parent container.
+	input := []byte("[[servers]]\nname = \"lux\"\ncommand = \"lux\"\nreadOnlyHint = true\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Servers[0].Annotations == nil {
+		t.Fatal("expected non-nil Annotations from flat keys, got nil")
+	}
+	if cfg.Servers[0].Annotations.ReadOnlyHint == nil || *cfg.Servers[0].Annotations.ReadOnlyHint != true {
+		t.Fatal("expected ReadOnlyHint true")
+	}
+	if cfg.Servers[0].Annotations.DestructiveHint != nil {
+		t.Fatal("expected DestructiveHint nil (not present)")
+	}
+}
+
+func TestSubTableTakesPrecedence(t *testing.T) {
+	// When both flat keys and a sub-table exist, the sub-table should win.
+	input := []byte("[[servers]]\nname = \"lux\"\ncommand = \"lux\"\nreadOnlyHint = false\n\n[servers.annotations]\nreadOnlyHint = true\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Servers[0].Annotations == nil {
+		t.Fatal("expected non-nil Annotations")
+	}
+	if cfg.Servers[0].Annotations.ReadOnlyHint == nil || *cfg.Servers[0].Annotations.ReadOnlyHint != true {
+		t.Fatal("expected ReadOnlyHint true from sub-table, not false from flat key")
+	}
+}
+
+func TestNoFlatKeysNoSubTable(t *testing.T) {
+	// No annotation keys at all — Annotations should remain nil.
+	input := []byte("[[servers]]\nname = \"lux\"\ncommand = \"lux\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
 	if cfg.Servers[0].Annotations != nil {
-		t.Fatal("expected nil Annotations (no [servers.annotations] sub-table)")
+		t.Fatal("expected nil Annotations when no keys present")
 	}
 }
 `)
