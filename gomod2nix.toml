@@ -1,0 +1,14 @@
+schema = 3
+
+[mod]
+  [mod.'golang.org/x/mod']
+    version = 'v0.34.0'
+    hash = 'sha256-BJgLn+wh9s/XyS2LDmnXTj4ooR+r0Ew2SlxvJA+6GCs='
+
+  [mod.'golang.org/x/sync']
+    version = 'v0.20.0'
+    hash = 'sha256-ybcjhCfK6lroUM0yswUvWooW8MOQZBXyiSqoxG6Uy0Y='
+
+  [mod.'golang.org/x/tools']
+    version = 'v0.43.0'
+    hash = 'sha256-CqwqQl9inMT0/5LJ8hmV3HNR1XdI/xBFbi3305VJUlo='

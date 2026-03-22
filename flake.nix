@@ -40,12 +40,12 @@
       in
       {
         packages = {
-          default = pkgs.buildGoModule {
+          default = pkgs.buildGoApplication {
             pname = "tommy";
             version = "0.1.0";
             src = ./.;
+            modules = ./gomod2nix.toml;
             subPackages = [ "cmd/tommy" ];
-            vendorHash = null;
 
             meta = {
               description = "A TOML library for Go";
