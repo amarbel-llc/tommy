@@ -786,6 +786,252 @@ func TestNoFlatKeysNoSubTable(t *testing.T) {
 	}
 }
 
+func TestIntegrationMapStringString(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/sweatfile",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package sweatfile
+
+//go:generate tommy generate
+type Sweatfile struct {
+	SystemPrompt *string           `+"`"+`toml:"system-prompt"`+"`"+`
+	GitExcludes  []string          `+"`"+`toml:"git-excludes"`+"`"+`
+	Env          map[string]string `+"`"+`toml:"env"`+"`"+`
+	Hooks        *Hooks            `+"`"+`toml:"hooks"`+"`"+`
+}
+
+type Hooks struct {
+	Create               *string `+"`"+`toml:"create"`+"`"+`
+	Stop                 *string `+"`"+`toml:"stop"`+"`"+`
+	DisallowMainWorktree *bool   `+"`"+`toml:"disallow-main-worktree"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "sweatfile_test.go", `package sweatfile
+
+import "testing"
+
+func TestDecodeSweatfile(t *testing.T) {
+	input := []byte("system-prompt = \"be helpful\"\ngit-excludes = [\".claude/\", \".direnv/\"]\n\n[env]\nFOO = \"bar\"\nBAZ = \"qux\"\n\n[hooks]\ncreate = \"npm install\"\nstop = \"just test\"\ndisallow-main-worktree = true\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sf := doc.Data()
+	if sf.SystemPrompt == nil || *sf.SystemPrompt != "be helpful" {
+		t.Fatal("expected system-prompt 'be helpful'")
+	}
+	if len(sf.GitExcludes) != 2 {
+		t.Fatalf("expected 2 git-excludes, got %d", len(sf.GitExcludes))
+	}
+	if sf.Env == nil {
+		t.Fatal("expected non-nil Env map")
+	}
+	if sf.Env["FOO"] != "bar" {
+		t.Fatalf("expected Env[FOO] = 'bar', got %q", sf.Env["FOO"])
+	}
+	if sf.Env["BAZ"] != "qux" {
+		t.Fatalf("expected Env[BAZ] = 'qux', got %q", sf.Env["BAZ"])
+	}
+	if sf.Hooks == nil {
+		t.Fatal("expected non-nil Hooks")
+	}
+	if sf.Hooks.Create == nil || *sf.Hooks.Create != "npm install" {
+		t.Fatal("expected hooks.create 'npm install'")
+	}
+	if sf.Hooks.DisallowMainWorktree == nil || *sf.Hooks.DisallowMainWorktree != true {
+		t.Fatal("expected hooks.disallow-main-worktree true")
+	}
+}
+
+func TestRoundTripSweatfile(t *testing.T) {
+	input := []byte("system-prompt = \"be helpful\"\ngit-excludes = [\".claude/\"]\n\n[env]\nFOO = \"bar\"\nBAZ = \"qux\"\n\n[hooks]\ncreate = \"npm install\"\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sf := doc.Data()
+	sf.Env["NEW_KEY"] = "new_val"
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-decode to verify the new key survived.
+	doc2, err := DecodeSweatfile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sf2 := doc2.Data()
+	if sf2.Env["FOO"] != "bar" {
+		t.Fatalf("expected FOO preserved, got %q", sf2.Env["FOO"])
+	}
+	if sf2.Env["NEW_KEY"] != "new_val" {
+		t.Fatalf("expected NEW_KEY = 'new_val', got %q", sf2.Env["NEW_KEY"])
+	}
+}
+
+func TestEmptyMapNotAppended(t *testing.T) {
+	// No [env] section in input — should not appear in output.
+	input := []byte("system-prompt = \"hi\"\ngit-excludes = [\".claude/\"]\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sf := doc.Data()
+	if sf.Env != nil {
+		t.Fatalf("expected nil Env, got %v", sf.Env)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationPointerStructEncode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/ptrstruct",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package ptrstruct
+
+//go:generate tommy generate
+type Sweatfile struct {
+	SystemPrompt *string `+"`"+`toml:"system-prompt"`+"`"+`
+	Hooks        *Hooks  `+"`"+`toml:"hooks"`+"`"+`
+}
+
+type Hooks struct {
+	Create               *string `+"`"+`toml:"create"`+"`"+`
+	Stop                 *string `+"`"+`toml:"stop"`+"`"+`
+	DisallowMainWorktree *bool   `+"`"+`toml:"disallow-main-worktree"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "ptrstruct_test.go", `package ptrstruct
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestModifyPointerStructField(t *testing.T) {
+	input := []byte("system-prompt = \"be helpful\"\n\n[hooks]\ncreate = \"npm install\"\nstop = \"just test\"\ndisallow-main-worktree = true\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sf := doc.Data()
+	newCreate := "composer install"
+	sf.Hooks.Create = &newCreate
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := string(out)
+	if !strings.Contains(result, "composer install") {
+		t.Fatalf("expected modified create hook in output, got:\n%s", result)
+	}
+	if strings.Contains(result, "npm install") {
+		t.Fatalf("expected old create hook replaced, got:\n%s", result)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 func TestIntegrationZeroValuePrimitiveSkip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

@@ -671,6 +671,59 @@ func (doc *Document) FindTableInContainer(container *cst.Node, key string) *cst.
 	return nil
 }
 
+// GetStringMapFromTable reads all key-value pairs from a [table] node as a
+// map[string]string. Returns nil if the table has no key-value children.
+func GetStringMapFromTable(table *cst.Node) map[string]string {
+	var m map[string]string
+	for _, child := range table.Children {
+		if child.Kind != cst.NodeKeyValue {
+			continue
+		}
+		key := keyValueName(child)
+		valNode := keyValueValueNode(child)
+		if valNode == nil {
+			continue
+		}
+		if m == nil {
+			m = make(map[string]string)
+		}
+		m[key] = stripQuotes(string(valNode.Raw))
+	}
+	return m
+}
+
+// EnsureTable finds or creates a [name] table section in the document.
+// Returns the table node.
+func (doc *Document) EnsureTable(name string) *cst.Node {
+	if existing := findTableNode(doc.root, name); existing != nil {
+		return existing
+	}
+	table := &cst.Node{
+		Kind: cst.NodeTable,
+		Children: []*cst.Node{
+			{Kind: cst.NodeBracketOpen, Raw: []byte("[")},
+			{Kind: cst.NodeKey, Raw: []byte(name)},
+			{Kind: cst.NodeBracketClose, Raw: []byte("]")},
+			{Kind: cst.NodeNewline, Raw: []byte("\n")},
+		},
+	}
+	blankLine := &cst.Node{Kind: cst.NodeNewline, Raw: []byte("\n")}
+	doc.root.Children = append(doc.root.Children, blankLine, table)
+	return table
+}
+
+// DeleteAllInContainer removes all key-value children from a container node.
+func DeleteAllInContainer(container *cst.Node) {
+	var kept []*cst.Node
+	for _, child := range container.Children {
+		if child.Kind == cst.NodeKeyValue {
+			continue
+		}
+		kept = append(kept, child)
+	}
+	container.Children = kept
+}
+
 func deleteFromContainer(container *cst.Node, key string) error {
 	for i, child := range container.Children {
 		if child.Kind != cst.NodeKeyValue {

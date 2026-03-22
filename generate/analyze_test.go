@@ -170,13 +170,34 @@ func (c Command) MarshalTOML() (string, error) {
 	}
 }
 
+func TestAnalyzeMapStringString(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tEnv map[string]string `toml:\"env\"`\n}\n")
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldMapStringString {
+		t.Fatalf("expected FieldMapStringString, got %v", f.Kind)
+	}
+	if f.TomlKey != "env" {
+		t.Fatalf("expected TomlKey 'env', got %s", f.TomlKey)
+	}
+}
+
 func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
-	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tData map[string]string `toml:\"data\"`\n}\n")
+	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tData map[string]int `toml:\"data\"`\n}\n")
 
 	_, err := Analyze(dir, "config.go")
 	if err == nil {
-		t.Fatal("expected error for unsupported map type")
+		t.Fatal("expected error for unsupported map value type")
 	}
 }

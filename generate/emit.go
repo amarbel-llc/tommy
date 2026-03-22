@@ -87,6 +87,11 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		fmt.Fprintf(&buf, "\t\t%s = v\n", target)
 		fmt.Fprintf(&buf, "\t}\n")
 
+	case FieldMapStringString:
+		fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t%s = document.GetStringMapFromTable(tableNode)\n", target)
+		fmt.Fprintf(&buf, "\t}\n")
+
 	case FieldSliceStruct:
 		handleName := toLowerFirst(fi.TypeName) + "Handle"
 		nodesVar := fi.TomlKey + "Nodes"
@@ -175,6 +180,29 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
+	case FieldStruct:
+		if fi.InnerInfo != nil {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+			for _, inner := range fi.InnerInfo.Fields {
+				code := emitEncodeField(inner, source, docVar, "tableNode")
+				buf.WriteString(code)
+			}
+			fmt.Fprintf(&buf, "\t}\n")
+		}
+
+	case FieldPointerStruct:
+		if fi.InnerInfo != nil {
+			fmt.Fprintf(&buf, "\tif %s != nil {\n", source)
+			fmt.Fprintf(&buf, "\t\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+				docVar, containerExpr, fi.TomlKey)
+			for _, inner := range fi.InnerInfo.Fields {
+				code := emitEncodeField(inner, source, docVar, "tableNode")
+				buf.WriteString("\t" + code)
+			}
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t}\n")
+		}
+
 	case FieldSliceStruct:
 		handleSlice := "d." + toLowerFirst(fi.GoName)
 		fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
@@ -197,6 +225,17 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey, source)
 		fmt.Fprintf(&buf, "\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldMapStringString:
+		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
+		fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\tdocument.DeleteAllInContainer(tableNode)\n")
+		fmt.Fprintf(&buf, "\t\tfor k, v := range %s {\n", source)
+		fmt.Fprintf(&buf, "\t\t\tif err := %s.SetInContainer(tableNode, k, v); err != nil {\n", docVar)
+		fmt.Fprintf(&buf, "\t\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 	}
 

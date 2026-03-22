@@ -21,6 +21,7 @@ const (
 	FieldSliceStruct                       // []Server (array-of-tables)
 	FieldCustom                            // implements TOMLUnmarshaler
 	FieldPointerPrimitive                  // *bool, *int, etc.
+	FieldMapStringString                   // map[string]string
 )
 
 // StructInfo describes a struct that needs code generation.
@@ -221,6 +222,18 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 			return fi, err
 		}
 		fi.InnerInfo = &innerInfo
+		return fi, nil
+
+	case *ast.MapType:
+		keyIdent, ok := t.Key.(*ast.Ident)
+		if !ok || keyIdent.Name != "string" {
+			return fi, fmt.Errorf("unsupported map key type (only string keys supported)")
+		}
+		valIdent, ok := t.Value.(*ast.Ident)
+		if !ok || valIdent.Name != "string" {
+			return fi, fmt.Errorf("unsupported map value type (only map[string]string supported)")
+		}
+		fi.Kind = FieldMapStringString
 		return fi, nil
 
 	default:
