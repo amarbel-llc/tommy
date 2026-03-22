@@ -8,10 +8,10 @@ build-go:
 test: test-go test-bats
 
 test-go:
-  tap-dancer go-test -skip-empty -v ./...
+  go test -v ./...
 
 test-bats: build
-  just zz-tests_bats/test
+  cd zz-tests_bats && TOMMY_BIN=../build/tommy BATS_TEST_TIMEOUT=30 bats --tap *.bats
 
 clean: clean-go
 

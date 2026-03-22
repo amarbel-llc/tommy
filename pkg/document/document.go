@@ -273,6 +273,12 @@ func (doc *Document) Has(key string) bool {
 	return err == nil
 }
 
+// HasInContainer returns true if the key exists within the given container node.
+func (doc *Document) HasInContainer(container *cst.Node, key string) bool {
+	_, err := findValueInContainer(container, key)
+	return err == nil
+}
+
 // SetInContainer sets a key-value within a specific table or array-table node.
 func (doc *Document) SetInContainer(container *cst.Node, key string, value any) error {
 	encoded, nodeKind, err := encodeValue(value)

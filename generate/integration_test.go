@@ -355,3 +355,483 @@ func TestCustomTypes(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+func TestIntegrationMoxyMigration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/moxy",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+//go:generate tommy generate
+type Config struct {
+	Servers []ServerConfig `+"`"+`toml:"servers"`+"`"+`
+}
+
+type ServerConfig struct {
+	Name                  string            `+"`"+`toml:"name"`+"`"+`
+	Command               Command           `+"`"+`toml:"command"`+"`"+`
+	Annotations           *AnnotationFilter `+"`"+`toml:"annotations"`+"`"+`
+	Paginate              bool              `+"`"+`toml:"paginate"`+"`"+`
+	GenerateResourceTools *bool             `+"`"+`toml:"generate-resource-tools"`+"`"+`
+}
+
+type Command struct {
+	parts []string
+}
+
+func (c *Command) UnmarshalTOML(data any) error {
+	switch v := data.(type) {
+	case string:
+		c.parts = strings.Fields(v)
+		if len(c.parts) == 0 {
+			return fmt.Errorf("command string is empty")
+		}
+		return nil
+	case []any:
+		c.parts = make([]string, len(v))
+		for i, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				return fmt.Errorf("command array element %d is not a string", i)
+			}
+			c.parts[i] = s
+		}
+		if len(c.parts) == 0 {
+			return fmt.Errorf("command array is empty")
+		}
+		return nil
+	default:
+		return fmt.Errorf("command must be a string or array of strings")
+	}
+}
+
+func (c Command) MarshalTOML() (any, error) {
+	return strings.Join(c.parts, " "), nil
+}
+
+func (c Command) String() string {
+	return strings.Join(c.parts, " ")
+}
+
+func MakeCommand(parts ...string) Command {
+	return Command{parts: parts}
+}
+
+type AnnotationFilter struct {
+	ReadOnlyHint    *bool `+"`"+`toml:"readOnlyHint"`+"`"+`
+	DestructiveHint *bool `+"`"+`toml:"destructiveHint"`+"`"+`
+	IdempotentHint  *bool `+"`"+`toml:"idempotentHint"`+"`"+`
+	OpenWorldHint   *bool `+"`"+`toml:"openWorldHint"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "main.go", "package main\n\nfunc main() {}\n")
+
+	writeFixture(t, dir, "moxy_test.go", `package main
+
+import "testing"
+
+func TestDecodeBasicMoxyfile(t *testing.T) {
+	input := []byte("#  MCP server configuration\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux serve --verbose\"\npaginate = true\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if len(cfg.Servers) != 2 {
+		t.Fatalf("expected 2 servers, got %d", len(cfg.Servers))
+	}
+	if cfg.Servers[0].Name != "grit" {
+		t.Fatalf("expected Name 'grit', got %q", cfg.Servers[0].Name)
+	}
+	if cfg.Servers[0].Command.String() != "grit mcp" {
+		t.Fatalf("expected Command 'grit mcp', got %q", cfg.Servers[0].Command.String())
+	}
+	if cfg.Servers[0].Annotations != nil {
+		t.Fatal("expected nil Annotations for grit")
+	}
+	if cfg.Servers[0].Paginate != false {
+		t.Fatal("expected Paginate false for grit")
+	}
+	if cfg.Servers[1].Name != "lux" {
+		t.Fatalf("expected Name 'lux', got %q", cfg.Servers[1].Name)
+	}
+	if cfg.Servers[1].Command.String() != "lux serve --verbose" {
+		t.Fatalf("expected Command 'lux serve --verbose', got %q", cfg.Servers[1].Command.String())
+	}
+	if cfg.Servers[1].Paginate != true {
+		t.Fatal("expected Paginate true for lux")
+	}
+}
+
+func TestDecodeWithAnnotationSubTable(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[servers.annotations]\nreadOnlyHint = true\ndestructiveHint = false\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Servers[0].Annotations == nil {
+		t.Fatal("expected non-nil Annotations")
+	}
+	if cfg.Servers[0].Annotations.ReadOnlyHint == nil || *cfg.Servers[0].Annotations.ReadOnlyHint != true {
+		t.Fatal("expected ReadOnlyHint true")
+	}
+	if cfg.Servers[0].Annotations.DestructiveHint == nil || *cfg.Servers[0].Annotations.DestructiveHint != false {
+		t.Fatal("expected DestructiveHint false")
+	}
+	if cfg.Servers[0].Annotations.IdempotentHint != nil {
+		t.Fatal("expected IdempotentHint nil (not present)")
+	}
+}
+
+func TestRoundTripPreservesComments(t *testing.T) {
+	input := []byte("# MCP server configuration\n\n[[servers]]\nname = \"grit\"  # the git server\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux serve\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	cfg.Servers[1].Command = MakeCommand("lux", "mcp")
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "# MCP server configuration\n\n[[servers]]\nname = \"grit\"  # the git server\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux mcp\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+
+func TestRoundTripGenerateResourceTools(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\ngenerate-resource-tools = true\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Servers[0].GenerateResourceTools == nil {
+		t.Fatal("expected non-nil GenerateResourceTools")
+	}
+	if *cfg.Servers[0].GenerateResourceTools != true {
+		t.Fatal("expected GenerateResourceTools true")
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical round-trip.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestWriteServerEquivalent(t *testing.T) {
+	input := []byte("# my servers\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	cfg.Servers = append(cfg.Servers, ServerConfig{
+		Name:    "lux",
+		Command: MakeCommand("lux", "serve"),
+	})
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "# my servers\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux serve\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+
+func TestDecodeNoAnnotationSubTable(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\nreadOnlyHint = true\ndestructiveHint = false\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Servers[0].Annotations != nil {
+		t.Fatal("expected nil Annotations (no [servers.annotations] sub-table)")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationZeroValuePrimitiveSkip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/zeroval",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package zeroval
+
+//go:generate tommy generate
+type Config struct {
+	Name    string `+"`"+`toml:"name"`+"`"+`
+	Port    int    `+"`"+`toml:"port"`+"`"+`
+	Enabled bool   `+"`"+`toml:"enabled"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "zeroval_test.go", `package zeroval
+
+import "testing"
+
+func TestZeroValueNotAppended(t *testing.T) {
+	// Only name and port are in the TOML — enabled (bool, zero = false)
+	// should NOT be appended on encode.
+	input := []byte("name = \"app\"\nport = 8080\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Enabled != false {
+		t.Fatal("expected Enabled false")
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestZeroValuePreservedWhenExplicit(t *testing.T) {
+	// enabled = false is explicit in the TOML — it should be preserved.
+	input := []byte("name = \"app\"\nport = 8080\nenabled = false\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationArrayOfTablesAppend(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/aotappend",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package aotappend
+
+//go:generate tommy generate
+type Config struct {
+	Servers []Server `+"`"+`toml:"servers"`+"`"+`
+}
+
+type Server struct {
+	Name    string `+"`"+`toml:"name"`+"`"+`
+	Command string `+"`"+`toml:"command"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "append_test.go", `package aotappend
+
+import "testing"
+
+func TestAppendNewEntry(t *testing.T) {
+	// Start with one server, append a second, encode.
+	input := []byte("# my servers\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	cfg.Servers = append(cfg.Servers, Server{
+		Name:    "lux",
+		Command: "lux serve",
+	})
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "# my servers\n\n[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux serve\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+
+func TestAppendPreservesExisting(t *testing.T) {
+	// Modify existing entry + append new one.
+	input := []byte("[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	cfg.Servers[0].Command = "grit serve"
+	cfg.Servers = append(cfg.Servers, Server{
+		Name:    "lux",
+		Command: "lux mcp",
+	})
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "[[servers]]\nname = \"grit\"\ncommand = \"grit serve\"\n\n[[servers]]\nname = \"lux\"\ncommand = \"lux mcp\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}

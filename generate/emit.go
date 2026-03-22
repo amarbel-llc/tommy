@@ -104,9 +104,13 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 
 	switch fi.Kind {
 	case FieldPrimitive:
-		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
+		zv := zeroLiteral(fi.TypeName)
+		fmt.Fprintf(&buf, "\tif %s != %s || %s.HasInContainer(%s, %q) {\n",
+			source, zv, docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey, source)
-		fmt.Fprintf(&buf, "\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldPointerPrimitive:
@@ -130,11 +134,18 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSliceStruct:
-		fmt.Fprintf(&buf, "\tfor i, h := range d.%s {\n", toLowerFirst(fi.GoName))
+		handleSlice := "d." + toLowerFirst(fi.GoName)
+		fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
+		fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
+		fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", handleSlice)
+		fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i].node\n", handleSlice)
+		fmt.Fprintf(&buf, "\t\t} else {\n")
+		fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
 		if fi.InnerInfo != nil {
 			for _, inner := range fi.InnerInfo.Fields {
 				indexedSource := fmt.Sprintf("%s[i]", source)
-				code := emitEncodeField(inner, indexedSource, docVar, "h.node")
+				code := emitEncodeField(inner, indexedSource, docVar, "container")
 				buf.WriteString("\t" + code)
 			}
 		}
@@ -148,6 +159,21 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 	}
 
 	return buf.String()
+}
+
+func zeroLiteral(typeName string) string {
+	switch typeName {
+	case "bool":
+		return "false"
+	case "int", "int64":
+		return "0"
+	case "float64":
+		return "0.0"
+	case "string":
+		return `""`
+	default:
+		return `""`
+	}
 }
 
 func toLowerFirst(s string) string {
