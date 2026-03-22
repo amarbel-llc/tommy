@@ -1,0 +1,160 @@
+package generate
+
+import (
+	"bytes"
+	"fmt"
+	"unicode"
+)
+
+func emitDecodeBody(si StructInfo) string {
+	var buf bytes.Buffer
+	for _, fi := range si.Fields {
+		buf.WriteString(emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()"))
+	}
+	return buf.String()
+}
+
+func emitEncodeBody(si StructInfo) string {
+	var buf bytes.Buffer
+	for _, fi := range si.Fields {
+		buf.WriteString(emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()"))
+	}
+	return buf.String()
+}
+
+func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr string) string {
+	var buf bytes.Buffer
+	target := dataPath + "." + fi.GoName
+
+	switch fi.Kind {
+	case FieldPrimitive:
+		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
+			fi.TypeName, docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldPointerPrimitive:
+		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
+			fi.TypeName, docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t%s = &v\n", target)
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldCustom:
+		fmt.Fprintf(&buf, "\tif raw, err := document.GetRawFromContainer(%s, %s, %q); err == nil {\n",
+			docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\tif err := %s.UnmarshalTOML(raw); err != nil {\n", target)
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldStruct:
+		if fi.InnerInfo != nil {
+			tableExpr := fmt.Sprintf("findTableNode(%s.Root(), %q)", docVar, fi.TomlKey)
+			fmt.Fprintf(&buf, "\tif tableNode := %s; tableNode != nil {\n", tableExpr)
+			for _, inner := range fi.InnerInfo.Fields {
+				code := emitDecodeField(inner, target, docVar, "tableNode")
+				buf.WriteString(code)
+			}
+			fmt.Fprintf(&buf, "\t}\n")
+		}
+
+	case FieldPointerStruct:
+		if fi.InnerInfo != nil {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+				docVar, containerExpr, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\tv := &%s{}\n", fi.TypeName)
+			for _, inner := range fi.InnerInfo.Fields {
+				code := emitDecodeField(inner, "v", docVar, "tableNode")
+				buf.WriteString("\t" + code)
+			}
+			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+			fmt.Fprintf(&buf, "\t}\n")
+		}
+
+	case FieldSlicePrimitive:
+		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[[]%s](%s, %s, %q); err == nil {\n",
+			fi.ElemType, docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldSliceStruct:
+		handleName := toLowerFirst(fi.TypeName) + "Handle"
+		nodesVar := fi.TomlKey + "Nodes"
+		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\td.%s = make([]%s, len(%s))\n", toLowerFirst(fi.GoName), handleName, nodesVar)
+		fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
+		fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
+		fmt.Fprintf(&buf, "\t\td.%s[i] = %s{node: node}\n", toLowerFirst(fi.GoName), handleName)
+		if fi.InnerInfo != nil {
+			for _, inner := range fi.InnerInfo.Fields {
+				indexedTarget := fmt.Sprintf("%s[i]", target)
+				code := emitDecodeField(inner, indexedTarget, docVar, "node")
+				buf.WriteString("\t" + code)
+			}
+		}
+		fmt.Fprintf(&buf, "\t}\n")
+	}
+
+	return buf.String()
+}
+
+func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) string {
+	var buf bytes.Buffer
+	source := dataPath + "." + fi.GoName
+
+	switch fi.Kind {
+	case FieldPrimitive:
+		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
+			docVar, containerExpr, fi.TomlKey, source)
+		fmt.Fprintf(&buf, "\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldPointerPrimitive:
+		fmt.Fprintf(&buf, "\tif %s != nil {\n", source)
+		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, *%s); err != nil {\n",
+			docVar, containerExpr, fi.TomlKey, source)
+		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldCustom:
+		fmt.Fprintf(&buf, "\t{\n")
+		fmt.Fprintf(&buf, "\t\tv, err := %s.MarshalTOML()\n", source)
+		fmt.Fprintf(&buf, "\t\tif err != nil {\n")
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, v); err != nil {\n",
+			docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldSliceStruct:
+		fmt.Fprintf(&buf, "\tfor i, h := range d.%s {\n", toLowerFirst(fi.GoName))
+		if fi.InnerInfo != nil {
+			for _, inner := range fi.InnerInfo.Fields {
+				indexedSource := fmt.Sprintf("%s[i]", source)
+				code := emitEncodeField(inner, indexedSource, docVar, "h.node")
+				buf.WriteString("\t" + code)
+			}
+		}
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldSlicePrimitive:
+		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
+			docVar, containerExpr, fi.TomlKey, source)
+		fmt.Fprintf(&buf, "\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t}\n")
+	}
+
+	return buf.String()
+}
+
+func toLowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	runes[0] = unicode.ToLower(runes[0])
+	return string(runes)
+}
