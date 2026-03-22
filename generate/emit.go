@@ -49,8 +49,7 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 
 	case FieldStruct:
 		if fi.InnerInfo != nil {
-			tableExpr := fmt.Sprintf("findTableNode(%s.Root(), %q)", docVar, fi.TomlKey)
-			fmt.Fprintf(&buf, "\tif tableNode := %s; tableNode != nil {\n", tableExpr)
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
 			for _, inner := range fi.InnerInfo.Fields {
 				code := emitDecodeField(inner, target, docVar, "tableNode")
 				buf.WriteString(code)
@@ -60,14 +59,15 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 
 	case FieldPointerStruct:
 		if fi.InnerInfo != nil {
+			localVar := toLowerFirst(fi.GoName) + "Val"
 			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
 				docVar, containerExpr, fi.TomlKey)
-			fmt.Fprintf(&buf, "\t\tv := &%s{}\n", fi.TypeName)
+			fmt.Fprintf(&buf, "\t\t%s := &%s{}\n", localVar, fi.TypeName)
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitDecodeField(inner, "v", docVar, "tableNode")
+				code := emitDecodeField(inner, localVar, docVar, "tableNode")
 				buf.WriteString("\t" + code)
 			}
-			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+			fmt.Fprintf(&buf, "\t\t%s = %s\n", target, localVar)
 			fmt.Fprintf(&buf, "\t}\n")
 		}
 

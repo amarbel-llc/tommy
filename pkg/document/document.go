@@ -22,6 +22,10 @@ func Parse(input []byte) (*Document, error) {
 	return &Document{root: root}, nil
 }
 
+func (doc *Document) Root() *cst.Node {
+	return doc.root
+}
+
 func (doc *Document) Bytes() []byte {
 	return doc.root.Bytes()
 }
@@ -299,6 +303,11 @@ func findValueNode(root *cst.Node, key string) (*cst.Node, error) {
 	}
 
 	return node, nil
+}
+
+// FindTable returns the [name] table node from the document root, or nil.
+func (doc *Document) FindTable(name string) *cst.Node {
+	return findTableNode(doc.root, name)
 }
 
 func findTableNode(root *cst.Node, name string) *cst.Node {
