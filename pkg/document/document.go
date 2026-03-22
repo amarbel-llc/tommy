@@ -208,6 +208,61 @@ func GetFromContainer[T any](doc *Document, container *cst.Node, key string) (T,
 	return result, nil
 }
 
+// GetRawFromContainer reads a value from a container and returns it as its
+// natural Go type (string, int64, float64, bool, or []any) without requiring
+// a type parameter.
+func GetRawFromContainer(doc *Document, container *cst.Node, key string) (any, error) {
+	valueNode, err := findValueInContainer(container, key)
+	if err != nil {
+		return nil, err
+	}
+	return convertNodeToRaw(valueNode)
+}
+
+func convertNodeToRaw(node *cst.Node) (any, error) {
+	switch node.Kind {
+	case cst.NodeString:
+		return stripQuotes(string(node.Raw)), nil
+	case cst.NodeInteger:
+		v, err := strconv.ParseInt(string(node.Raw), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	case cst.NodeFloat:
+		v, err := strconv.ParseFloat(string(node.Raw), 64)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	case cst.NodeBool:
+		v, err := strconv.ParseBool(string(node.Raw))
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	case cst.NodeArray:
+		return convertArrayToRaw(node)
+	default:
+		return string(node.Raw), nil
+	}
+}
+
+func convertArrayToRaw(node *cst.Node) ([]any, error) {
+	var result []any
+	for _, child := range node.Children {
+		switch child.Kind {
+		case cst.NodeString, cst.NodeInteger, cst.NodeFloat, cst.NodeBool:
+			v, err := convertNodeToRaw(child)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, v)
+		}
+	}
+	return result, nil
+}
+
 // Has returns true if the key exists in the document.
 func (doc *Document) Has(key string) bool {
 	_, err := findValueNode(doc.root, key)
@@ -575,6 +630,29 @@ func (doc *Document) RemoveArrayTableEntry(node *cst.Node) error {
 	}
 
 	doc.root.Children = append(doc.root.Children[:removeFrom], doc.root.Children[endIdx:]...)
+	return nil
+}
+
+// FindTableInContainer finds a [container.key] table that belongs to the
+// given container node. It first checks direct children, then searches the
+// document root for qualified table headers.
+func (doc *Document) FindTableInContainer(container *cst.Node, key string) *cst.Node {
+	for _, child := range container.Children {
+		if child.Kind == cst.NodeTable && tableHeaderKey(child) == key {
+			return child
+		}
+	}
+
+	containerKey := tableHeaderKey(container)
+	if containerKey == "" {
+		return nil
+	}
+	qualifiedKey := containerKey + "." + key
+	for _, child := range doc.root.Children {
+		if child.Kind == cst.NodeTable && tableHeaderKey(child) == qualifiedKey {
+			return child
+		}
+	}
 	return nil
 }
 

@@ -634,6 +634,85 @@ func TestDeleteArrayTableAppendSyntaxErrors(t *testing.T) {
 	}
 }
 
+func TestGetRawFromContainerString(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\ncommand = \"grit mcp\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	raw, err := GetRawFromContainer(doc, nodes[0], "command")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, ok := raw.(string)
+	if !ok {
+		t.Fatalf("expected string, got %T", raw)
+	}
+	if s != "grit mcp" {
+		t.Fatalf("expected %q, got %q", "grit mcp", s)
+	}
+}
+
+func TestGetRawFromContainerBool(t *testing.T) {
+	input := []byte("[[entries]]\nenabled = true\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("entries")
+	raw, err := GetRawFromContainer(doc, nodes[0], "enabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		t.Fatalf("expected bool, got %T", raw)
+	}
+	if !b {
+		t.Fatal("expected true")
+	}
+}
+
+func TestGetRawFromContainerArray(t *testing.T) {
+	input := []byte("[[entries]]\ntags = [\"a\", \"b\"]\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("entries")
+	raw, err := GetRawFromContainer(doc, nodes[0], "tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T", raw)
+	}
+	if len(arr) != 2 {
+		t.Fatalf("expected 2 elements, got %d", len(arr))
+	}
+	if arr[0] != "a" || arr[1] != "b" {
+		t.Fatalf("expected [a, b], got %v", arr)
+	}
+}
+
+func TestGetRawFromContainerNotFound(t *testing.T) {
+	input := []byte("[[entries]]\nname = \"x\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("entries")
+	_, err = GetRawFromContainer(doc, nodes[0], "missing")
+	if err == nil {
+		t.Fatal("expected error for missing key")
+	}
+}
+
 func TestRemoveArrayTableEntryLast(t *testing.T) {
 	input := []byte("[[servers]]\nname = \"only\"\n")
 	doc, err := Parse(input)
@@ -649,5 +728,41 @@ func TestRemoveArrayTableEntryLast(t *testing.T) {
 	got := string(doc.Bytes())
 	if got != "" {
 		t.Fatalf("expected empty, got %q", got)
+	}
+}
+
+func TestFindTableInContainer(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n[servers.annotations]\nreadOnlyHint = true\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	tableNode := doc.FindTableInContainer(nodes[0], "annotations")
+	if tableNode == nil {
+		t.Fatal("expected to find annotations table")
+	}
+	v, err := GetFromContainer[bool](doc, tableNode, "readOnlyHint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v {
+		t.Fatal("expected readOnlyHint true")
+	}
+}
+
+func TestFindTableInContainerNotFound(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"grit\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := doc.FindArrayTableNodes("servers")
+	tableNode := doc.FindTableInContainer(nodes[0], "missing")
+	if tableNode != nil {
+		t.Fatal("expected nil for missing table")
 	}
 }
