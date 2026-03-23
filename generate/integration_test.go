@@ -48,12 +48,10 @@ type Config struct {
 	}
 
 	// Verify generated file exists.
-	genPath := filepath.Join(dir, "config_tommy.go")
-	genData, err := os.ReadFile(genPath)
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	// Write a test that exercises the generated decode/encode round-trip.
 	writeFixture(t, dir, "roundtrip_test.go", `package roundtrip
@@ -130,10 +128,8 @@ func TestDecodeEncode(t *testing.T) {
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
-	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
-	if err != nil {
-		t.Fatalf("go test failed: %v", err)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
 }
 
@@ -180,12 +176,10 @@ type Server struct {
 	}
 
 	// Verify generated file exists.
-	genPath := filepath.Join(dir, "config_tommy.go")
-	genData, err := os.ReadFile(genPath)
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "aot_test.go", `package aot
 
@@ -221,7 +215,7 @@ func TestAOTRoundTrip(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("generated test failed:\n%s", output)
 	}
@@ -314,12 +308,10 @@ type ServerConfig struct {
 	}
 
 	// Verify generated file exists.
-	genPath := filepath.Join(dir, "config_tommy.go")
-	genData, err := os.ReadFile(genPath)
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "main_test.go", `package main
 
@@ -350,7 +342,7 @@ func TestCustomTypes(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -453,11 +445,10 @@ type AnnotationFilter struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "main.go", "package main\n\nfunc main() {}\n")
 
@@ -621,7 +612,7 @@ func TestDecodeNoAnnotationSubTable(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -710,11 +701,10 @@ type AnnotationFilter struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "flatkey_test.go", `package flatkey
 
@@ -780,7 +770,7 @@ func TestNoFlatKeysNoSubTable(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -830,11 +820,10 @@ type Hooks struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "sweatfile_test.go", `package sweatfile
 
@@ -1000,7 +989,7 @@ func TestUndecodedMapKeysAllConsumed(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1048,11 +1037,10 @@ type Hooks struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "ptrstruct_test.go", `package ptrstruct
 
@@ -1092,7 +1080,7 @@ func TestModifyPointerStructField(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1135,11 +1123,10 @@ type Config struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "dash_test.go", `package tomldash
 
@@ -1177,7 +1164,7 @@ func TestDashFieldExcluded(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1224,11 +1211,10 @@ type Hooks struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "omitempty_test.go", `package omitempty
 
@@ -1328,7 +1314,7 @@ func TestExplicitSliceOmitemptyPreserved(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1371,11 +1357,10 @@ type Config struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "zeroval_test.go", `package zeroval
 
@@ -1430,7 +1415,7 @@ func TestZeroValuePreservedWhenExplicit(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1476,11 +1461,10 @@ type Server struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "append_test.go", `package aotappend
 
@@ -1544,7 +1528,7 @@ func TestAppendPreservesExisting(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1587,11 +1571,10 @@ type Config struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "omitprim_test.go", `package omitprim
 
@@ -1651,7 +1634,7 @@ func TestOmitemptyPrimitiveNonZeroPreserved(t *testing.T) {
 	cmd2.Dir = dir
 	cmd2.Env = append(os.Environ(), "GOFLAGS=")
 	output2, err := cmd2.CombinedOutput()
-	t.Logf("go test output:\n%s", output2)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output2)
 	}
@@ -1693,11 +1676,10 @@ type Config struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "multiline_test.go", `package multiline
 
@@ -1758,7 +1740,7 @@ func TestMultilineEncodeNewValue(t *testing.T) {
 	cmdML.Dir = dir
 	cmdML.Env = append(os.Environ(), "GOFLAGS=")
 	outputML, err := cmdML.CombinedOutput()
-	t.Logf("go test output:\n%s", outputML)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputML)
 	}
@@ -1825,11 +1807,10 @@ type Config struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "textmarshal_test.go", `package textmarshal
 
@@ -1883,7 +1864,7 @@ func TestTextMarshalerModify(t *testing.T) {
 	cmdTM.Dir = dir
 	cmdTM.Env = append(os.Environ(), "GOFLAGS=")
 	outputTM, err := cmdTM.CombinedOutput()
-	t.Logf("go test output:\n%s", outputTM)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputTM)
 	}
@@ -1931,11 +1912,10 @@ type Config struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "embedded_test.go", `package embedded
 
@@ -2001,7 +1981,7 @@ func TestEmbeddedStructModify(t *testing.T) {
 	cmdEmb.Dir = dir
 	cmdEmb.Env = append(os.Environ(), "GOFLAGS=")
 	outputEmb, err := cmdEmb.CombinedOutput()
-	t.Logf("go test output:\n%s", outputEmb)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputEmb)
 	}
@@ -2048,11 +2028,10 @@ type ActionSpec struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "mapstruct_test.go", `package mapstruct
 
@@ -2121,7 +2100,7 @@ func TestMapStringStructModify(t *testing.T) {
 	cmdMS.Dir = dir
 	cmdMS.Env = append(os.Environ(), "GOFLAGS=")
 	outputMS, err := cmdMS.CombinedOutput()
-	t.Logf("go test output:\n%s", outputMS)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputMS)
 	}
@@ -2187,11 +2166,10 @@ type Config struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "slicetm_test.go", `package slicetm
 
@@ -2252,7 +2230,7 @@ func TestSliceTextMarshalerModify(t *testing.T) {
 	cmdST.Dir = dir
 	cmdST.Env = append(os.Environ(), "GOFLAGS=")
 	outputST, err := cmdST.CombinedOutput()
-	t.Logf("go test output:\n%s", outputST)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputST)
 	}
@@ -2295,11 +2273,10 @@ type SelectorConfig struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "uint64_test.go", `package uint64test
 
@@ -2361,7 +2338,7 @@ func TestUint64Modify(t *testing.T) {
 	cmdU.Dir = dir
 	cmdU.Env = append(os.Environ(), "GOFLAGS=")
 	outputU, err := cmdU.CombinedOutput()
-	t.Logf("go test output:\n%s", outputU)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputU)
 	}
@@ -2414,11 +2391,10 @@ type Plugin struct {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-	t.Logf("Generated code:\n%s", genData)
+
 
 	writeFixture(t, dir, "nested_test.go", `package nestedaot
 
@@ -2480,7 +2456,7 @@ func TestNestedArrayOfTablesRoundTrip(t *testing.T) {
 	cmdN.Dir = dir
 	cmdN.Env = append(os.Environ(), "GOFLAGS=")
 	outputN, err := cmdN.CombinedOutput()
-	t.Logf("go test output:\n%s", outputN)
+
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputN)
 	}
