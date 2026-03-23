@@ -30,8 +30,9 @@ type {{unexport .TypeName}}Handle struct {
 }
 {{end}}{{end}}
 type {{.Name}}Document struct {
-	data   {{.Name}}
-	cstDoc *document.Document
+	data     {{.Name}}
+	cstDoc   *document.Document
+	consumed map[string]bool
 {{- range .Fields}}{{if eq (kindInt .Kind) 4}}
 	{{unexport .GoName}} []{{unexport .TypeName}}Handle
 {{- end}}{{end}}
@@ -43,7 +44,7 @@ func Decode{{.Name}}(input []byte) (*{{.Name}}Document, error) {
 		return nil, err
 	}
 
-	d := &{{.Name}}Document{cstDoc: doc}
+	d := &{{.Name}}Document{cstDoc: doc, consumed: make(map[string]bool)}
 
 {{emitDecode .}}
 	return d, nil
@@ -54,6 +55,10 @@ func (d *{{.Name}}Document) Data() *{{.Name}} { return &d.data }
 func (d *{{.Name}}Document) Encode() ([]byte, error) {
 {{emitEncode .}}
 	return d.cstDoc.Bytes(), nil
+}
+
+func (d *{{.Name}}Document) Undecoded() []string {
+	return document.UndecodedKeys(d.cstDoc.Root(), d.consumed)
 }
 {{end}}`
 

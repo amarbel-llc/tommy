@@ -724,6 +724,51 @@ func DeleteAllInContainer(container *cst.Node) {
 	container.Children = kept
 }
 
+// UndecodedKeys walks the CST and returns all key paths not present in
+// the consumed set. Table headers are prefixed to their children
+// (e.g. "hooks.create"). Keys under consumed tables are skipped entirely.
+func UndecodedKeys(root *cst.Node, consumed map[string]bool) []string {
+	var result []string
+	for _, child := range root.Children {
+		switch child.Kind {
+		case cst.NodeKeyValue:
+			key := keyValueName(child)
+			if !consumed[key] {
+				result = append(result, key)
+			}
+		case cst.NodeTable:
+			tableName := tableHeaderKey(child)
+			if consumed[tableName] {
+				// Table was consumed (e.g. map field) — check inner keys
+				for _, inner := range child.Children {
+					if inner.Kind != cst.NodeKeyValue {
+						continue
+					}
+					qualifiedKey := tableName + "." + keyValueName(inner)
+					if !consumed[qualifiedKey] {
+						result = append(result, qualifiedKey)
+					}
+				}
+			} else {
+				// Table itself is unknown
+				result = append(result, tableName)
+			}
+		}
+	}
+	return result
+}
+
+// MarkAllConsumed marks all key-value children in a table as consumed,
+// using the given prefix (e.g. "env") to build qualified keys like "env.FOO".
+func MarkAllConsumed(table *cst.Node, prefix string, consumed map[string]bool) {
+	for _, child := range table.Children {
+		if child.Kind != cst.NodeKeyValue {
+			continue
+		}
+		consumed[prefix+"."+keyValueName(child)] = true
+	}
+}
+
 func deleteFromContainer(container *cst.Node, key string) error {
 	for i, child := range container.Children {
 		if child.Kind != cst.NodeKeyValue {

@@ -7,7 +7,7 @@ import (
 
 func TestEmitDecodePrimitive(t *testing.T) {
 	fi := FieldInfo{GoName: "Name", TomlKey: "name", Kind: FieldPrimitive, TypeName: "string"}
-	code := emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()")
+	code := emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", "")
 	if !strings.Contains(code, `GetFromContainer[string]`) {
 		t.Fatalf("expected GetFromContainer[string], got:\n%s", code)
 	}
@@ -27,7 +27,7 @@ func TestEmitDecodeSliceStruct(t *testing.T) {
 			},
 		},
 	}
-	code := emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()")
+	code := emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", "")
 	if !strings.Contains(code, `FindArrayTableNodes("servers")`) {
 		t.Fatalf("expected FindArrayTableNodes, got:\n%s", code)
 	}
@@ -38,7 +38,7 @@ func TestEmitDecodeSliceStruct(t *testing.T) {
 
 func TestEmitDecodePointerPrimitive(t *testing.T) {
 	fi := FieldInfo{GoName: "Enabled", TomlKey: "enabled", Kind: FieldPointerPrimitive, TypeName: "bool"}
-	code := emitDecodeField(fi, "d.data", "d.cstDoc", "container")
+	code := emitDecodeField(fi, "d.data", "d.cstDoc", "container", "")
 	if !strings.Contains(code, `GetFromContainer[bool]`) {
 		t.Fatalf("expected GetFromContainer[bool], got:\n%s", code)
 	}
@@ -49,7 +49,7 @@ func TestEmitDecodePointerPrimitive(t *testing.T) {
 
 func TestEmitDecodeCustom(t *testing.T) {
 	fi := FieldInfo{GoName: "Command", TomlKey: "command", Kind: FieldCustom, TypeName: "Command"}
-	code := emitDecodeField(fi, "d.data", "d.cstDoc", "container")
+	code := emitDecodeField(fi, "d.data", "d.cstDoc", "container", "")
 	if !strings.Contains(code, `GetRawFromContainer`) {
 		t.Fatalf("expected GetRawFromContainer, got:\n%s", code)
 	}
@@ -69,7 +69,7 @@ func TestEmitDecodePointerStruct(t *testing.T) {
 			},
 		},
 	}
-	code := emitDecodeField(fi, "d.data", "d.cstDoc", "container")
+	code := emitDecodeField(fi, "d.data", "d.cstDoc", "container", "")
 	if !strings.Contains(code, `FindTableInContainer`) {
 		t.Fatalf("expected FindTableInContainer, got:\n%s", code)
 	}

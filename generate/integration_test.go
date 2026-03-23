@@ -928,6 +928,72 @@ func TestEmptyMapNotAppended(t *testing.T) {
 		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
 	}
 }
+
+func TestUndecodedEmpty(t *testing.T) {
+	// All keys are known — Undecoded should return nothing.
+	input := []byte("system-prompt = \"hi\"\ngit-excludes = [\".claude/\"]\n\n[hooks]\ncreate = \"npm install\"\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	undecoded := doc.Undecoded()
+	if len(undecoded) != 0 {
+		t.Fatalf("expected no undecoded keys, got %v", undecoded)
+	}
+}
+
+func TestUndecodedTypo(t *testing.T) {
+	// "sytem-prompt" is a typo — should appear in Undecoded.
+	input := []byte("sytem-prompt = \"hi\"\ngit-excludes = [\".claude/\"]\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	undecoded := doc.Undecoded()
+	if len(undecoded) != 1 {
+		t.Fatalf("expected 1 undecoded key, got %v", undecoded)
+	}
+	if undecoded[0] != "sytem-prompt" {
+		t.Fatalf("expected undecoded key 'sytem-prompt', got %q", undecoded[0])
+	}
+}
+
+func TestUndecodedNestedTypo(t *testing.T) {
+	// "creat" is a typo inside [hooks] — should appear as "hooks.creat".
+	input := []byte("system-prompt = \"hi\"\n\n[hooks]\ncreat = \"npm install\"\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	undecoded := doc.Undecoded()
+	if len(undecoded) != 1 {
+		t.Fatalf("expected 1 undecoded key, got %v", undecoded)
+	}
+	if undecoded[0] != "hooks.creat" {
+		t.Fatalf("expected undecoded key 'hooks.creat', got %q", undecoded[0])
+	}
+}
+
+func TestUndecodedMapKeysAllConsumed(t *testing.T) {
+	// [env] is a map[string]string — all keys under it should be consumed.
+	input := []byte("system-prompt = \"hi\"\n\n[env]\nFOO = \"bar\"\nANYTHING = \"goes\"\n")
+
+	doc, err := DecodeSweatfile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	undecoded := doc.Undecoded()
+	if len(undecoded) != 0 {
+		t.Fatalf("expected no undecoded keys (map accepts all), got %v", undecoded)
+	}
+}
 `)
 
 	cmd := exec.Command("go", "test", "-v", "./...")
