@@ -38,6 +38,7 @@ type FieldInfo struct {
 	ElemType  string
 	TypeName  string
 	InnerInfo *StructInfo
+	OmitEmpty bool
 }
 
 // Analyze inspects the given Go source file for structs with
@@ -133,8 +134,7 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 		if field.Tag == nil {
 			continue
 		}
-		tag := field.Tag.Value
-		tomlKey := extractTomlTag(tag)
+		tomlKey, opts := extractTomlTag(field.Tag.Value)
 		if tomlKey == "" {
 			continue
 		}
@@ -144,6 +144,7 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 			if err != nil {
 				return si, fmt.Errorf("field %s.%s: %w", name, ident.Name, err)
 			}
+			fi.OmitEmpty = opts.omitEmpty
 			si.Fields = append(si.Fields, fi)
 		}
 	}
@@ -151,22 +152,35 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 	return si, nil
 }
 
-func extractTomlTag(raw string) string {
+type tagOpts struct {
+	omitEmpty bool
+}
+
+func extractTomlTag(raw string) (string, tagOpts) {
 	tag := strings.Trim(raw, "`")
 	idx := strings.Index(tag, `toml:"`)
 	if idx < 0 {
-		return ""
+		return "", tagOpts{}
 	}
 	rest := tag[idx+6:]
 	end := strings.IndexByte(rest, '"')
 	if end < 0 {
-		return ""
+		return "", tagOpts{}
 	}
-	name, _, _ := strings.Cut(rest[:end], ",")
+	full := rest[:end]
+	name, remainder, _ := strings.Cut(full, ",")
 	if name == "-" {
-		return ""
+		return "", tagOpts{}
 	}
-	return name
+	var opts tagOpts
+	for remainder != "" {
+		var opt string
+		opt, remainder, _ = strings.Cut(remainder, ",")
+		if opt == "omitempty" {
+			opts.omitEmpty = true
+		}
+	}
+	return name, opts
 }
 
 var primitiveTypes = map[string]bool{

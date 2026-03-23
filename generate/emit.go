@@ -222,10 +222,17 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSlicePrimitive:
+		if fi.OmitEmpty {
+			fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
+				source, docVar, containerExpr, fi.TomlKey)
+		}
 		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey, source)
 		fmt.Fprintf(&buf, "\t\treturn nil, err\n")
 		fmt.Fprintf(&buf, "\t}\n")
+		if fi.OmitEmpty {
+			fmt.Fprintf(&buf, "\t}\n")
+		}
 
 	case FieldMapStringString:
 		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)

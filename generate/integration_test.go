@@ -1117,6 +1117,157 @@ func TestDashFieldExcluded(t *testing.T) {
 	}
 }
 
+func TestIntegrationOmitempty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/omitempty",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package omitempty
+
+//go:generate tommy generate
+type Config struct {
+	Name  string   `+"`"+`toml:"name"`+"`"+`
+	Tags  []string `+"`"+`toml:"tags,omitempty"`+"`"+`
+	Hooks *Hooks   `+"`"+`toml:"hooks,omitempty"`+"`"+`
+}
+
+type Hooks struct {
+	Create *string `+"`"+`toml:"create"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "omitempty_test.go", `package omitempty
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestNilSliceOmitemptyNotWritten(t *testing.T) {
+	// tags is nil and omitempty — should not appear in output.
+	input := []byte("name = \"app\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Tags != nil {
+		t.Fatal("expected nil Tags")
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestNonEmptySliceOmitemptyWritten(t *testing.T) {
+	// tags is set — should appear in output.
+	input := []byte("name = \"app\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.Data().Tags = []string{"v1", "v2"}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(out), "tags") {
+		t.Fatalf("expected tags in output, got:\n%s", string(out))
+	}
+}
+
+func TestNilPointerStructOmitemptyNotWritten(t *testing.T) {
+	// hooks is nil and omitempty — should not appear in output.
+	input := []byte("name = \"app\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Hooks != nil {
+		t.Fatal("expected nil Hooks")
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(out), "hooks") || strings.Contains(string(out), "create") {
+		t.Fatalf("nil omitempty pointer struct leaked into output:\n%s", string(out))
+	}
+}
+
+func TestExplicitSliceOmitemptyPreserved(t *testing.T) {
+	// tags exists in TOML — should survive round-trip.
+	input := []byte("name = \"app\"\ntags = [\"v1\"]\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 func TestIntegrationZeroValuePrimitiveSkip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
