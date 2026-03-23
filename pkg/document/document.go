@@ -577,7 +577,48 @@ func appendKeyValue(container *cst.Node, key string, encoded []byte, kind cst.No
 		},
 	}
 
-	container.Children = append(container.Children, kv)
+	insertIdx := bodyTrailingTriviaStart(container)
+
+	newChildren := make([]*cst.Node, 0, len(container.Children)+1)
+	newChildren = append(newChildren, container.Children[:insertIdx]...)
+	newChildren = append(newChildren, kv)
+	newChildren = append(newChildren, container.Children[insertIdx:]...)
+	container.Children = newChildren
+}
+
+// bodyTrailingTriviaStart returns the index where trailing trivia begins in a
+// container's children. New key-value entries should be inserted at this index
+// so that blank-line separators between table sections remain at the end.
+func bodyTrailingTriviaStart(container *cst.Node) int {
+	n := len(container.Children)
+
+	// Walk backwards past trailing NodeNewline children (blank-line separators).
+	trailingStart := n
+	for trailingStart > 0 && container.Children[trailingStart-1].Kind == cst.NodeNewline {
+		trailingStart--
+	}
+
+	// For table/array-table nodes, the header ends with a newline that must not
+	// be treated as trailing trivia. Find the header boundary (first newline
+	// after the last bracket-close) and clamp.
+	if container.Kind == cst.NodeTable || container.Kind == cst.NodeArrayTable {
+		headerEnd := 0
+		foundClose := false
+		for i, child := range container.Children {
+			if child.Kind == cst.NodeBracketClose {
+				foundClose = true
+			}
+			if foundClose && child.Kind == cst.NodeNewline {
+				headerEnd = i + 1
+				break
+			}
+		}
+		if trailingStart < headerEnd {
+			trailingStart = headerEnd
+		}
+	}
+
+	return trailingStart
 }
 
 // AppendArrayTableEntry adds a new [[key]] section after the last existing

@@ -754,6 +754,56 @@ func TestFindTableInContainer(t *testing.T) {
 	}
 }
 
+func TestDeleteAllAndReAddPreservesTableSpacing(t *testing.T) {
+	// Reproduces https://github.com/amarbel-llc/tommy/issues/20:
+	// DeleteAllInContainer + re-adding entries should not shift the blank
+	// line from between tables to after the table header.
+	input := []byte("[env]\nFOO = \"bar\"\nBAZ = \"qux\"\n\n[hooks]\ncreate = \"npm install\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	table := doc.FindTable("env")
+	if table == nil {
+		t.Fatal("expected to find [env] table")
+	}
+
+	DeleteAllInContainer(table)
+
+	if err := doc.SetInContainer(table, "FOO", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.SetInContainer(table, "BAZ", "qux"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(doc.Bytes())
+	if got != string(input) {
+		t.Fatalf("expected:\n%s\ngot:\n%s", string(input), got)
+	}
+}
+
+func TestSetNewKeyInTablePreservesTrailingBlank(t *testing.T) {
+	// Adding a new key to a table that has a trailing blank line should
+	// insert the entry before the blank line, not after it.
+	input := []byte("[env]\nFOO = \"bar\"\n\n[hooks]\ncreate = \"npm install\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := doc.Set("env.BAZ", "qux"); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "[env]\nFOO = \"bar\"\nBAZ = \"qux\"\n\n[hooks]\ncreate = \"npm install\"\n"
+	got := string(doc.Bytes())
+	if got != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
 func TestFindTableInContainerNotFound(t *testing.T) {
 	input := []byte("[[servers]]\nname = \"grit\"\n")
 	doc, err := Parse(input)
