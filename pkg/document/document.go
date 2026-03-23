@@ -787,6 +787,53 @@ func (doc *Document) EnsureTable(name string) *cst.Node {
 	return table
 }
 
+// FindSubTables returns all [prefix.key] table nodes for a given prefix,
+// along with the sub-key (the part after the prefix dot).
+// For example, FindSubTables("actions") returns tables like [actions.build].
+func (doc *Document) FindSubTables(prefix string) []*cst.Node {
+	var nodes []*cst.Node
+	dotPrefix := prefix + "."
+	for _, child := range doc.root.Children {
+		if child.Kind != cst.NodeTable {
+			continue
+		}
+		header := tableHeaderKey(child)
+		if strings.HasPrefix(header, dotPrefix) {
+			nodes = append(nodes, child)
+		}
+	}
+	return nodes
+}
+
+// SubTableKey returns the sub-key portion of a [prefix.key] table header.
+// For a table with header "actions.build", SubTableKey("actions") returns "build".
+func SubTableKey(table *cst.Node, prefix string) string {
+	header := tableHeaderKey(table)
+	return strings.TrimPrefix(header, prefix+".")
+}
+
+// EnsureSubTable finds or creates a [prefix.key] table section.
+func (doc *Document) EnsureSubTable(prefix, key string) *cst.Node {
+	fullName := prefix + "." + key
+	if existing := findTableNode(doc.root, fullName); existing != nil {
+		return existing
+	}
+	table := &cst.Node{
+		Kind: cst.NodeTable,
+		Children: []*cst.Node{
+			{Kind: cst.NodeBracketOpen, Raw: []byte("[")},
+			{Kind: cst.NodeKey, Raw: []byte(prefix)},
+			{Kind: cst.NodeDot, Raw: []byte(".")},
+			{Kind: cst.NodeKey, Raw: []byte(key)},
+			{Kind: cst.NodeBracketClose, Raw: []byte("]")},
+			{Kind: cst.NodeNewline, Raw: []byte("\n")},
+		},
+	}
+	blankLine := &cst.Node{Kind: cst.NodeNewline, Raw: []byte("\n")}
+	doc.root.Children = append(doc.root.Children, blankLine, table)
+	return table
+}
+
 // DeleteAllInContainer removes all key-value children from a container node.
 func DeleteAllInContainer(container *cst.Node) {
 	var kept []*cst.Node

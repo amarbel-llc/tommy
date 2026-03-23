@@ -23,6 +23,8 @@ const (
 	FieldPointerPrimitive                  // *bool, *int, etc.
 	FieldMapStringString                   // map[string]string
 	FieldTextMarshaler                     // implements encoding.TextMarshaler/TextUnmarshaler
+	FieldMapStringStruct                   // map[string]SomeStruct
+	FieldSliceTextMarshaler                // []TextMarshalerType
 )
 
 // StructInfo describes a struct that needs code generation.
@@ -249,6 +251,13 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 			fi.Kind = FieldSlicePrimitive
 			return fi, nil
 		}
+		// Check if element type implements TextMarshaler/TextUnmarshaler
+		obj := pkg.Types.Scope().Lookup(elemIdent.Name)
+		if obj != nil && hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
+			fi.Kind = FieldSliceTextMarshaler
+			fi.TypeName = elemIdent.Name
+			return fi, nil
+		}
 		fi.Kind = FieldSliceStruct
 		fi.TypeName = elemIdent.Name
 		innerInfo, err := resolveStructByName(pkg, elemIdent.Name)
@@ -264,10 +273,21 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 			return fi, fmt.Errorf("unsupported map key type (only string keys supported)")
 		}
 		valIdent, ok := t.Value.(*ast.Ident)
-		if !ok || valIdent.Name != "string" {
-			return fi, fmt.Errorf("unsupported map value type (only map[string]string supported)")
+		if !ok {
+			return fi, fmt.Errorf("unsupported map value type")
 		}
-		fi.Kind = FieldMapStringString
+		if valIdent.Name == "string" {
+			fi.Kind = FieldMapStringString
+			return fi, nil
+		}
+		// map[string]Struct
+		fi.Kind = FieldMapStringStruct
+		fi.TypeName = valIdent.Name
+		innerInfo, err := resolveStructByName(pkg, valIdent.Name)
+		if err != nil {
+			return fi, err
+		}
+		fi.InnerInfo = &innerInfo
 		return fi, nil
 
 	default:

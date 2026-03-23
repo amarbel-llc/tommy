@@ -2006,3 +2006,254 @@ func TestEmbeddedStructModify(t *testing.T) {
 		t.Fatalf("test failed:\n%s", outputEmb)
 	}
 }
+
+func TestIntegrationMapStringStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/mapstruct",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package mapstruct
+
+//go:generate tommy generate
+type Config struct {
+	Name    string                `+"`"+`toml:"name"`+"`"+`
+	Actions map[string]ActionSpec `+"`"+`toml:"actions"`+"`"+`
+}
+
+type ActionSpec struct {
+	Command string `+"`"+`toml:"command"`+"`"+`
+	Timeout int    `+"`"+`toml:"timeout"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "mapstruct_test.go", `package mapstruct
+
+import "testing"
+
+func TestMapStringStructRoundTrip(t *testing.T) {
+	input := []byte("name = \"app\"\n\n[actions.build]\ncommand = \"make\"\ntimeout = 30\n\n[actions.test]\ncommand = \"go test\"\ntimeout = 60\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "app" {
+		t.Fatalf("expected name app, got %q", cfg.Name)
+	}
+	if len(cfg.Actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(cfg.Actions))
+	}
+	build := cfg.Actions["build"]
+	if build.Command != "make" || build.Timeout != 30 {
+		t.Fatalf("unexpected build action: %+v", build)
+	}
+	test := cfg.Actions["test"]
+	if test.Command != "go test" || test.Timeout != 60 {
+		t.Fatalf("unexpected test action: %+v", test)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestMapStringStructModify(t *testing.T) {
+	input := []byte("name = \"app\"\n\n[actions.build]\ncommand = \"make\"\ntimeout = 30\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	build := doc.Data().Actions["build"]
+	build.Command = "cmake"
+	build.Timeout = 45
+	doc.Data().Actions["build"] = build
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "name = \"app\"\n\n[actions.build]\ncommand = \"cmake\"\ntimeout = 45\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+`)
+
+	cmdMS := exec.Command("go", "test", "-v", "./...")
+	cmdMS.Dir = dir
+	cmdMS.Env = append(os.Environ(), "GOFLAGS=")
+	outputMS, err := cmdMS.CombinedOutput()
+	t.Logf("go test output:\n%s", outputMS)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputMS)
+	}
+}
+
+func TestIntegrationSliceTextMarshaler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/slicetm",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "types.go", `package slicetm
+
+import "fmt"
+
+type KeyID struct {
+	value string
+}
+
+func NewKeyID(s string) KeyID { return KeyID{value: s} }
+func (k KeyID) String() string { return k.value }
+
+func (k KeyID) MarshalText() ([]byte, error) {
+	return []byte(k.value), nil
+}
+
+func (k *KeyID) UnmarshalText(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty KeyID")
+	}
+	k.value = string(data)
+	return nil
+}
+`)
+
+	writeFixture(t, dir, "config.go", `package slicetm
+
+//go:generate tommy generate
+type Config struct {
+	Name       string  `+"`"+`toml:"name"`+"`"+`
+	Encryption []KeyID `+"`"+`toml:"encryption"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "slicetm_test.go", `package slicetm
+
+import "testing"
+
+func TestSliceTextMarshalerRoundTrip(t *testing.T) {
+	input := []byte("name = \"vault\"\nencryption = [\"key-abc\", \"key-def\"]\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if len(cfg.Encryption) != 2 {
+		t.Fatalf("expected 2 keys, got %d", len(cfg.Encryption))
+	}
+	if cfg.Encryption[0].String() != "key-abc" {
+		t.Fatalf("expected key-abc, got %q", cfg.Encryption[0].String())
+	}
+	if cfg.Encryption[1].String() != "key-def" {
+		t.Fatalf("expected key-def, got %q", cfg.Encryption[1].String())
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestSliceTextMarshalerModify(t *testing.T) {
+	input := []byte("name = \"vault\"\nencryption = [\"key-abc\"]\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.Data().Encryption = append(doc.Data().Encryption, NewKeyID("key-xyz"))
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "name = \"vault\"\nencryption = [\"key-abc\", \"key-xyz\"]\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+`)
+
+	cmdST := exec.Command("go", "test", "-v", "./...")
+	cmdST.Dir = dir
+	cmdST.Env = append(os.Environ(), "GOFLAGS=")
+	outputST, err := cmdST.CombinedOutput()
+	t.Logf("go test output:\n%s", outputST)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputST)
+	}
+}
