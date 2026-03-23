@@ -22,6 +22,7 @@ const (
 	FieldCustom                            // implements TOMLUnmarshaler
 	FieldPointerPrimitive                  // *bool, *int, etc.
 	FieldMapStringString                   // map[string]string
+	FieldTextMarshaler                     // implements encoding.TextMarshaler/TextUnmarshaler
 )
 
 // StructInfo describes a struct that needs code generation.
@@ -132,6 +133,16 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 	si := StructInfo{Name: name}
 
 	for _, field := range st.Fields.List {
+		// Handle embedded (anonymous) fields — promote their tagged fields.
+		if len(field.Names) == 0 {
+			embeddedFields, err := resolveEmbeddedFields(pkg, field.Type)
+			if err != nil {
+				return si, fmt.Errorf("embedded field in %s: %w", name, err)
+			}
+			si.Fields = append(si.Fields, embeddedFields...)
+			continue
+		}
+
 		if field.Tag == nil {
 			continue
 		}
@@ -264,6 +275,18 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 	}
 }
 
+func hasMethod(obj types.Object, name string) bool {
+	for _, typ := range []types.Type{obj.Type(), types.NewPointer(obj.Type())} {
+		mset := types.NewMethodSet(typ)
+		for i := range mset.Len() {
+			if mset.At(i).Obj().Name() == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func hasMarshalTOML(obj types.Object) bool {
 	for _, typ := range []types.Type{obj.Type(), types.NewPointer(obj.Type())} {
 		mset := types.NewMethodSet(typ)
@@ -313,6 +336,21 @@ func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (Fi
 		return fi, fmt.Errorf("type %s has MarshalTOML but no UnmarshalTOML — Decode() requires both", typeName)
 	}
 
+	// Check for encoding.TextMarshaler/TextUnmarshaler
+	hasUnmarshalText := hasMethod(obj, "UnmarshalText")
+	hasMarshalText := hasMethod(obj, "MarshalText")
+	if hasUnmarshalText && hasMarshalText {
+		fi.Kind = FieldTextMarshaler
+		fi.TypeName = typeName
+		return fi, nil
+	}
+	if hasUnmarshalText && !hasMarshalText {
+		return fi, fmt.Errorf("type %s has UnmarshalText but no MarshalText — Encode() requires both", typeName)
+	}
+	if hasMarshalText && !hasUnmarshalText {
+		return fi, fmt.Errorf("type %s has MarshalText but no UnmarshalText — Decode() requires both", typeName)
+	}
+
 	fi.Kind = FieldStruct
 	fi.TypeName = typeName
 	innerInfo, err := resolveStructByName(pkg, typeName)
@@ -321,6 +359,28 @@ func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (Fi
 	}
 	fi.InnerInfo = &innerInfo
 	return fi, nil
+}
+
+func resolveEmbeddedFields(pkg *packages.Package, expr ast.Expr) ([]FieldInfo, error) {
+	var typeName string
+	switch t := expr.(type) {
+	case *ast.Ident:
+		typeName = t.Name
+	case *ast.StarExpr:
+		inner, ok := t.X.(*ast.Ident)
+		if !ok {
+			return nil, fmt.Errorf("unsupported embedded pointer type")
+		}
+		typeName = inner.Name
+	default:
+		return nil, fmt.Errorf("unsupported embedded type %T", expr)
+	}
+
+	si, err := resolveStructByName(pkg, typeName)
+	if err != nil {
+		return nil, fmt.Errorf("resolving embedded %s: %w", typeName, err)
+	}
+	return si.Fields, nil
 }
 
 func resolveStructByName(pkg *packages.Package, name string) (StructInfo, error) {

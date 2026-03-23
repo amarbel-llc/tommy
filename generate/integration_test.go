@@ -1754,12 +1754,255 @@ func TestMultilineEncodeNewValue(t *testing.T) {
 }
 `)
 
-	cmd := exec.Command("go", "test", "-v", "./...")
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
-	output, err := cmd.CombinedOutput()
-	t.Logf("go test output:\n%s", output)
+	cmdML := exec.Command("go", "test", "-v", "./...")
+	cmdML.Dir = dir
+	cmdML.Env = append(os.Environ(), "GOFLAGS=")
+	outputML, err := cmdML.CombinedOutput()
+	t.Logf("go test output:\n%s", outputML)
 	if err != nil {
-		t.Fatalf("test failed:\n%s", output)
+		t.Fatalf("test failed:\n%s", outputML)
+	}
+}
+
+func TestIntegrationTextMarshaler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/textmarshal",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "types.go", `package textmarshal
+
+import "fmt"
+
+// URI is a custom scalar type implementing encoding.TextMarshaler/TextUnmarshaler.
+type URI struct {
+	value string
+}
+
+func NewURI(s string) URI { return URI{value: s} }
+func (u URI) String() string { return u.value }
+
+func (u URI) MarshalText() ([]byte, error) {
+	return []byte(u.value), nil
+}
+
+func (u *URI) UnmarshalText(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty URI")
+	}
+	u.value = string(data)
+	return nil
+}
+`)
+
+	writeFixture(t, dir, "config.go", `package textmarshal
+
+//go:generate tommy generate
+type Config struct {
+	Name     string `+"`"+`toml:"name"`+"`"+`
+	Homepage URI    `+"`"+`toml:"homepage"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "textmarshal_test.go", `package textmarshal
+
+import "testing"
+
+func TestTextMarshalerRoundTrip(t *testing.T) {
+	input := []byte("name = \"myapp\"\nhomepage = \"https://example.com\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Homepage.String() != "https://example.com" {
+		t.Fatalf("expected homepage https://example.com, got %q", doc.Data().Homepage.String())
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestTextMarshalerModify(t *testing.T) {
+	input := []byte("name = \"myapp\"\nhomepage = \"https://example.com\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.Data().Homepage = NewURI("https://new.example.com")
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "name = \"myapp\"\nhomepage = \"https://new.example.com\"\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+`)
+
+	cmdTM := exec.Command("go", "test", "-v", "./...")
+	cmdTM.Dir = dir
+	cmdTM.Env = append(os.Environ(), "GOFLAGS=")
+	outputTM, err := cmdTM.CombinedOutput()
+	t.Logf("go test output:\n%s", outputTM)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputTM)
+	}
+}
+
+func TestIntegrationEmbeddedStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/embedded",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package embedded
+
+type Common struct {
+	Version string `+"`"+`toml:"version"`+"`"+`
+	Debug   bool   `+"`"+`toml:"debug"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Common
+	Name string `+"`"+`toml:"name"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "embedded_test.go", `package embedded
+
+import "testing"
+
+func TestEmbeddedStructRoundTrip(t *testing.T) {
+	input := []byte("version = \"1.0\"\ndebug = true\nname = \"app\"\nport = 8080\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Version != "1.0" {
+		t.Fatalf("expected version 1.0, got %q", cfg.Version)
+	}
+	if cfg.Debug != true {
+		t.Fatal("expected debug true")
+	}
+	if cfg.Name != "app" {
+		t.Fatalf("expected name app, got %q", cfg.Name)
+	}
+	if cfg.Port != 8080 {
+		t.Fatalf("expected port 8080, got %d", cfg.Port)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestEmbeddedStructModify(t *testing.T) {
+	input := []byte("version = \"1.0\"\ndebug = true\nname = \"app\"\nport = 8080\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.Data().Version = "2.0"
+	doc.Data().Debug = false
+	doc.Data().Port = 9090
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "version = \"2.0\"\ndebug = false\nname = \"app\"\nport = 9090\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+`)
+
+	cmdEmb := exec.Command("go", "test", "-v", "./...")
+	cmdEmb.Dir = dir
+	cmdEmb.Env = append(os.Environ(), "GOFLAGS=")
+	outputEmb, err := cmdEmb.CombinedOutput()
+	t.Logf("go test output:\n%s", outputEmb)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputEmb)
 	}
 }
