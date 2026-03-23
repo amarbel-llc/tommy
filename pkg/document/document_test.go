@@ -816,3 +816,99 @@ func TestFindTableInContainerNotFound(t *testing.T) {
 		t.Fatal("expected nil for missing table")
 	}
 }
+
+// --- Nested array-of-tables tests ---
+// These tests build confidence in the document API for [[parent.child]] support,
+// broken into layers so each can ship independently.
+
+func TestNestedArrayOfTablesCSTRoundTrip(t *testing.T) {
+	// Layer 1: Does [[servers.plugins]] parse and round-trip byte-identically?
+	input := []byte("[[servers]]\nhost = \"alpha\"\n\n[[servers.plugins]]\nname = \"auth\"\n\n[[servers]]\nhost = \"beta\"\n\n[[servers.plugins]]\nname = \"log\"\n")
+
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := doc.Bytes()
+	if string(out) != string(input) {
+		t.Fatalf("round-trip failed.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestFindArrayTableNodesDottedKey(t *testing.T) {
+	// Layer 2: Does FindArrayTableNodes("servers.plugins") find the right nodes?
+	input := []byte("[[servers]]\nhost = \"alpha\"\n\n[[servers.plugins]]\nname = \"auth\"\n\n[[servers.plugins]]\nname = \"cache\"\n\n[[servers]]\nhost = \"beta\"\n\n[[servers.plugins]]\nname = \"log\"\n")
+
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	servers := doc.FindArrayTableNodes("servers")
+	if len(servers) != 2 {
+		t.Fatalf("expected 2 [[servers]], got %d", len(servers))
+	}
+
+	plugins := doc.FindArrayTableNodes("servers.plugins")
+	if len(plugins) != 3 {
+		t.Fatalf("expected 3 [[servers.plugins]], got %d", len(plugins))
+	}
+
+	// Verify we can read values from nested array-table nodes
+	name, err := GetFromContainer[string](doc, plugins[0], "name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "auth" {
+		t.Fatalf("expected auth, got %q", name)
+	}
+
+	name, err = GetFromContainer[string](doc, plugins[2], "name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "log" {
+		t.Fatalf("expected log, got %q", name)
+	}
+}
+
+func TestFindNestedArrayTableNodes(t *testing.T) {
+	// Layer 3: Can we find [[servers.plugins]] scoped to a specific [[servers]] entry?
+	// This is the key new API needed for codegen.
+	input := []byte("[[servers]]\nhost = \"alpha\"\n\n[[servers.plugins]]\nname = \"auth\"\n\n[[servers.plugins]]\nname = \"cache\"\n\n[[servers]]\nhost = \"beta\"\n\n[[servers.plugins]]\nname = \"log\"\n")
+
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	servers := doc.FindArrayTableNodes("servers")
+	if len(servers) != 2 {
+		t.Fatalf("expected 2 servers, got %d", len(servers))
+	}
+
+	// Alpha's plugins: auth, cache
+	alphaPlugins := doc.FindNestedArrayTableNodes("servers", 0, "plugins")
+	if len(alphaPlugins) != 2 {
+		t.Fatalf("expected 2 plugins for alpha, got %d", len(alphaPlugins))
+	}
+	name, _ := GetFromContainer[string](doc, alphaPlugins[0], "name")
+	if name != "auth" {
+		t.Fatalf("expected auth, got %q", name)
+	}
+	name, _ = GetFromContainer[string](doc, alphaPlugins[1], "name")
+	if name != "cache" {
+		t.Fatalf("expected cache, got %q", name)
+	}
+
+	// Beta's plugins: log
+	betaPlugins := doc.FindNestedArrayTableNodes("servers", 1, "plugins")
+	if len(betaPlugins) != 1 {
+		t.Fatalf("expected 1 plugin for beta, got %d", len(betaPlugins))
+	}
+	name, _ = GetFromContainer[string](doc, betaPlugins[0], "name")
+	if name != "log" {
+		t.Fatalf("expected log, got %q", name)
+	}
+}

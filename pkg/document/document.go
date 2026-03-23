@@ -354,6 +354,38 @@ func (doc *Document) FindArrayTableNodes(key string) []*cst.Node {
 	return nodes
 }
 
+// FindNestedArrayTableNodes returns [[parentKey.childKey]] entries that belong
+// to the parentIndex-th [[parentKey]] entry. In TOML, nested array-of-tables
+// entries belong to the most recently defined parent entry. This method finds
+// all [[parentKey.childKey]] nodes between the parentIndex-th and (parentIndex+1)-th
+// [[parentKey]] nodes in document order.
+func (doc *Document) FindNestedArrayTableNodes(parentKey string, parentIndex int, childKey string) []*cst.Node {
+	fullKey := parentKey + "." + childKey
+	parentCount := 0
+	var nodes []*cst.Node
+	inScope := false
+
+	for _, child := range doc.root.Children {
+		if child.Kind == cst.NodeArrayTable {
+			header := tableHeaderKey(child)
+			if header == parentKey {
+				if parentCount == parentIndex {
+					inScope = true
+				} else if parentCount > parentIndex {
+					break // past our parent entry
+				}
+				parentCount++
+				continue
+			}
+			if inScope && header == fullKey {
+				nodes = append(nodes, child)
+			}
+		}
+	}
+
+	return nodes
+}
+
 func tableHeaderKey(table *cst.Node) string {
 	var parts []string
 	for _, child := range table.Children {

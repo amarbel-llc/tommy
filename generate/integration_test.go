@@ -2366,3 +2366,122 @@ func TestUint64Modify(t *testing.T) {
 		t.Fatalf("test failed:\n%s", outputU)
 	}
 }
+
+func TestIntegrationNestedArrayOfTables(t *testing.T) {
+	t.Skip("codegen for nested array-of-tables not yet implemented — see #6")
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/nestedaot",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package nestedaot
+
+//go:generate tommy generate
+type Config struct {
+	Name    string   `+"`"+`toml:"name"`+"`"+`
+	Servers []Server `+"`"+`toml:"servers"`+"`"+`
+}
+
+type Server struct {
+	Host    string   `+"`"+`toml:"host"`+"`"+`
+	Plugins []Plugin `+"`"+`toml:"plugins"`+"`"+`
+}
+
+type Plugin struct {
+	Name    string `+"`"+`toml:"name"`+"`"+`
+	Enabled bool   `+"`"+`toml:"enabled"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "nested_test.go", `package nestedaot
+
+import "testing"
+
+func TestNestedArrayOfTablesRoundTrip(t *testing.T) {
+	input := []byte("name = \"app\"\n\n[[servers]]\nhost = \"alpha\"\n\n[[servers.plugins]]\nname = \"auth\"\nenabled = true\n\n[[servers.plugins]]\nname = \"cache\"\nenabled = false\n\n[[servers]]\nhost = \"beta\"\n\n[[servers.plugins]]\nname = \"log\"\nenabled = true\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "app" {
+		t.Fatalf("expected name app, got %q", cfg.Name)
+	}
+	if len(cfg.Servers) != 2 {
+		t.Fatalf("expected 2 servers, got %d", len(cfg.Servers))
+	}
+
+	// First server: alpha with 2 plugins
+	if cfg.Servers[0].Host != "alpha" {
+		t.Fatalf("expected host alpha, got %q", cfg.Servers[0].Host)
+	}
+	if len(cfg.Servers[0].Plugins) != 2 {
+		t.Fatalf("expected 2 plugins for alpha, got %d", len(cfg.Servers[0].Plugins))
+	}
+	if cfg.Servers[0].Plugins[0].Name != "auth" {
+		t.Fatalf("expected plugin auth, got %q", cfg.Servers[0].Plugins[0].Name)
+	}
+	if cfg.Servers[0].Plugins[1].Name != "cache" {
+		t.Fatalf("expected plugin cache, got %q", cfg.Servers[0].Plugins[1].Name)
+	}
+
+	// Second server: beta with 1 plugin
+	if cfg.Servers[1].Host != "beta" {
+		t.Fatalf("expected host beta, got %q", cfg.Servers[1].Host)
+	}
+	if len(cfg.Servers[1].Plugins) != 1 {
+		t.Fatalf("expected 1 plugin for beta, got %d", len(cfg.Servers[1].Plugins))
+	}
+	if cfg.Servers[1].Plugins[0].Name != "log" {
+		t.Fatalf("expected plugin log, got %q", cfg.Servers[1].Plugins[0].Name)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmdN := exec.Command("go", "test", "-v", "./...")
+	cmdN.Dir = dir
+	cmdN.Env = append(os.Environ(), "GOFLAGS=")
+	outputN, err := cmdN.CombinedOutput()
+	t.Logf("go test output:\n%s", outputN)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputN)
+	}
+}
