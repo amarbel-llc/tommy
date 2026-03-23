@@ -39,6 +39,7 @@ type FieldInfo struct {
 	TypeName  string
 	InnerInfo *StructInfo
 	OmitEmpty bool
+	Multiline bool
 }
 
 // Analyze inspects the given Go source file for structs with
@@ -145,6 +146,7 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 				return si, fmt.Errorf("field %s.%s: %w", name, ident.Name, err)
 			}
 			fi.OmitEmpty = opts.omitEmpty
+			fi.Multiline = opts.multiline
 			si.Fields = append(si.Fields, fi)
 		}
 	}
@@ -154,6 +156,7 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 
 type tagOpts struct {
 	omitEmpty bool
+	multiline bool
 }
 
 func extractTomlTag(raw string) (string, tagOpts) {
@@ -178,6 +181,9 @@ func extractTomlTag(raw string) (string, tagOpts) {
 		opt, remainder, _ = strings.Cut(remainder, ",")
 		if opt == "omitempty" {
 			opts.omitEmpty = true
+		}
+		if opt == "multiline" {
+			opts.multiline = true
 		}
 	}
 	return name, opts

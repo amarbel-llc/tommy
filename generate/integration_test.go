@@ -1549,3 +1549,217 @@ func TestAppendPreservesExisting(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+func TestOmitemptyPrimitiveZeroDropped(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/omitprim",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package omitprim
+
+//go:generate tommy generate
+type Config struct {
+	Name    string `+"`"+`toml:"name"`+"`"+`
+	Verbose bool   `+"`"+`toml:"verbose,omitempty"`+"`"+`
+	Retries int    `+"`"+`toml:"retries,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "omitprim_test.go", `package omitprim
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestOmitemptyPrimitiveZeroNotWritten(t *testing.T) {
+	// verbose and retries are in TOML but set to zero values.
+	// With omitempty, setting them to zero should drop them on encode.
+	input := []byte("name = \"app\"\nverbose = true\nretries = 3\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set to zero values — omitempty should cause them to be dropped.
+	doc.Data().Verbose = false
+	doc.Data().Retries = 0
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(out), "verbose") {
+		t.Fatalf("omitempty zero bool should be dropped, got:\n%s", string(out))
+	}
+	if strings.Contains(string(out), "retries") {
+		t.Fatalf("omitempty zero int should be dropped, got:\n%s", string(out))
+	}
+}
+
+func TestOmitemptyPrimitiveNonZeroPreserved(t *testing.T) {
+	// Non-zero values with omitempty should be written normally.
+	input := []byte("name = \"app\"\nverbose = true\nretries = 3\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd2 := exec.Command("go", "test", "-v", "./...")
+	cmd2.Dir = dir
+	cmd2.Env = append(os.Environ(), "GOFLAGS=")
+	output2, err := cmd2.CombinedOutput()
+	t.Logf("go test output:\n%s", output2)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output2)
+	}
+}
+
+func TestIntegrationMultiline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/multiline",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package multiline
+
+//go:generate tommy generate
+type Config struct {
+	Name   string `+"`"+`toml:"name"`+"`"+`
+	Script string `+"`"+`toml:"script,multiline"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "multiline_test.go", `package multiline
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestMultilineRoundTrip(t *testing.T) {
+	input := []byte("name = \"app\"\nscript = \"\"\"\necho hello\necho world\"\"\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Script != "echo hello\necho world" {
+		t.Fatalf("unexpected script value: %q", doc.Data().Script)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestMultilineEncodeNewValue(t *testing.T) {
+	// Start with a basic string, set a multiline value — should encode as """.
+	input := []byte("name = \"app\"\nscript = \"old\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.Data().Script = "line1\nline2\nline3"
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := string(out)
+	if !strings.Contains(s, "\"\"\"") {
+		t.Fatalf("expected multiline basic string delimiters, got:\n%s", s)
+	}
+	if !strings.Contains(s, "line1\nline2\nline3") {
+		t.Fatalf("expected literal newlines in multiline string, got:\n%s", s)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}

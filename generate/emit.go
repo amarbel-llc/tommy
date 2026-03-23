@@ -168,13 +168,37 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 	switch fi.Kind {
 	case FieldPrimitive:
 		zv := zeroLiteral(fi.TypeName)
-		fmt.Fprintf(&buf, "\tif %s != %s || %s.HasInContainer(%s, %q) {\n",
-			source, zv, docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
-			docVar, containerExpr, fi.TomlKey, source)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
-		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t}\n")
+		if fi.OmitEmpty {
+			fmt.Fprintf(&buf, "\tif %s != %s {\n", source, zv)
+			if fi.Multiline && fi.TypeName == "string" {
+				fmt.Fprintf(&buf, "\t\tif err := %s.SetMultilineInContainer(%s, %q, %s); err != nil {\n",
+					docVar, containerExpr, fi.TomlKey, source)
+			} else {
+				fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
+					docVar, containerExpr, fi.TomlKey, source)
+			}
+			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t} else {\n")
+			fmt.Fprintf(&buf, "\t\t_ = %s.DeleteFromContainer(%s, %q)\n", docVar, containerExpr, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t}\n")
+		} else if fi.Multiline && fi.TypeName == "string" {
+			fmt.Fprintf(&buf, "\tif %s != %s || %s.HasInContainer(%s, %q) {\n",
+				source, zv, docVar, containerExpr, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\tif err := %s.SetMultilineInContainer(%s, %q, %s); err != nil {\n",
+				docVar, containerExpr, fi.TomlKey, source)
+			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t}\n")
+		} else {
+			fmt.Fprintf(&buf, "\tif %s != %s || %s.HasInContainer(%s, %q) {\n",
+				source, zv, docVar, containerExpr, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
+				docVar, containerExpr, fi.TomlKey, source)
+			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t}\n")
+		}
 
 	case FieldPointerPrimitive:
 		fmt.Fprintf(&buf, "\tif %s != nil {\n", source)

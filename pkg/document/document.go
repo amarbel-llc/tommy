@@ -288,6 +288,17 @@ func (doc *Document) SetInContainer(container *cst.Node, key string, value any) 
 	return setInContainer(container, key, encoded, nodeKind)
 }
 
+// SetMultilineInContainer sets a string value using multiline basic string syntax (""").
+func (doc *Document) SetMultilineInContainer(container *cst.Node, key string, value string) error {
+	encoded := []byte(`"""` + "\n" + value + `"""`)
+	return setInContainer(container, key, encoded, cst.NodeString)
+}
+
+// DeleteFromContainer removes a key-value pair from a container node.
+func (doc *Document) DeleteFromContainer(container *cst.Node, key string) error {
+	return deleteFromContainer(container, key)
+}
+
 func findValueNode(root *cst.Node, key string) (*cst.Node, error) {
 	parts := strings.Split(key, ".")
 
@@ -398,12 +409,35 @@ func keyValueValueNode(kv *cst.Node) *cst.Node {
 }
 
 func stripQuotes(s string) string {
+	if len(s) >= 6 && s[:3] == `"""` && s[len(s)-3:] == `"""` {
+		inner := s[3 : len(s)-3]
+		if len(inner) > 0 && inner[0] == '\n' {
+			inner = inner[1:]
+		}
+		return inner
+	}
+	if len(s) >= 6 && s[:3] == `'''` && s[len(s)-3:] == `'''` {
+		inner := s[3 : len(s)-3]
+		if len(inner) > 0 && inner[0] == '\n' {
+			inner = inner[1:]
+		}
+		return inner
+	}
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
+		return unescapeString(s[1 : len(s)-1])
 	}
 	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
 		return s[1 : len(s)-1]
 	}
+	return s
+}
+
+func unescapeString(s string) string {
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.ReplaceAll(s, `\t`, "\t")
+	s = strings.ReplaceAll(s, `\r`, "\r")
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
 	return s
 }
 
