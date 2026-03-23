@@ -386,7 +386,7 @@ func zeroLiteral(typeName string) string {
 	switch typeName {
 	case "bool":
 		return "false"
-	case "int", "int64":
+	case "int", "int64", "uint64":
 		return "0"
 	case "float64":
 		return "0.0"

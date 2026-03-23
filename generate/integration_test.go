@@ -2257,3 +2257,112 @@ func TestSliceTextMarshalerModify(t *testing.T) {
 		t.Fatalf("test failed:\n%s", outputST)
 	}
 }
+
+func TestIntegrationUint64(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/uint64test",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package uint64test
+
+//go:generate tommy generate
+type SelectorConfig struct {
+	Type        string `+"`"+`toml:"type"`+"`"+`
+	MinBlobSize uint64 `+"`"+`toml:"min-blob-size"`+"`"+`
+	MaxBlobSize uint64 `+"`"+`toml:"max-blob-size"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "uint64_test.go", `package uint64test
+
+import "testing"
+
+func TestUint64RoundTrip(t *testing.T) {
+	input := []byte("type = \"size\"\nmin-blob-size = 1024\nmax-blob-size = 10485760\n")
+
+	doc, err := DecodeSelectorConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Type != "size" {
+		t.Fatalf("expected type size, got %q", cfg.Type)
+	}
+	if cfg.MinBlobSize != 1024 {
+		t.Fatalf("expected min 1024, got %d", cfg.MinBlobSize)
+	}
+	if cfg.MaxBlobSize != 10485760 {
+		t.Fatalf("expected max 10485760, got %d", cfg.MaxBlobSize)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
+func TestUint64Modify(t *testing.T) {
+	input := []byte("type = \"size\"\nmin-blob-size = 1024\nmax-blob-size = 10485760\n")
+
+	doc, err := DecodeSelectorConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.Data().MinBlobSize = 2048
+	doc.Data().MaxBlobSize = 20971520
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := "type = \"size\"\nmin-blob-size = 2048\nmax-blob-size = 20971520\n"
+	if string(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, string(out))
+	}
+}
+`)
+
+	cmdU := exec.Command("go", "test", "-v", "./...")
+	cmdU.Dir = dir
+	cmdU.Env = append(os.Environ(), "GOFLAGS=")
+	outputU, err := cmdU.CombinedOutput()
+	t.Logf("go test output:\n%s", outputU)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputU)
+	}
+}

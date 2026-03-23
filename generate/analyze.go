@@ -206,6 +206,7 @@ var primitiveTypes = map[string]bool{
 	"string":  true,
 	"int":     true,
 	"int64":   true,
+	"uint64":  true,
 	"float64": true,
 	"bool":    true,
 }

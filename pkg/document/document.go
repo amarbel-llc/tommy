@@ -455,6 +455,8 @@ func convertNode[T any](node *cst.Node) (T, error) {
 		result = int(v)
 	case int64:
 		result, err = strconv.ParseInt(string(node.Raw), 10, 64)
+	case uint64:
+		result, err = strconv.ParseUint(string(node.Raw), 10, 64)
 	case float64:
 		result, err = strconv.ParseFloat(string(node.Raw), 64)
 	case bool:
@@ -514,6 +516,8 @@ func encodeValue(value any) ([]byte, cst.NodeKind, error) {
 		return []byte(strconv.Itoa(v)), cst.NodeInteger, nil
 	case int64:
 		return []byte(strconv.FormatInt(v, 10)), cst.NodeInteger, nil
+	case uint64:
+		return []byte(strconv.FormatUint(v, 10)), cst.NodeInteger, nil
 	case float64:
 		s := strconv.FormatFloat(v, 'f', -1, 64)
 		return []byte(s), cst.NodeFloat, nil
