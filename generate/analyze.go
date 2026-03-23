@@ -163,6 +163,9 @@ func extractTomlTag(raw string) string {
 		return ""
 	}
 	name, _, _ := strings.Cut(rest[:end], ",")
+	if name == "-" {
+		return ""
+	}
 	return name
 }
 

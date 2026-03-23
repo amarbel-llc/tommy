@@ -1032,6 +1032,91 @@ func TestModifyPointerStructField(t *testing.T) {
 	}
 }
 
+func TestIntegrationTomlDash(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/tomldash",
+		"",
+		"go 1.25.6",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package tomldash
+
+//go:generate tommy generate
+type Config struct {
+	Name     string `+"`"+`toml:"name"`+"`"+`
+	Internal string `+"`"+`toml:"-"`+"`"+`
+	Port     int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	genData, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+	t.Logf("Generated code:\n%s", genData)
+
+	writeFixture(t, dir, "dash_test.go", `package tomldash
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestDashFieldExcluded(t *testing.T) {
+	input := []byte("name = \"app\"\nport = 8080\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.Data().Internal = "should not appear"
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(out), "Internal") || strings.Contains(string(out), "should not appear") {
+		t.Fatalf("toml:\"-\" field leaked into output:\n%s", string(out))
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	t.Logf("go test output:\n%s", output)
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 func TestIntegrationZeroValuePrimitiveSkip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
