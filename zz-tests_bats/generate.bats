@@ -17,7 +17,7 @@ setup() {
   cat > "$BATS_TEST_TMPDIR/proj/go.mod" <<EOF
 module example.com/batstest
 
-go 1.25.6
+go 1.26
 
 require github.com/amarbel-llc/tommy v0.0.0
 
