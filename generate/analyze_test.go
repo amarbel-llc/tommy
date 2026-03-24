@@ -191,6 +191,157 @@ func TestAnalyzeMapStringString(t *testing.T) {
 	}
 }
 
+func TestAnalyzeCrossPackageTextMarshaler(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create the external package with a TextMarshaler type
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "id.go", `package ext
+
+type Id struct {
+	value string
+}
+
+func (id Id) MarshalText() ([]byte, error) {
+	return []byte(id.value), nil
+}
+
+func (id *Id) UnmarshalText(b []byte) error {
+	id.value = string(b)
+	return nil
+}
+`)
+
+	// Create the main package that imports the external type
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ext v0.0.0\n\nreplace example.com/ext => ../ext\n")
+	writeFixture(t, extDir, "go.mod", "module example.com/ext\n\ngo 1.26\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/ext"
+
+//go:generate tommy generate
+type Config struct {
+	Encryption ext.Id `+"`"+`toml:"encryption"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldTextMarshaler {
+		t.Fatalf("expected FieldTextMarshaler, got %v", f.Kind)
+	}
+	if f.TypeName != "ext.Id" {
+		t.Fatalf("expected TypeName 'ext.Id', got %s", f.TypeName)
+	}
+}
+
+func TestAnalyzeSliceCrossPackageTextMarshaler(t *testing.T) {
+	dir := t.TempDir()
+
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "go.mod", "module example.com/ext\n\ngo 1.26\n")
+	writeFixture(t, extDir, "id.go", `package ext
+
+type Id struct {
+	value string
+}
+
+func (id Id) MarshalText() ([]byte, error) {
+	return []byte(id.value), nil
+}
+
+func (id *Id) UnmarshalText(b []byte) error {
+	id.value = string(b)
+	return nil
+}
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ext v0.0.0\n\nreplace example.com/ext => ../ext\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/ext"
+
+//go:generate tommy generate
+type Config struct {
+	Ids []ext.Id `+"`"+`toml:"ids"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldSliceTextMarshaler {
+		t.Fatalf("expected FieldSliceTextMarshaler, got %v", f.Kind)
+	}
+	if f.TypeName != "ext.Id" {
+		t.Fatalf("expected TypeName 'ext.Id', got %s", f.TypeName)
+	}
+}
+
+func TestAnalyzePointerCrossPackageTextMarshaler(t *testing.T) {
+	dir := t.TempDir()
+
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "go.mod", "module example.com/ext\n\ngo 1.26\n")
+	writeFixture(t, extDir, "id.go", `package ext
+
+type Id struct {
+	value string
+}
+
+func (id Id) MarshalText() ([]byte, error) {
+	return []byte(id.value), nil
+}
+
+func (id *Id) UnmarshalText(b []byte) error {
+	id.value = string(b)
+	return nil
+}
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ext v0.0.0\n\nreplace example.com/ext => ../ext\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/ext"
+
+//go:generate tommy generate
+type Config struct {
+	Encryption *ext.Id `+"`"+`toml:"encryption"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	// *ext.Id where ext.Id implements TextMarshaler — should still be FieldTextMarshaler,
+	// not FieldPointerStruct (we don't need to resolve inner struct fields)
+	if f.Kind != FieldTextMarshaler {
+		t.Fatalf("expected FieldTextMarshaler, got %v", f.Kind)
+	}
+	if f.TypeName != "ext.Id" {
+		t.Fatalf("expected TypeName 'ext.Id', got %s", f.TypeName)
+	}
+}
+
 func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")

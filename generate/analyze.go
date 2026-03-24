@@ -224,49 +224,70 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 		return classifyNamedType(pkg, fi, t.Name)
 
 	case *ast.StarExpr:
-		inner, ok := t.X.(*ast.Ident)
-		if !ok {
+		switch inner := t.X.(type) {
+		case *ast.Ident:
+			if primitiveTypes[inner.Name] {
+				fi.Kind = FieldPointerPrimitive
+				fi.TypeName = inner.Name
+				return fi, nil
+			}
+			fi.Kind = FieldPointerStruct
+			fi.TypeName = inner.Name
+			innerInfo, err := resolveStructByName(pkg, inner.Name)
+			if err != nil {
+				return fi, err
+			}
+			fi.InnerInfo = &innerInfo
+			return fi, nil
+		case *ast.SelectorExpr:
+			// *pkg.Type — resolve via type info and classify
+			return classifySelectorExpr(pkg, fi, inner)
+		default:
 			return fi, fmt.Errorf("unsupported pointer type")
 		}
-		if primitiveTypes[inner.Name] {
-			fi.Kind = FieldPointerPrimitive
-			fi.TypeName = inner.Name
-			return fi, nil
-		}
-		fi.Kind = FieldPointerStruct
-		fi.TypeName = inner.Name
-		innerInfo, err := resolveStructByName(pkg, inner.Name)
-		if err != nil {
-			return fi, err
-		}
-		fi.InnerInfo = &innerInfo
-		return fi, nil
 
 	case *ast.ArrayType:
-		elemIdent, ok := t.Elt.(*ast.Ident)
-		if !ok {
+		switch elem := t.Elt.(type) {
+		case *ast.Ident:
+			fi.ElemType = elem.Name
+			if primitiveTypes[elem.Name] {
+				fi.Kind = FieldSlicePrimitive
+				return fi, nil
+			}
+			obj := pkg.Types.Scope().Lookup(elem.Name)
+			if obj != nil && hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
+				fi.Kind = FieldSliceTextMarshaler
+				fi.TypeName = elem.Name
+				return fi, nil
+			}
+			fi.Kind = FieldSliceStruct
+			fi.TypeName = elem.Name
+			innerInfo, err := resolveStructByName(pkg, elem.Name)
+			if err != nil {
+				return fi, err
+			}
+			fi.InnerInfo = &innerInfo
+			return fi, nil
+		case *ast.SelectorExpr:
+			// []pkg.Type — resolve via type info
+			obj := pkg.TypesInfo.Uses[elem.Sel]
+			if obj == nil {
+				return fi, fmt.Errorf("cannot resolve slice element type %s", elem.Sel.Name)
+			}
+			qualifiedName := elem.X.(*ast.Ident).Name + "." + elem.Sel.Name
+			if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
+				fi.Kind = FieldSliceTextMarshaler
+				fi.TypeName = qualifiedName
+				fi.ElemType = qualifiedName
+				return fi, nil
+			}
+			return fi, fmt.Errorf("cross-package slice element type %s must implement TextMarshaler/TextUnmarshaler", qualifiedName)
+		default:
 			return fi, fmt.Errorf("unsupported slice element type")
 		}
-		fi.ElemType = elemIdent.Name
-		if primitiveTypes[elemIdent.Name] {
-			fi.Kind = FieldSlicePrimitive
-			return fi, nil
-		}
-		// Check if element type implements TextMarshaler/TextUnmarshaler
-		obj := pkg.Types.Scope().Lookup(elemIdent.Name)
-		if obj != nil && hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
-			fi.Kind = FieldSliceTextMarshaler
-			fi.TypeName = elemIdent.Name
-			return fi, nil
-		}
-		fi.Kind = FieldSliceStruct
-		fi.TypeName = elemIdent.Name
-		innerInfo, err := resolveStructByName(pkg, elemIdent.Name)
-		if err != nil {
-			return fi, err
-		}
-		fi.InnerInfo = &innerInfo
-		return fi, nil
+
+	case *ast.SelectorExpr:
+		return classifySelectorExpr(pkg, fi, t)
 
 	case *ast.MapType:
 		keyIdent, ok := t.Key.(*ast.Ident)
@@ -318,6 +339,26 @@ func hasMarshalTOML(obj types.Object) bool {
 		}
 	}
 	return false
+}
+
+func classifySelectorExpr(pkg *packages.Package, fi FieldInfo, sel *ast.SelectorExpr) (FieldInfo, error) {
+	obj := pkg.TypesInfo.Uses[sel.Sel]
+	if obj == nil {
+		return fi, fmt.Errorf("cannot resolve type %s", sel.Sel.Name)
+	}
+	qualifiedName := sel.X.(*ast.Ident).Name + "." + sel.Sel.Name
+	fi.TypeName = qualifiedName
+	if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
+		fi.Kind = FieldTextMarshaler
+		return fi, nil
+	}
+	if hasMethod(obj, "UnmarshalText") {
+		return fi, fmt.Errorf("type %s has UnmarshalText but no MarshalText — Encode() requires both", qualifiedName)
+	}
+	if hasMethod(obj, "MarshalText") {
+		return fi, fmt.Errorf("type %s has MarshalText but no UnmarshalText — Decode() requires both", qualifiedName)
+	}
+	return fi, fmt.Errorf("cross-package type %s must implement TextMarshaler/TextUnmarshaler", qualifiedName)
 }
 
 func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (FieldInfo, error) {
