@@ -24,7 +24,7 @@ func TestIntegrationRoundTrip(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/roundtrip",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -148,7 +148,7 @@ func TestIntegrationArrayOfTables(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/aot",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -236,7 +236,7 @@ func TestIntegrationCustomAndPointerTypes(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/custom",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -363,7 +363,7 @@ func TestIntegrationMoxyMigration(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/moxy",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -633,7 +633,7 @@ func TestIntegrationFlatKeyFallback(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/flatkey",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -791,7 +791,7 @@ func TestIntegrationMapStringString(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/sweatfile",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1010,7 +1010,7 @@ func TestIntegrationPointerStructEncode(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/ptrstruct",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1101,7 +1101,7 @@ func TestIntegrationTomlDash(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/tomldash",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1185,7 +1185,7 @@ func TestIntegrationOmitempty(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/omitempty",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1335,7 +1335,7 @@ func TestIntegrationZeroValuePrimitiveSkip(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/zeroval",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1436,7 +1436,7 @@ func TestIntegrationArrayOfTablesAppend(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/aotappend",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1549,7 +1549,7 @@ func TestOmitemptyPrimitiveZeroDropped(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/omitprim",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1655,7 +1655,7 @@ func TestIntegrationMultiline(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/multiline",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1761,7 +1761,7 @@ func TestIntegrationTextMarshaler(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/textmarshal",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -1885,7 +1885,7 @@ func TestIntegrationEmbeddedStruct(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/embedded",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -2002,7 +2002,7 @@ func TestIntegrationMapStringStruct(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/mapstruct",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -2121,7 +2121,7 @@ func TestIntegrationSliceTextMarshaler(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/slicetm",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -2251,7 +2251,7 @@ func TestIntegrationUint64(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/uint64test",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
@@ -2360,7 +2360,7 @@ func TestIntegrationNestedArrayOfTables(t *testing.T) {
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/nestedaot",
 		"",
-		"go 1.25.6",
+		"go 1.26",
 		"",
 		"require github.com/amarbel-llc/tommy v0.0.0",
 		"",
