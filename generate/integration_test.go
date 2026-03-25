@@ -3901,3 +3901,132 @@ func TestDecodeIntoRoundTrip(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+// Core #35 test: cross-package struct with unexported nested type, delegated via DecodeInto/EncodeFrom
+func TestIntegrationCrossPackageDelegation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// External package with unexported nested struct
+	extDir := filepath.Join(dir, "options")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/options",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, extDir, "options.go", `package options
+
+type abbreviations struct {
+	ZettelIds *bool `+"`"+`toml:"zettel_ids"`+"`"+`
+	MarkIds   *bool `+"`"+`toml:"mark_ids"`+"`"+`
+}
+
+//go:generate tommy generate
+type PrintOptions struct {
+	Abbreviations *abbreviations `+"`"+`toml:"abbreviations"`+"`"+`
+	PrintColors   *bool          `+"`"+`toml:"print-colors"`+"`"+`
+}
+`)
+
+	if err := Generate(extDir, "options.go"); err != nil {
+		t.Fatalf("Generate options: %v", err)
+	}
+
+	// Consumer package
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/options v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/options => ../options",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/test/options"
+
+//go:generate tommy generate
+type Config struct {
+	Name         string               `+"`"+`toml:"name"`+"`"+`
+	PrintOptions options.PrintOptions `+"`"+`toml:"cli-output"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "config.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestCrossPackageDelegationRoundTrip(t *testing.T) {
+	input := []byte("name = \"myapp\"\n\n[cli-output]\nprint-colors = true\n\n[cli-output.abbreviations]\nzettel_ids = true\nmark_ids = false\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "myapp" {
+		t.Fatalf("Name = %q, want \"myapp\"", cfg.Name)
+	}
+	if cfg.PrintOptions.PrintColors == nil || !*cfg.PrintOptions.PrintColors {
+		t.Fatal("PrintColors should be true")
+	}
+	if cfg.PrintOptions.Abbreviations == nil {
+		t.Fatal("Abbreviations should not be nil")
+	}
+	if cfg.PrintOptions.Abbreviations.ZettelIds == nil || !*cfg.PrintOptions.Abbreviations.ZettelIds {
+		t.Fatal("ZettelIds should be true")
+	}
+
+	v := false
+	cfg.PrintOptions.Abbreviations.ZettelIds = &v
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if d2.PrintOptions.Abbreviations.ZettelIds == nil || *d2.PrintOptions.Abbreviations.ZettelIds {
+		t.Fatal("re-decoded ZettelIds should be false")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
