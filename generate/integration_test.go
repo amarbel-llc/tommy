@@ -3778,3 +3778,98 @@ func TestEncodeInvalidState(t *testing.T) {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
 }
+
+func TestIntegrationDecodeIntoEncodeFrom(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/inttest",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package inttest
+
+//go:generate tommy generate
+type Settings struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "inttest_test.go", `package inttest
+
+import (
+	"testing"
+
+	"github.com/amarbel-llc/tommy/pkg/document"
+)
+
+func TestDecodeIntoRoundTrip(t *testing.T) {
+	input := []byte("host = \"localhost\"\nport = 8080\n")
+
+	doc, err := document.Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var data Settings
+	consumed := make(map[string]bool)
+	if err := DecodeSettingsInto(&data, doc, doc.Root(), consumed, ""); err != nil {
+		t.Fatalf("DecodeSettingsInto: %v", err)
+	}
+
+	if data.Host != "localhost" {
+		t.Fatalf("Host = %q, want \"localhost\"", data.Host)
+	}
+	if data.Port != 8080 {
+		t.Fatalf("Port = %d, want 8080", data.Port)
+	}
+
+	data.Port = 9090
+	if err := EncodeSettingsFrom(&data, doc, doc.Root()); err != nil {
+		t.Fatalf("EncodeSettingsFrom: %v", err)
+	}
+
+	out := doc.Bytes()
+	doc2, err := document.Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+
+	var data2 Settings
+	consumed2 := make(map[string]bool)
+	if err := DecodeSettingsInto(&data2, doc2, doc2.Root(), consumed2, ""); err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if data2.Port != 9090 {
+		t.Fatalf("re-decoded Port = %d, want 9090", data2.Port)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
