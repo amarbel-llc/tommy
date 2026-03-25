@@ -2730,3 +2730,108 @@ func TestBlankFieldRoundTrip(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+func TestIntegrationSliceTextMarshalerCrossPackageImport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Package with a TextMarshaler type
+	typesDir := filepath.Join(dir, "types")
+	writeFixture(t, typesDir, "go.mod", "module example.com/test/types\n\ngo 1.26\n")
+	writeFixture(t, typesDir, "types.go", `package types
+
+type Tag struct{ value string }
+
+func (t Tag) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *Tag) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+`)
+
+	// Consumer with []types.Tag field
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/types v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/types => ../types",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/test/types"
+
+//go:generate tommy generate
+type Config struct {
+	Name string      `+"`"+`toml:"name"`+"`"+`
+	Tags []types.Tag `+"`"+`toml:"tags"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "consumer.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	// Verify the import was added to the generated file
+	generated, err := os.ReadFile(filepath.Join(consumerDir, "consumer_tommy.go"))
+	if err != nil {
+		t.Fatalf("reading generated file: %v", err)
+	}
+	if !strings.Contains(string(generated), `"example.com/test/types"`) {
+		t.Error("generated file should import the cross-package type's package")
+	}
+
+	// Write a round-trip test to verify compilation and runtime behavior
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestSliceCrossPackageRoundTrip(t *testing.T) {
+	input := []byte("name = \"test\"\ntags = [\"foo\", \"bar\"]\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Name != "test" {
+		t.Fatalf("Name = %q, want \"test\"", doc.Data().Name)
+	}
+	if len(doc.Data().Tags) != 2 {
+		t.Fatalf("Tags len = %d, want 2", len(doc.Data().Tags))
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
