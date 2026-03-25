@@ -3679,3 +3679,102 @@ func TestCrossPackageSliceAliasRoundTrip(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+func TestIntegrationValidation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/validation",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package validation
+
+import "fmt"
+
+//go:generate tommy generate
+type Config struct {
+	Port int    `+"`"+`toml:"port"`+"`"+`
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+
+func (c Config) Validate() error {
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("port must be 1-65535, got %d", c.Port)
+	}
+	return nil
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "validation_test.go", `package validation
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestDecodeValidInput(t *testing.T) {
+	input := []byte("port = 8080\nname = \"myapp\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	if doc.Data().Port != 8080 {
+		t.Fatalf("Port = %d, want 8080", doc.Data().Port)
+	}
+}
+
+func TestDecodeInvalidInput(t *testing.T) {
+	input := []byte("port = 0\nname = \"myapp\"\n")
+	_, err := DecodeConfig(input)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "port must be 1-65535") {
+		t.Fatalf("expected port validation error, got: %v", err)
+	}
+}
+
+func TestEncodeInvalidState(t *testing.T) {
+	input := []byte("port = 8080\nname = \"myapp\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	doc.Data().Port = 0
+	_, err = doc.Encode()
+	if err == nil {
+		t.Fatal("expected validation error on encode, got nil")
+	}
+	if !strings.Contains(err.Error(), "port must be 1-65535") {
+		t.Fatalf("expected port validation error, got: %v", err)
+	}
+}
+`)
+
+	cmdVal := exec.Command("go", "test", "-v", "./...")
+	cmdVal.Dir = dir
+	cmdVal.Env = append(os.Environ(), "GOFLAGS=")
+	if output, err := cmdVal.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
