@@ -532,6 +532,52 @@ type Config struct {
 	}
 }
 
+// Regression test for #28: ImportPath must be set for both scalar and slice
+// cross-package TextMarshaler fields so collectImportPaths includes them.
+func TestAnalyzeCrossPackageImportPathSet(t *testing.T) {
+	dir := t.TempDir()
+
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "go.mod", "module example.com/ext\n\ngo 1.26\n")
+	writeFixture(t, extDir, "id.go", `package ext
+
+type Tag struct{ value string }
+func (t Tag) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *Tag) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+
+type Typ struct{ value string }
+func (t Typ) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *Typ) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ext v0.0.0\n\nreplace example.com/ext => ../ext\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/ext"
+
+//go:generate tommy generate
+type Defaults struct {
+	Typ  ext.Typ  `+"`"+`toml:"typ"`+"`"+`
+	Tags []ext.Tag `+"`"+`toml:"tags"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+
+	for _, f := range infos[0].Fields {
+		if f.ImportPath != "example.com/ext" {
+			t.Errorf("field %s: ImportPath = %q, want %q", f.GoName, f.ImportPath, "example.com/ext")
+		}
+	}
+}
+
 func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")

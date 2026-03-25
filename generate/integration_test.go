@@ -2835,3 +2835,102 @@ func TestSliceCrossPackageRoundTrip(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+// Regression test for #28: struct with both scalar (ids.TypeStruct) and slice
+// ([]ids.TagStruct) of cross-package TextMarshaler types within the same module.
+// The generated file must import the cross-package and compile.
+func TestIntegrationSliceTextMarshalerCrossPackageImportMixed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Single module with two packages (like dodder's ids + repo_configs)
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/test",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	// Cross-package TextMarshaler types (same module, different package)
+	idsDir := filepath.Join(dir, "ids")
+	writeFixture(t, idsDir, "ids.go", `package ids
+
+type TagStruct struct{ value string }
+func (t TagStruct) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *TagStruct) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+
+type TypeStruct struct{ value string }
+func (t TypeStruct) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *TypeStruct) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+`)
+
+	// Same-module struct using both scalar and slice of cross-package TextMarshaler
+	configDir := filepath.Join(dir, "config")
+	writeFixture(t, configDir, "config.go", `package config
+
+import "example.com/test/ids"
+
+//go:generate tommy generate
+type Defaults struct {
+	Typ  ids.TypeStruct  `+"`"+`toml:"typ"`+"`"+`
+	Tags []ids.TagStruct `+"`"+`toml:"tags"`+"`"+`
+}
+`)
+
+	if err := Generate(configDir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	// Verify the import was added to the generated file
+	generated, err := os.ReadFile(filepath.Join(configDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("reading generated file: %v", err)
+	}
+	if !strings.Contains(string(generated), `"example.com/test/ids"`) {
+		t.Errorf("generated file missing import for cross-package type.\nGenerated:\n%s", string(generated))
+	}
+
+	// Write a round-trip test
+	writeFixture(t, configDir, "config_test.go", `package config
+
+import "testing"
+
+func TestMixedCrossPackageRoundTrip(t *testing.T) {
+	input := []byte("typ = \"mytype\"\ntags = [\"foo\", \"bar\"]\n")
+
+	doc, err := DecodeDefaults(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmdMixed := exec.Command("go", "test", "-v", "./...")
+	cmdMixed.Dir = dir
+	cmdMixed.Env = append(os.Environ(), "GOFLAGS=")
+	outputMixed, err := cmdMixed.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputMixed)
+	}
+}
