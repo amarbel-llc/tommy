@@ -2461,3 +2461,272 @@ func TestNestedArrayOfTablesRoundTrip(t *testing.T) {
 		t.Fatalf("test failed:\n%s", outputN)
 	}
 }
+
+func TestIntegrationCrossPackageEmbedded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Base package with a struct
+	baseDir := filepath.Join(dir, "base")
+	writeFixture(t, baseDir, "go.mod", "module example.com/test/base\n\ngo 1.26\n")
+	writeFixture(t, baseDir, "base.go", `package base
+
+type Config struct {
+	Name   string `+"`"+`toml:"name"`+"`"+`
+	Script string `+"`"+`toml:"script,omitempty"`+"`"+`
+}
+`)
+
+	// Consumer package that embeds cross-package struct
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/base v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/base => ../base",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/test/base"
+
+//go:generate tommy generate
+type Extended struct {
+	base.Config
+	Extra string `+"`"+`toml:"extra"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "consumer.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestCrossPackageEmbeddedRoundTrip(t *testing.T) {
+	input := []byte("name = \"hello\"\nscript = \"echo hi\"\nextra = \"world\"\n")
+
+	doc, err := DecodeExtended(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "hello" {
+		t.Fatalf("Name = %q, want \"hello\"", cfg.Name)
+	}
+	if cfg.Extra != "world" {
+		t.Fatalf("Extra = %q, want \"world\"", cfg.Extra)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationCrossPackagePrimitiveWrapper(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Package with a named type wrapping int
+	typesDir := filepath.Join(dir, "types")
+	writeFixture(t, typesDir, "go.mod", "module example.com/test/types\n\ngo 1.26\n")
+	writeFixture(t, typesDir, "types.go", `package types
+
+type Version int
+`)
+
+	// Consumer using the type via embedded struct
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/types v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/types => ../types",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/test/types"
+
+type Common struct {
+	Version types.Version `+"`"+`toml:"version"`+"`"+`
+	Name    string        `+"`"+`toml:"name"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Common
+	Extra string `+"`"+`toml:"extra"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "consumer.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import (
+	"bytes"
+	"testing"
+)
+
+func TestDecodeIntWrapper(t *testing.T) {
+	input := []byte("version = 14\nname = \"test\"\nextra = \"ok\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if int(doc.Data().Version) != 14 {
+		t.Errorf("Version = %d, want 14", doc.Data().Version)
+	}
+	if doc.Data().Name != "test" {
+		t.Errorf("Name = %q, want \"test\"", doc.Data().Name)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Round-trip: version should still be integer, not quoted string
+	if !bytes.Contains(out, []byte("version = 14")) {
+		t.Errorf("encoded output should contain integer: %s", out)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationBlankIdentifierField(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/blankfield",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package blankfield
+
+type Common struct {
+	_    string `+"`"+`toml:"repo-type"`+"`"+`
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Common
+	Extra string `+"`"+`toml:"extra"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "blank_test.go", `package blankfield
+
+import "testing"
+
+func TestBlankFieldRoundTrip(t *testing.T) {
+	input := []byte("repo-type = \"legacy\"\nname = \"hello\"\nextra = \"world\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "hello" {
+		t.Fatalf("Name = %q, want \"hello\"", cfg.Name)
+	}
+	if cfg.Extra != "world" {
+		t.Fatalf("Extra = %q, want \"world\"", cfg.Extra)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}

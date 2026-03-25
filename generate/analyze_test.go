@@ -342,6 +342,196 @@ type Config struct {
 	}
 }
 
+func fieldNames(fields []FieldInfo) []string {
+	var names []string
+	for _, f := range fields {
+		names = append(names, f.GoName)
+	}
+	return names
+}
+
+func TestAnalyzeSkipsBlankIdentifierFields(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.26\n")
+	writeFixture(t, dir, "config.go", `package test
+
+type Common struct {
+	_    string `+"`"+`toml:"repo-type"`+"`"+`
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Common
+	Extra string `+"`"+`toml:"extra"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	// Should have 2 fields (Name promoted from Common + Extra), NOT 3
+	if len(infos[0].Fields) != 2 {
+		t.Errorf("expected 2 fields, got %d: %v", len(infos[0].Fields), fieldNames(infos[0].Fields))
+	}
+	for _, f := range infos[0].Fields {
+		if f.GoName == "_" {
+			t.Error("blank identifier field should have been skipped")
+		}
+	}
+}
+
+func TestAnalyzeCrossPackageEmbeddedStruct(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create the external package with a struct
+	baseDir := filepath.Join(dir, "base")
+	writeFixture(t, baseDir, "go.mod", "module example.com/base\n\ngo 1.26\n")
+	writeFixture(t, baseDir, "base.go", `package base
+
+type Config struct {
+	Name   string            `+"`"+`toml:"name"`+"`"+`
+	Script string            `+"`"+`toml:"script,omitempty,multiline"`+"`"+`
+	Env    map[string]string `+"`"+`toml:"env,omitempty"`+"`"+`
+}
+`)
+
+	// Consumer package that embeds cross-package struct
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/base v0.0.0\n\nreplace example.com/base => ../base\n")
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/base"
+
+//go:generate tommy generate
+type Extended struct {
+	base.Config
+	Extra string `+"`"+`toml:"extra"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "consumer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	// Should have 4 fields: Name, Script, Env (promoted from base.Config) + Extra
+	if len(infos[0].Fields) != 4 {
+		t.Errorf("expected 4 fields, got %d: %v", len(infos[0].Fields), fieldNames(infos[0].Fields))
+	}
+}
+
+func TestAnalyzeCrossPackagePrimitiveWrapper(t *testing.T) {
+	dir := t.TempDir()
+
+	// Package with a named type wrapping int
+	typesDir := filepath.Join(dir, "types")
+	writeFixture(t, typesDir, "go.mod", "module example.com/types\n\ngo 1.26\n")
+	writeFixture(t, typesDir, "types.go", `package types
+
+type Version int
+
+func (v Version) String() string     { return "" }
+func (v *Version) Set(string) error  { return nil }
+`)
+
+	// Consumer using the type via embedded struct
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/types v0.0.0\n\nreplace example.com/types => ../types\n")
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/types"
+
+type Common struct {
+	Version types.Version `+"`"+`toml:"version"`+"`"+`
+	Name    string        `+"`"+`toml:"name"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Common
+	Extra string `+"`"+`toml:"extra"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "consumer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	// Should have 3 fields: Version + Name (promoted) + Extra
+	if len(infos[0].Fields) != 3 {
+		t.Errorf("expected 3 fields, got %d", len(infos[0].Fields))
+	}
+	// Version field should be classified as FieldPrimitive (underlying int)
+	for _, f := range infos[0].Fields {
+		if f.GoName == "Version" {
+			if f.Kind != FieldPrimitive {
+				t.Errorf("Version field kind = %d, want FieldPrimitive (%d)", f.Kind, FieldPrimitive)
+			}
+			if f.TypeName != "int" {
+				t.Errorf("Version TypeName = %q, want \"int\"", f.TypeName)
+			}
+			if f.ElemType != "types.Version" {
+				t.Errorf("Version ElemType = %q, want \"types.Version\"", f.ElemType)
+			}
+		}
+	}
+}
+
+func TestAnalyzeDirectCrossPackagePrimitiveWrapper(t *testing.T) {
+	dir := t.TempDir()
+
+	typesDir := filepath.Join(dir, "types")
+	writeFixture(t, typesDir, "go.mod", "module example.com/types\n\ngo 1.26\n")
+	writeFixture(t, typesDir, "types.go", `package types
+
+type Version int
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/types v0.0.0\n\nreplace example.com/types => ../types\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/types"
+
+//go:generate tommy generate
+type Config struct {
+	Version types.Version `+"`"+`toml:"version"`+"`"+`
+	Name    string        `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	if len(infos[0].Fields) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(infos[0].Fields))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldPrimitive {
+		t.Errorf("Version field kind = %d, want FieldPrimitive (%d)", f.Kind, FieldPrimitive)
+	}
+	if f.TypeName != "int" {
+		t.Errorf("Version TypeName = %q, want \"int\"", f.TypeName)
+	}
+	if f.ElemType != "types.Version" {
+		t.Errorf("Version ElemType = %q, want \"types.Version\"", f.ElemType)
+	}
+}
+
 func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")

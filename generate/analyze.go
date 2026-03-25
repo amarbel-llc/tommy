@@ -35,14 +35,15 @@ type StructInfo struct {
 
 // FieldInfo describes a single field within a struct.
 type FieldInfo struct {
-	GoName    string
-	TomlKey   string
-	Kind      FieldKind
-	ElemType  string
-	TypeName  string
-	InnerInfo *StructInfo
-	OmitEmpty bool
-	Multiline bool
+	GoName     string
+	TomlKey    string
+	Kind       FieldKind
+	ElemType   string // wrapper type name for primitive aliases (e.g., "types.Version")
+	TypeName   string
+	InnerInfo  *StructInfo
+	OmitEmpty  bool
+	Multiline  bool
+	ImportPath string // import path needed for ElemType (e.g., "example.com/pkg/types")
 }
 
 // Analyze inspects the given Go source file for structs with
@@ -154,6 +155,9 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 		}
 
 		for _, ident := range field.Names {
+			if ident.Name == "_" {
+				continue
+			}
 			fi, err := classifyField(pkg, ident.Name, tomlKey, field.Type)
 			if err != nil {
 				return si, fmt.Errorf("field %s.%s: %w", name, ident.Name, err)
@@ -358,6 +362,20 @@ func classifySelectorExpr(pkg *packages.Package, fi FieldInfo, sel *ast.Selector
 	if hasMethod(obj, "MarshalText") {
 		return fi, fmt.Errorf("type %s has MarshalText but no UnmarshalText — Decode() requires both", qualifiedName)
 	}
+
+	// Check underlying type for primitive wrapper (e.g., type Version int)
+	if named, ok := obj.Type().(*types.Named); ok {
+		if basic, ok := named.Underlying().(*types.Basic); ok {
+			if primitiveTypes[basic.Name()] {
+				fi.Kind = FieldPrimitive
+				fi.TypeName = basic.Name()
+				fi.ElemType = qualifiedName
+				fi.ImportPath = named.Obj().Pkg().Path()
+				return fi, nil
+			}
+		}
+	}
+
 	return fi, fmt.Errorf("cross-package type %s must implement TextMarshaler/TextUnmarshaler", qualifiedName)
 }
 
@@ -424,25 +442,299 @@ func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (Fi
 }
 
 func resolveEmbeddedFields(pkg *packages.Package, expr ast.Expr) ([]FieldInfo, error) {
-	var typeName string
 	switch t := expr.(type) {
 	case *ast.Ident:
-		typeName = t.Name
-	case *ast.StarExpr:
-		inner, ok := t.X.(*ast.Ident)
-		if !ok {
-			return nil, fmt.Errorf("unsupported embedded pointer type")
+		si, err := resolveStructByName(pkg, t.Name)
+		if err != nil {
+			return nil, fmt.Errorf("resolving embedded %s: %w", t.Name, err)
 		}
-		typeName = inner.Name
+		return si.Fields, nil
+
+	case *ast.StarExpr:
+		switch inner := t.X.(type) {
+		case *ast.Ident:
+			si, err := resolveStructByName(pkg, inner.Name)
+			if err != nil {
+				return nil, fmt.Errorf("resolving embedded *%s: %w", inner.Name, err)
+			}
+			return si.Fields, nil
+		case *ast.SelectorExpr:
+			return resolveCrossPackageEmbedded(pkg, inner)
+		default:
+			return nil, fmt.Errorf("unsupported embedded pointer type %T", inner)
+		}
+
+	case *ast.SelectorExpr:
+		return resolveCrossPackageEmbedded(pkg, t)
+
 	default:
 		return nil, fmt.Errorf("unsupported embedded type %T", expr)
 	}
+}
 
-	si, err := resolveStructByName(pkg, typeName)
+func resolveCrossPackageEmbedded(pkg *packages.Package, sel *ast.SelectorExpr) ([]FieldInfo, error) {
+	obj := pkg.TypesInfo.Uses[sel.Sel]
+	if obj == nil {
+		return nil, fmt.Errorf("cannot resolve type %s.%s", sel.X.(*ast.Ident).Name, sel.Sel.Name)
+	}
+
+	named, ok := obj.Type().(*types.Named)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a named type", sel.Sel.Name)
+	}
+
+	structType, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a struct type", sel.Sel.Name)
+	}
+
+	si, err := resolveStructFromTypes(pkg, sel.Sel.Name, structType)
 	if err != nil {
-		return nil, fmt.Errorf("resolving embedded %s: %w", typeName, err)
+		return nil, fmt.Errorf("resolving embedded %s.%s: %w",
+			sel.X.(*ast.Ident).Name, sel.Sel.Name, err)
 	}
 	return si.Fields, nil
+}
+
+func resolveStructFromTypes(pkg *packages.Package, name string, st *types.Struct) (StructInfo, error) {
+	si := StructInfo{Name: name}
+
+	for i := range st.NumFields() {
+		field := st.Field(i)
+
+		if field.Anonymous() {
+			fields, err := resolveEmbeddedFieldFromType(pkg, field)
+			if err != nil {
+				return si, fmt.Errorf("embedded field in %s: %w", name, err)
+			}
+			si.Fields = append(si.Fields, fields...)
+			continue
+		}
+
+		if field.Name() == "_" {
+			continue
+		}
+
+		tag := st.Tag(i)
+		tomlKey, opts := extractTomlTagFromString(tag)
+		if tomlKey == "" {
+			continue
+		}
+
+		fi, err := classifyFromType(pkg, field.Name(), tomlKey, field.Type())
+		if err != nil {
+			return si, fmt.Errorf("field %s.%s: %w", name, field.Name(), err)
+		}
+		fi.OmitEmpty = opts.omitEmpty
+		fi.Multiline = opts.multiline
+		si.Fields = append(si.Fields, fi)
+	}
+
+	return si, nil
+}
+
+func resolveEmbeddedFieldFromType(pkg *packages.Package, field *types.Var) ([]FieldInfo, error) {
+	typ := field.Type()
+
+	// Unwrap pointer
+	if ptr, ok := typ.(*types.Pointer); ok {
+		typ = ptr.Elem()
+	}
+
+	named, ok := typ.(*types.Named)
+	if !ok {
+		return nil, fmt.Errorf("unsupported embedded type %s", typ)
+	}
+
+	// Same package — fall back to AST-based resolution
+	if named.Obj().Pkg() == pkg.Types {
+		si, err := resolveStructByName(pkg, named.Obj().Name())
+		if err != nil {
+			return nil, err
+		}
+		return si.Fields, nil
+	}
+
+	// Cross-package
+	structType, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a struct type", named.Obj().Name())
+	}
+
+	si, err := resolveStructFromTypes(pkg, named.Obj().Name(), structType)
+	if err != nil {
+		return nil, err
+	}
+	return si.Fields, nil
+}
+
+func extractTomlTagFromString(tag string) (string, tagOpts) {
+	idx := strings.Index(tag, `toml:"`)
+	if idx < 0 {
+		return "", tagOpts{}
+	}
+	rest := tag[idx+6:]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return "", tagOpts{}
+	}
+	full := rest[:end]
+	name, remainder, _ := strings.Cut(full, ",")
+	if name == "-" {
+		return "", tagOpts{}
+	}
+	var opts tagOpts
+	for remainder != "" {
+		var opt string
+		opt, remainder, _ = strings.Cut(remainder, ",")
+		if opt == "omitempty" {
+			opts.omitEmpty = true
+		}
+		if opt == "multiline" {
+			opts.multiline = true
+		}
+	}
+	return name, opts
+}
+
+func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.Type) (FieldInfo, error) {
+	fi := FieldInfo{GoName: goName, TomlKey: tomlKey}
+
+	switch t := typ.(type) {
+	case *types.Basic:
+		if primitiveTypes[t.Name()] {
+			fi.Kind = FieldPrimitive
+			fi.TypeName = t.Name()
+			return fi, nil
+		}
+		return fi, fmt.Errorf("unsupported basic type %s", t.Name())
+
+	case *types.Named:
+		obj := t.Obj()
+
+		// Same package — delegate to AST-based classification
+		if obj.Pkg() == pkg.Types {
+			return classifyNamedType(pkg, fi, obj.Name())
+		}
+
+		// Cross-package: check marshal interfaces
+		if hasMethod(obj, "UnmarshalTOML") && hasMarshalTOML(obj) {
+			fi.Kind = FieldCustom
+			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
+			return fi, nil
+		}
+
+		if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
+			fi.Kind = FieldTextMarshaler
+			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
+			return fi, nil
+		}
+
+		// Check underlying type for primitive wrapper
+		if basic, ok := t.Underlying().(*types.Basic); ok {
+			if primitiveTypes[basic.Name()] {
+				fi.Kind = FieldPrimitive
+				fi.TypeName = basic.Name()
+				fi.ElemType = obj.Pkg().Name() + "." + obj.Name()
+				fi.ImportPath = obj.Pkg().Path()
+				return fi, nil
+			}
+		}
+
+		// Check if underlying is struct
+		if structType, ok := t.Underlying().(*types.Struct); ok {
+			fi.Kind = FieldStruct
+			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
+			innerInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
+			if err != nil {
+				return fi, err
+			}
+			fi.InnerInfo = &innerInfo
+			return fi, nil
+		}
+
+		return fi, fmt.Errorf("unsupported cross-package type %s.%s", obj.Pkg().Name(), obj.Name())
+
+	case *types.Pointer:
+		elem := t.Elem()
+		if basic, ok := elem.(*types.Basic); ok {
+			if primitiveTypes[basic.Name()] {
+				fi.Kind = FieldPointerPrimitive
+				fi.TypeName = basic.Name()
+				return fi, nil
+			}
+		}
+		if named, ok := elem.(*types.Named); ok {
+			innerFi, err := classifyFromType(pkg, goName, tomlKey, named)
+			if err != nil {
+				return fi, err
+			}
+			// Upgrade to pointer variant where applicable
+			if innerFi.Kind == FieldStruct {
+				innerFi.Kind = FieldPointerStruct
+			}
+			return innerFi, nil
+		}
+		return fi, fmt.Errorf("unsupported pointer type")
+
+	case *types.Slice:
+		elem := t.Elem()
+		if basic, ok := elem.(*types.Basic); ok {
+			if primitiveTypes[basic.Name()] {
+				fi.Kind = FieldSlicePrimitive
+				fi.ElemType = basic.Name()
+				return fi, nil
+			}
+		}
+		if named, ok := elem.(*types.Named); ok {
+			obj := named.Obj()
+			qualifiedName := obj.Pkg().Name() + "." + obj.Name()
+			if obj.Pkg() == pkg.Types {
+				qualifiedName = obj.Name()
+			}
+
+			if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
+				fi.Kind = FieldSliceTextMarshaler
+				fi.TypeName = qualifiedName
+				fi.ElemType = qualifiedName
+				return fi, nil
+			}
+
+			if structType, ok := named.Underlying().(*types.Struct); ok {
+				fi.Kind = FieldSliceStruct
+				fi.TypeName = qualifiedName
+				if obj.Pkg() == pkg.Types {
+					innerInfo, err := resolveStructByName(pkg, obj.Name())
+					if err != nil {
+						return fi, err
+					}
+					fi.InnerInfo = &innerInfo
+				} else {
+					innerInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
+					if err != nil {
+						return fi, err
+					}
+					fi.InnerInfo = &innerInfo
+				}
+				return fi, nil
+			}
+		}
+		return fi, fmt.Errorf("unsupported slice element type")
+
+	case *types.Map:
+		key, ok := t.Key().(*types.Basic)
+		if !ok || key.Kind() != types.String {
+			return fi, fmt.Errorf("unsupported map key type (only string keys supported)")
+		}
+		if val, ok := t.Elem().(*types.Basic); ok && val.Kind() == types.String {
+			fi.Kind = FieldMapStringString
+			return fi, nil
+		}
+		return fi, fmt.Errorf("unsupported map value type")
+
+	default:
+		return fi, fmt.Errorf("unsupported type %T", typ)
+	}
 }
 
 func resolveStructByName(pkg *packages.Package, name string) (StructInfo, error) {
