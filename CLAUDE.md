@@ -104,6 +104,9 @@ multiline string syntax
   marshal/unmarshal via `any` values
 - `encoding.TextMarshaler` / `TextUnmarshaler` --- Supported for fields and
   slices; round-trips through string representation
+- `Validate() error` --- When a struct implements this method, generated
+  `Decode`/`Encode` methods call it automatically. Decode validates after all
+  fields are set; Encode validates before writing to the CST.
 
 ## Testing
 
