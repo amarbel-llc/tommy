@@ -16,6 +16,9 @@ import (
 
 	"github.com/amarbel-llc/tommy/pkg/cst"
 	"github.com/amarbel-llc/tommy/pkg/document"
+{{- range .ExtraImports}}
+	"{{.}}"
+{{- end}}
 )
 
 // Ensure imports are used.
@@ -63,8 +66,9 @@ func (d *{{.Name}}Document) Undecoded() []string {
 {{end}}`
 
 type fileData struct {
-	Package string
-	Structs []StructInfo
+	Package      string
+	Structs      []StructInfo
+	ExtraImports []string
 }
 
 func unexport(s string) string {
@@ -74,6 +78,29 @@ func unexport(s string) string {
 	runes := []rune(s)
 	runes[0] = unicode.ToLower(runes[0])
 	return string(runes)
+}
+
+func collectImportPaths(structs []StructInfo) []string {
+	seen := make(map[string]bool)
+	for _, si := range structs {
+		collectFieldImports(si.Fields, seen)
+	}
+	var paths []string
+	for p := range seen {
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+func collectFieldImports(fields []FieldInfo, seen map[string]bool) {
+	for _, fi := range fields {
+		if fi.ImportPath != "" {
+			seen[fi.ImportPath] = true
+		}
+		if fi.InnerInfo != nil {
+			collectFieldImports(fi.InnerInfo.Fields, seen)
+		}
+	}
 }
 
 func RenderFile(w io.Writer, pkg string, structs []StructInfo) error {
@@ -86,7 +113,8 @@ func RenderFile(w io.Writer, pkg string, structs []StructInfo) error {
 	}).Parse(fileTemplate))
 
 	return tmpl.Execute(w, fileData{
-		Package: pkg,
-		Structs: structs,
+		Package:      pkg,
+		Structs:      structs,
+		ExtraImports: collectImportPaths(structs),
 	})
 }

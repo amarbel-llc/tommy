@@ -31,7 +31,11 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 	case FieldPrimitive:
 		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
 			fi.TypeName, docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		if fi.ElemType != "" {
+			fmt.Fprintf(&buf, "\t\t%s = %s(v)\n", target, fi.ElemType)
+		} else {
+			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		}
 		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
 		fmt.Fprintf(&buf, "\t}\n")
 
@@ -176,7 +180,11 @@ func emitFlatKeyDecodeField(fi FieldInfo, localVar, docVar, containerExpr, keyPr
 	case FieldPrimitive:
 		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
 			fi.TypeName, docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		if fi.ElemType != "" {
+			fmt.Fprintf(&buf, "\t\t%s = %s(v)\n", target, fi.ElemType)
+		} else {
+			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		}
 		fmt.Fprintf(&buf, "\t\tfound = true\n")
 		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
 		fmt.Fprintf(&buf, "\t}\n")
@@ -220,14 +228,20 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 	switch fi.Kind {
 	case FieldPrimitive:
 		zv := zeroLiteral(fi.TypeName)
+		// For wrapper types (ElemType set), convert to underlying primitive
+		encodeSource := source
+		if fi.ElemType != "" {
+			encodeSource = fi.TypeName + "(" + source + ")"
+			zv = fi.ElemType + "(" + zv + ")"
+		}
 		if fi.OmitEmpty {
 			fmt.Fprintf(&buf, "\tif %s != %s {\n", source, zv)
 			if fi.Multiline && fi.TypeName == "string" {
 				fmt.Fprintf(&buf, "\t\tif err := %s.SetMultilineInContainer(%s, %q, %s); err != nil {\n",
-					docVar, containerExpr, fi.TomlKey, source)
+					docVar, containerExpr, fi.TomlKey, encodeSource)
 			} else {
 				fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
-					docVar, containerExpr, fi.TomlKey, source)
+					docVar, containerExpr, fi.TomlKey, encodeSource)
 			}
 			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
 			fmt.Fprintf(&buf, "\t\t}\n")
@@ -238,7 +252,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 			fmt.Fprintf(&buf, "\tif %s != %s || %s.HasInContainer(%s, %q) {\n",
 				source, zv, docVar, containerExpr, fi.TomlKey)
 			fmt.Fprintf(&buf, "\t\tif err := %s.SetMultilineInContainer(%s, %q, %s); err != nil {\n",
-				docVar, containerExpr, fi.TomlKey, source)
+				docVar, containerExpr, fi.TomlKey, encodeSource)
 			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
@@ -246,7 +260,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 			fmt.Fprintf(&buf, "\tif %s != %s || %s.HasInContainer(%s, %q) {\n",
 				source, zv, docVar, containerExpr, fi.TomlKey)
 			fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
-				docVar, containerExpr, fi.TomlKey, source)
+				docVar, containerExpr, fi.TomlKey, encodeSource)
 			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
