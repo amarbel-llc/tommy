@@ -4269,3 +4269,91 @@ type Config struct {
 		t.Fatalf("build failed (likely unused import):\n%s", output)
 	}
 }
+
+// Regression #40: go generate ./... should produce identical output to individual go generate
+func TestIntegrationGoGenerateAllProducesIntoFunctions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Leaf package with a struct
+	leafDir := filepath.Join(dir, "leaf")
+	writeFixture(t, leafDir, "go.mod", strings.Join([]string{
+		"module example.com/test/leaf",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, leafDir, "config.go", `package leaf
+
+//go:generate tommy generate
+type Config struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	// Generate individually first
+	if err := Generate(leafDir, "config.go"); err != nil {
+		t.Fatalf("Generate leaf: %v", err)
+	}
+
+	// Read the individually-generated output
+	individualOutput, err := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("read individual output: %v", err)
+	}
+
+	if !strings.Contains(string(individualOutput), "func DecodeConfigInto(") {
+		t.Fatal("individual generation missing DecodeConfigInto")
+	}
+	if !strings.Contains(string(individualOutput), "func EncodeConfigFrom(") {
+		t.Fatal("individual generation missing EncodeConfigFrom")
+	}
+
+	// Build the tommy binary from current source
+	tommyBin := filepath.Join(t.TempDir(), "tommy")
+	buildCmd := exec.Command("go", "build", "-o", tommyBin, "./cmd/tommy")
+	buildCmd.Dir = repoRoot
+	buildCmd.Env = append(os.Environ(), "GOFLAGS=")
+	if buildOut, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build tommy: %v\n%s", err, buildOut)
+	}
+
+	// Now regenerate via go generate ./... using our built binary
+	cmd := exec.Command("go", "generate", "./...")
+	cmd.Dir = leafDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=", "PATH="+filepath.Dir(tommyBin)+":"+os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go generate ./... failed: %v\n%s", err, output)
+	}
+
+	// Read the go-generate-all output
+	allOutput, err := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("read all output: %v", err)
+	}
+
+	if !strings.Contains(string(allOutput), "func DecodeConfigInto(") {
+		t.Fatalf("go generate ./... dropped DecodeConfigInto.\nOutput:\n%s", string(allOutput))
+	}
+	if !strings.Contains(string(allOutput), "func EncodeConfigFrom(") {
+		t.Fatalf("go generate ./... dropped EncodeConfigFrom.\nOutput:\n%s", string(allOutput))
+	}
+
+	// Verify byte-for-byte identical
+	if string(individualOutput) != string(allOutput) {
+		t.Fatalf("go generate ./... produced different output than individual generate.\nIndividual length: %d\nAll length: %d", len(individualOutput), len(allOutput))
+	}
+}
