@@ -4030,3 +4030,242 @@ func TestCrossPackageDelegationRoundTrip(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+// Regression #38: pointer-to-cross-package-struct delegation should not produce **T
+func TestIntegrationPointerCrossPackageDelegation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// External package with a struct
+	extDir := filepath.Join(dir, "scriptcfg")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/scriptcfg",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, extDir, "script.go", `package scriptcfg
+
+//go:generate tommy generate
+type ScriptConfig struct {
+	Description string            `+"`"+`toml:"description"`+"`"+`
+	Shell       []string          `+"`"+`toml:"shell,omitempty"`+"`"+`
+	Script      string            `+"`"+`toml:"script,omitempty,multiline"`+"`"+`
+	Env         map[string]string `+"`"+`toml:"env,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(extDir, "script.go"); err != nil {
+		t.Fatalf("Generate scriptcfg: %v", err)
+	}
+
+	// Consumer with *scriptcfg.ScriptConfig field
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/scriptcfg v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/scriptcfg => ../scriptcfg",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "blob.go", `package consumer
+
+import "example.com/test/scriptcfg"
+
+//go:generate tommy generate
+type Blob struct {
+	Name        string                      `+"`"+`toml:"name"`+"`"+`
+	ExecCommand *scriptcfg.ScriptConfig     `+"`"+`toml:"exec-command,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "blob.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "blob_test.go", `package consumer
+
+import "testing"
+
+func TestPointerDelegationRoundTrip(t *testing.T) {
+	input := []byte("name = \"mybuild\"\n\n[exec-command]\ndescription = \"run build\"\nscript = \"make all\"\n")
+
+	doc, err := DecodeBlob(input)
+	if err != nil {
+		t.Fatalf("DecodeBlob: %v", err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "mybuild" {
+		t.Fatalf("Name = %q, want \"mybuild\"", cfg.Name)
+	}
+	if cfg.ExecCommand == nil {
+		t.Fatal("ExecCommand should not be nil")
+	}
+	if cfg.ExecCommand.Description != "run build" {
+		t.Fatalf("Description = %q, want \"run build\"", cfg.ExecCommand.Description)
+	}
+	if cfg.ExecCommand.Script != "make all" {
+		t.Fatalf("Script = %q, want \"make all\"", cfg.ExecCommand.Script)
+	}
+
+	cfg.ExecCommand.Script = "make test"
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeBlob(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if doc2.Data().ExecCommand.Script != "make test" {
+		t.Fatalf("re-decoded Script = %q, want \"make test\"", doc2.Data().ExecCommand.Script)
+	}
+}
+
+func TestPointerDelegationNilOmitted(t *testing.T) {
+	input := []byte("name = \"simple\"\n")
+
+	doc, err := DecodeBlob(input)
+	if err != nil {
+		t.Fatalf("DecodeBlob: %v", err)
+	}
+
+	cfg := doc.Data()
+	if cfg.ExecCommand != nil {
+		t.Fatal("ExecCommand should be nil")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Regression #39: delegation should not emit unused imports from delegated struct's inner fields
+func TestIntegrationDelegationNoUnusedImports(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "ids" package with a TextMarshaler type
+	idsDir := filepath.Join(dir, "ids")
+	writeFixture(t, idsDir, "go.mod", "module example.com/test/ids\n\ngo 1.26\n")
+	writeFixture(t, idsDir, "tag.go", `package ids
+
+type tagStruct struct{ value string }
+type TagStruct = tagStruct
+
+func (t tagStruct) MarshalText() ([]byte, error) { return []byte(t.value), nil }
+func (t *tagStruct) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+`)
+
+	// "defaults" package that uses ids.TagStruct
+	defaultsDir := filepath.Join(dir, "defaults")
+	writeFixture(t, defaultsDir, "go.mod", strings.Join([]string{
+		"module example.com/test/defaults",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/ids v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/ids => ../ids",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, defaultsDir, "defaults.go", `package defaults
+
+import "example.com/test/ids"
+
+//go:generate tommy generate
+type Defaults struct {
+	Tags []ids.TagStruct `+"`"+`toml:"tags,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(defaultsDir, "defaults.go"); err != nil {
+		t.Fatalf("Generate defaults: %v", err)
+	}
+
+	// Consumer that delegates to defaults — should NOT import "ids"
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/defaults v0.0.0",
+		"\texample.com/test/ids v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/defaults => ../defaults",
+		"\texample.com/test/ids => ../ids",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/test/defaults"
+
+//go:generate tommy generate
+type Config struct {
+	Name     string            `+"`"+`toml:"name"`+"`"+`
+	Defaults defaults.Defaults `+"`"+`toml:"defaults"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "config.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+
+	// The generated file should compile without "imported and not used" errors
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build failed (likely unused import):\n%s", output)
+	}
+}

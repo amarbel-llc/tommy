@@ -107,7 +107,9 @@ func collectFieldImports(fields []FieldInfo, seen map[string]bool) {
 		if fi.ImportPath != "" {
 			seen[fi.ImportPath] = true
 		}
-		if fi.InnerInfo != nil {
+		// Don't recurse into delegated fields — their inner imports are
+		// handled by the target package's generated code, not ours.
+		if fi.InnerInfo != nil && fi.Kind != FieldDelegatedStruct && fi.Kind != FieldPointerDelegatedStruct {
 			collectFieldImports(fi.InnerInfo.Fields, seen)
 		}
 	}

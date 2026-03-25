@@ -255,7 +255,16 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 			return fi, nil
 		case *ast.SelectorExpr:
 			// *pkg.Type — resolve via type info and classify
-			return classifySelectorExpr(pkg, fi, inner)
+			result, err := classifySelectorExpr(pkg, fi, inner)
+			if err != nil {
+				return result, err
+			}
+			if result.Kind == FieldStruct {
+				result.Kind = FieldPointerStruct
+			} else if result.Kind == FieldDelegatedStruct {
+				result.Kind = FieldPointerDelegatedStruct
+			}
+			return result, nil
 		default:
 			return fi, fmt.Errorf("unsupported pointer type")
 		}
