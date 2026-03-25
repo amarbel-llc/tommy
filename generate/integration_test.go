@@ -4270,8 +4270,8 @@ type Config struct {
 	}
 }
 
-// Regression #40: go generate ./... should produce identical output to individual go generate
-func TestIntegrationGoGenerateAllProducesIntoFunctions(t *testing.T) {
+// Regression #40: regeneration over existing _tommy.go files must be idempotent
+func TestIntegrationRegenerateOverExistingTommyFiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -4282,7 +4282,7 @@ func TestIntegrationGoGenerateAllProducesIntoFunctions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Leaf package with a struct
+	// Leaf package
 	leafDir := filepath.Join(dir, "leaf")
 	writeFixture(t, leafDir, "go.mod", strings.Join([]string{
 		"module example.com/test/leaf",
@@ -4303,25 +4303,93 @@ type Config struct {
 }
 `)
 
-	// Generate individually first
+	// Generate once
+	if err := Generate(leafDir, "config.go"); err != nil {
+		t.Fatalf("Generate leaf (first): %v", err)
+	}
+
+	firstOutput, err := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(firstOutput), "func DecodeConfigInto(") {
+		t.Fatal("first generation missing DecodeConfigInto")
+	}
+
+	// Generate again over existing _tommy.go (simulates go generate ./... re-run)
+	if err := Generate(leafDir, "config.go"); err != nil {
+		t.Fatalf("Generate leaf (second): %v", err)
+	}
+
+	secondOutput, err := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(firstOutput) != string(secondOutput) {
+		t.Fatalf("regeneration over existing _tommy.go produced different output.\nFirst length: %d\nSecond length: %d", len(firstOutput), len(secondOutput))
+	}
+}
+
+// Regression #40: multi-package regeneration via go generate ./...
+func TestIntegrationGoGenerateAllMultiPackage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Monorepo with two packages: leaf and consumer
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/test",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	leafDir := filepath.Join(dir, "leaf")
+	writeFixture(t, leafDir, "config.go", `package leaf
+
+//go:generate tommy generate
+type Config struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "app.go", `package consumer
+
+import "example.com/test/leaf"
+
+//go:generate tommy generate
+type App struct {
+	Name   string      `+"`"+`toml:"name"`+"`"+`
+	Config leaf.Config `+"`"+`toml:"config"`+"`"+`
+}
+`)
+
+	// Generate individually in dependency order
 	if err := Generate(leafDir, "config.go"); err != nil {
 		t.Fatalf("Generate leaf: %v", err)
 	}
-
-	// Read the individually-generated output
-	individualOutput, err := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
-	if err != nil {
-		t.Fatalf("read individual output: %v", err)
+	if err := Generate(consumerDir, "app.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
 	}
 
-	if !strings.Contains(string(individualOutput), "func DecodeConfigInto(") {
-		t.Fatal("individual generation missing DecodeConfigInto")
-	}
-	if !strings.Contains(string(individualOutput), "func EncodeConfigFrom(") {
-		t.Fatal("individual generation missing EncodeConfigFrom")
-	}
+	leafIndividual, _ := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
+	consumerIndividual, _ := os.ReadFile(filepath.Join(consumerDir, "app_tommy.go"))
 
-	// Build the tommy binary from current source
+	// Build tommy binary from current source
 	tommyBin := filepath.Join(t.TempDir(), "tommy")
 	buildCmd := exec.Command("go", "build", "-o", tommyBin, "./cmd/tommy")
 	buildCmd.Dir = repoRoot
@@ -4330,30 +4398,54 @@ type Config struct {
 		t.Fatalf("build tommy: %v\n%s", err, buildOut)
 	}
 
-	// Now regenerate via go generate ./... using our built binary
+	// Regenerate via go generate ./...
 	cmd := exec.Command("go", "generate", "./...")
-	cmd.Dir = leafDir
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=", "PATH="+filepath.Dir(tommyBin)+":"+os.Getenv("PATH"))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go generate ./... failed: %v\n%s", err, output)
 	}
 
-	// Read the go-generate-all output
-	allOutput, err := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
+	leafAll, _ := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
+	consumerAll, _ := os.ReadFile(filepath.Join(consumerDir, "app_tommy.go"))
+
+	if !strings.Contains(string(leafAll), "func DecodeConfigInto(") {
+		t.Fatalf("go generate ./... dropped leaf DecodeConfigInto.\nOutput:\n%s", string(leafAll))
+	}
+	if !strings.Contains(string(consumerAll), "func DecodeAppInto(") {
+		t.Fatalf("go generate ./... dropped consumer DecodeAppInto.\nOutput:\n%s", string(consumerAll))
+	}
+
+	if string(leafIndividual) != string(leafAll) {
+		t.Fatalf("leaf: go generate ./... produced different output than individual generate")
+	}
+	if string(consumerIndividual) != string(consumerAll) {
+		t.Fatalf("consumer: go generate ./... produced different output than individual generate")
+	}
+
+	// Verify the full project compiles and tests pass
+	writeFixture(t, consumerDir, "app_test.go", `package consumer
+
+import "testing"
+
+func TestAppRoundTrip(t *testing.T) {
+	input := []byte("name = \"myapp\"\n\n[config]\nhost = \"localhost\"\nport = 8080\n")
+	doc, err := DecodeApp(input)
 	if err != nil {
-		t.Fatalf("read all output: %v", err)
+		t.Fatal(err)
 	}
+	cfg := doc.Data()
+	if cfg.Config.Host != "localhost" {
+		t.Fatalf("Host = %q, want \"localhost\"", cfg.Config.Host)
+	}
+}
+`)
 
-	if !strings.Contains(string(allOutput), "func DecodeConfigInto(") {
-		t.Fatalf("go generate ./... dropped DecodeConfigInto.\nOutput:\n%s", string(allOutput))
-	}
-	if !strings.Contains(string(allOutput), "func EncodeConfigFrom(") {
-		t.Fatalf("go generate ./... dropped EncodeConfigFrom.\nOutput:\n%s", string(allOutput))
-	}
-
-	// Verify byte-for-byte identical
-	if string(individualOutput) != string(allOutput) {
-		t.Fatalf("go generate ./... produced different output than individual generate.\nIndividual length: %d\nAll length: %d", len(individualOutput), len(allOutput))
+	testCmd := exec.Command("go", "test", "./...")
+	testCmd.Dir = dir
+	testCmd.Env = append(os.Environ(), "GOFLAGS=")
+	if testOut, err := testCmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", testOut)
 	}
 }
