@@ -2934,3 +2934,65 @@ func TestMixedCrossPackageRoundTrip(t *testing.T) {
 		t.Fatalf("test failed:\n%s", outputMixed)
 	}
 }
+
+// Regression test for #29: FieldTextMarshaler fields should NOT produce imports
+// because the generated code accesses them via promoted field methods
+// (d.data.Key.UnmarshalText), not by qualified type name. Only
+// FieldSliceTextMarshaler and primitive wrappers need imports.
+func TestIntegrationNoUnusedImportsForTextMarshalerFields(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Single module with cross-package TextMarshaler type
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/test",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "ext.go", `package ext
+
+type Id struct{ value string }
+func (i Id) MarshalText() ([]byte, error)  { return []byte(i.value), nil }
+func (i *Id) UnmarshalText(b []byte) error { i.value = string(b); return nil }
+`)
+
+	configDir := filepath.Join(dir, "config")
+	writeFixture(t, configDir, "config.go", `package config
+
+import "example.com/test/ext"
+
+//go:generate tommy generate
+type Config struct {
+	Key  ext.Id `+"`"+`toml:"key"`+"`"+`
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	if err := Generate(configDir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	// Generated file must compile (no unused imports)
+	cmdBuild := exec.Command("go", "build", ".")
+	cmdBuild.Dir = configDir
+	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	buildOutput, err := cmdBuild.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated file does not compile (unused import?):\n%s", buildOutput)
+	}
+}

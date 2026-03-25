@@ -571,10 +571,24 @@ type Defaults struct {
 		t.Fatalf("expected 1 struct, got %d", len(infos))
 	}
 
-	for _, f := range infos[0].Fields {
-		if f.ImportPath != "example.com/ext" {
-			t.Errorf("field %s: ImportPath = %q, want %q", f.GoName, f.ImportPath, "example.com/ext")
-		}
+	// Scalar FieldTextMarshaler (Typ) should NOT have ImportPath — generated
+	// code uses d.data.Typ.UnmarshalText(), no qualified type name needed.
+	typ := infos[0].Fields[0]
+	if typ.GoName != "Typ" {
+		t.Fatalf("expected first field Typ, got %s", typ.GoName)
+	}
+	if typ.ImportPath != "" {
+		t.Errorf("field Typ: ImportPath = %q, want empty (no qualified reference in generated code)", typ.ImportPath)
+	}
+
+	// Slice FieldSliceTextMarshaler (Tags) MUST have ImportPath — generated
+	// code uses make([]ext.Tag, len(v)) which requires the import.
+	tags := infos[0].Fields[1]
+	if tags.GoName != "Tags" {
+		t.Fatalf("expected second field Tags, got %s", tags.GoName)
+	}
+	if tags.ImportPath != "example.com/ext" {
+		t.Errorf("field Tags: ImportPath = %q, want %q", tags.ImportPath, "example.com/ext")
 	}
 }
 

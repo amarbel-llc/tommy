@@ -357,9 +357,6 @@ func classifySelectorExpr(pkg *packages.Package, fi FieldInfo, sel *ast.Selector
 	fi.TypeName = qualifiedName
 	if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
 		fi.Kind = FieldTextMarshaler
-		if named, ok := obj.Type().(*types.Named); ok {
-			fi.ImportPath = named.Obj().Pkg().Path()
-		}
 		return fi, nil
 	}
 	if hasMethod(obj, "UnmarshalText") {
@@ -633,7 +630,6 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 		if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
 			fi.Kind = FieldTextMarshaler
 			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
-			fi.ImportPath = obj.Pkg().Path()
 			return fi, nil
 		}
 
