@@ -25,6 +25,7 @@ const (
 	FieldTextMarshaler                     // implements encoding.TextMarshaler/TextUnmarshaler
 	FieldMapStringStruct                   // map[string]SomeStruct
 	FieldSliceTextMarshaler                // []TextMarshalerType
+	FieldMapStringMapStringString          // map[string]NamedMap where NamedMap is map[string]string
 )
 
 // StructInfo describes a struct that needs code generation.
@@ -43,7 +44,8 @@ type FieldInfo struct {
 	InnerInfo  *StructInfo
 	OmitEmpty  bool
 	Multiline  bool
-	ImportPath string // import path needed for ElemType (e.g., "example.com/pkg/types")
+	ImportPath   string // import path needed for ElemType (e.g., "example.com/pkg/types")
+	SlicePointer bool   // true when slice element is a pointer (e.g., []*Struct)
 }
 
 // Analyze inspects the given Go source file for structs with
@@ -289,6 +291,45 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 				return fi, nil
 			}
 			return fi, fmt.Errorf("cross-package slice element type %s must implement TextMarshaler/TextUnmarshaler", qualifiedName)
+		case *ast.StarExpr:
+			switch inner := elem.X.(type) {
+			case *ast.Ident:
+				fi.Kind = FieldSliceStruct
+				fi.TypeName = inner.Name
+				fi.SlicePointer = true
+				innerInfo, err := resolveStructByName(pkg, inner.Name)
+				if err != nil {
+					return fi, err
+				}
+				fi.InnerInfo = &innerInfo
+				return fi, nil
+			case *ast.SelectorExpr:
+				obj := pkg.TypesInfo.Uses[inner.Sel]
+				if obj == nil {
+					return fi, fmt.Errorf("cannot resolve slice element type %s", inner.Sel.Name)
+				}
+				named, ok := obj.Type().(*types.Named)
+				if !ok {
+					return fi, fmt.Errorf("slice pointer element type %s is not a named type", inner.Sel.Name)
+				}
+				structType, ok := named.Underlying().(*types.Struct)
+				if !ok {
+					return fi, fmt.Errorf("slice pointer element type %s is not a struct", inner.Sel.Name)
+				}
+				qualifiedName := inner.X.(*ast.Ident).Name + "." + inner.Sel.Name
+				fi.Kind = FieldSliceStruct
+				fi.TypeName = qualifiedName
+				fi.SlicePointer = true
+				fi.ImportPath = named.Obj().Pkg().Path()
+				resolvedInfo, err := resolveStructFromTypes(pkg, inner.Sel.Name, structType)
+				if err != nil {
+					return fi, err
+				}
+				fi.InnerInfo = &resolvedInfo
+				return fi, nil
+			default:
+				return fi, fmt.Errorf("unsupported pointer slice element type")
+			}
 		default:
 			return fi, fmt.Errorf("unsupported slice element type")
 		}
@@ -306,6 +347,19 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 			if val.Name == "string" {
 				fi.Kind = FieldMapStringString
 				return fi, nil
+			}
+			// Check if the named type is a map[string]string alias
+			obj := pkg.Types.Scope().Lookup(val.Name)
+			if obj != nil {
+				if named, ok := obj.Type().(*types.Named); ok {
+					if mapType, ok := named.Underlying().(*types.Map); ok {
+						if isMapStringString(mapType) {
+							fi.Kind = FieldMapStringMapStringString
+							fi.TypeName = val.Name
+							return fi, nil
+						}
+					}
+				}
 			}
 			// map[string]Struct (same package)
 			fi.Kind = FieldMapStringStruct
@@ -325,6 +379,16 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 			named, ok := obj.Type().(*types.Named)
 			if !ok {
 				return fi, fmt.Errorf("map value type %s is not a named type", val.Sel.Name)
+			}
+			// Check if it's a named map[string]string alias
+			if mapType, ok := named.Underlying().(*types.Map); ok {
+				if isMapStringString(mapType) {
+					qualifiedName := val.X.(*ast.Ident).Name + "." + val.Sel.Name
+					fi.Kind = FieldMapStringMapStringString
+					fi.TypeName = qualifiedName
+					fi.ImportPath = named.Obj().Pkg().Path()
+					return fi, nil
+				}
 			}
 			structType, ok := named.Underlying().(*types.Struct)
 			if !ok {
@@ -754,6 +818,35 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 				return fi, nil
 			}
 		}
+		if ptr, ok := elem.(*types.Pointer); ok {
+			if named, ok := ptr.Elem().(*types.Named); ok {
+				obj := named.Obj()
+				qualifiedName := obj.Pkg().Name() + "." + obj.Name()
+				if obj.Pkg() == pkg.Types {
+					qualifiedName = obj.Name()
+				}
+
+				if structType, ok := named.Underlying().(*types.Struct); ok {
+					fi.Kind = FieldSliceStruct
+					fi.TypeName = qualifiedName
+					fi.SlicePointer = true
+					if obj.Pkg() == pkg.Types {
+						innerInfo, err := resolveStructByName(pkg, obj.Name())
+						if err != nil {
+							return fi, err
+						}
+						fi.InnerInfo = &innerInfo
+					} else {
+						innerInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
+						if err != nil {
+							return fi, err
+						}
+						fi.InnerInfo = &innerInfo
+					}
+					return fi, nil
+				}
+			}
+		}
 		return fi, fmt.Errorf("unsupported slice element type")
 
 	case *types.Map:
@@ -765,11 +858,38 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 			fi.Kind = FieldMapStringString
 			return fi, nil
 		}
+		if named, ok := t.Elem().(*types.Named); ok {
+			if mapType, ok := named.Underlying().(*types.Map); ok && isMapStringString(mapType) {
+				obj := named.Obj()
+				qualifiedName := obj.Pkg().Name() + "." + obj.Name()
+				if obj.Pkg() == pkg.Types {
+					qualifiedName = obj.Name()
+				}
+				fi.Kind = FieldMapStringMapStringString
+				fi.TypeName = qualifiedName
+				if obj.Pkg() != pkg.Types {
+					fi.ImportPath = obj.Pkg().Path()
+				}
+				return fi, nil
+			}
+		}
 		return fi, fmt.Errorf("unsupported map value type")
+
+	case *types.Alias:
+		return classifyFromType(pkg, goName, tomlKey, types.Unalias(t))
 
 	default:
 		return fi, fmt.Errorf("unsupported type %T", typ)
 	}
+}
+
+func isMapStringString(m *types.Map) bool {
+	key, ok := m.Key().(*types.Basic)
+	if !ok || key.Kind() != types.String {
+		return false
+	}
+	val, ok := m.Elem().(*types.Basic)
+	return ok && val.Kind() == types.String
 }
 
 func resolveStructByName(pkg *packages.Package, name string) (StructInfo, error) {

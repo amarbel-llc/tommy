@@ -67,7 +67,12 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 	case FieldStruct:
 		if fi.InnerInfo != nil {
 			innerPrefix := consumedKey + "."
-			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+			if containerExpr == "d.cstDoc.Root()" {
+				fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+			} else {
+				fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+					docVar, containerExpr, fi.TomlKey)
+			}
 			fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
 			for _, inner := range fi.InnerInfo.Fields {
 				code := emitDecodeField(inner, target, docVar, "tableNode", innerPrefix)
@@ -125,10 +130,17 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		nodesVar := fi.TomlKey + "Nodes"
 		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
 		fmt.Fprintf(&buf, "\td.%s = make([]%s, len(%s))\n", toLowerFirst(fi.GoName), handleName, nodesVar)
-		fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
+		if fi.SlicePointer {
+			fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
+		} else {
+			fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
+		}
 		fmt.Fprintf(&buf, "\td.consumed[%q] = true\n", consumedKey)
 		fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
 		fmt.Fprintf(&buf, "\t\td.%s[i] = %s{node: node}\n", toLowerFirst(fi.GoName), handleName)
+		if fi.SlicePointer {
+			fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
+		}
 		if fi.InnerInfo != nil {
 			for _, inner := range fi.InnerInfo.Fields {
 				indexedTarget := fmt.Sprintf("%s[i]", target)
@@ -158,6 +170,30 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		}
+
+	case FieldMapStringMapStringString:
+		fmt.Fprintf(&buf, "\t{\n")
+		fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTables(%q)\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
+		fmt.Fprintf(&buf, "\t\t\td.consumed[%q] = true\n", consumedKey)
+		if fi.TypeName != "" {
+			fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.TypeName)
+		} else {
+			fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]map[string]string)\n", target)
+		}
+		fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
+		fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\td.consumed[%q + \".\" + mapKey] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t\t\tinner := document.GetStringMapFromTable(subTable)\n")
+		fmt.Fprintf(&buf, "\t\t\t\tdocument.MarkAllConsumed(subTable, %q + \".\" + mapKey, d.consumed)\n", consumedKey)
+		if fi.TypeName != "" {
+			fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = %s(inner)\n", target, fi.TypeName)
+		} else {
+			fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = inner\n", target)
+		}
+		fmt.Fprintf(&buf, "\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSliceTextMarshaler:
 		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[[]string](%s, %s, %q); err == nil {\n",
@@ -304,7 +340,12 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 
 	case FieldStruct:
 		if fi.InnerInfo != nil {
-			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+			if containerExpr == "d.cstDoc.Root()" {
+				fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+			} else {
+				fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+					docVar, containerExpr, fi.TomlKey)
+			}
 			for _, inner := range fi.InnerInfo.Fields {
 				code := emitEncodeField(inner, source, docVar, "tableNode")
 				buf.WriteString(code)
@@ -383,6 +424,19 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		}
+
+	case FieldMapStringMapStringString:
+		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
+		fmt.Fprintf(&buf, "\t\tfor mapKey, mapVal := range %s {\n", source)
+		fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTable(%q, mapKey)\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\tdocument.DeleteAllInContainer(subTable)\n")
+		fmt.Fprintf(&buf, "\t\t\tfor k, v := range map[string]string(mapVal) {\n")
+		fmt.Fprintf(&buf, "\t\t\t\tif err := %s.SetInContainer(subTable, k, v); err != nil {\n", docVar)
+		fmt.Fprintf(&buf, "\t\t\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSliceTextMarshaler:
 		fmt.Fprintf(&buf, "\t{\n")

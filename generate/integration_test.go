@@ -3293,6 +3293,296 @@ func TestMapCrossPackageStructRoundTrip(t *testing.T) {
 	}
 }
 
+// Regression: *types.Alias not unwrapped in cross-package recursive struct field resolution (#32)
+func TestIntegrationCrossPackageTypeAlias(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "other" package with a type alias to an unexported struct
+	otherDir := filepath.Join(dir, "other")
+	writeFixture(t, otherDir, "go.mod", "module example.com/test/other\n\ngo 1.26\n")
+	writeFixture(t, otherDir, "types.go", `package other
+
+type inner struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+
+type Alias = inner
+
+type Wrapper struct {
+	Item Alias `+"`"+`toml:"item"`+"`"+`
+}
+`)
+
+	// Consumer using other.Wrapper (which contains an alias field)
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/other v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/other => ../other",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/test/other"
+
+//go:generate tommy generate
+type Config struct {
+	Name    string        `+"`"+`toml:"name"`+"`"+`
+	Wrapper other.Wrapper `+"`"+`toml:"wrapper"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "consumer.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestCrossPackageTypeAliasRoundTrip(t *testing.T) {
+	input := []byte("name = \"app\"\n\n[wrapper]\n\n[wrapper.item]\nvalue = \"hello\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "app" {
+		t.Fatalf("Name = %q, want \"app\"", cfg.Name)
+	}
+	if cfg.Wrapper.Item.Value != "hello" {
+		t.Fatalf("Wrapper.Item.Value = %q, want \"hello\"", cfg.Wrapper.Item.Value)
+	}
+
+	cfg.Wrapper.Item.Value = "world"
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if doc2.Data().Wrapper.Item.Value != "world" {
+		t.Fatalf("re-decoded Value = %q, want \"world\"", doc2.Data().Wrapper.Item.Value)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Regression: map[string]NamedMapType fails when value type is a named map[string]string (#33)
+func TestIntegrationMapStringNamedMapType(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/namedmap",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package namedmap
+
+type UTIGroup map[string]string
+
+//go:generate tommy generate
+type Config struct {
+	Name   string                `+"`"+`toml:"name"`+"`"+`
+	Groups map[string]UTIGroup   `+"`"+`toml:"groups"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package namedmap
+
+import "testing"
+
+func TestMapStringNamedMapTypeRoundTrip(t *testing.T) {
+	input := []byte("name = \"types\"\n\n[groups.editors]\nvim = \"text/plain\"\nemacs = \"text/plain\"\n\n[groups.compilers]\ngcc = \"application/x-executable\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "types" {
+		t.Fatalf("Name = %q, want \"types\"", cfg.Name)
+	}
+	if len(cfg.Groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(cfg.Groups))
+	}
+	editors := cfg.Groups["editors"]
+	if editors["vim"] != "text/plain" {
+		t.Fatalf("Groups[editors][vim] = %q, want \"text/plain\"", editors["vim"])
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if len(doc2.Data().Groups) != 2 {
+		t.Fatalf("re-decoded groups count = %d, want 2", len(doc2.Data().Groups))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Regression: []*Struct (slice of pointer-to-struct) not supported (#34)
+func TestIntegrationSlicePointerToStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/sliceptr",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package sliceptr
+
+type Inner struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Title string    `+"`"+`toml:"title"`+"`"+`
+	Items []*Inner  `+"`"+`toml:"items"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package sliceptr
+
+import "testing"
+
+func TestSlicePointerToStructRoundTrip(t *testing.T) {
+	input := []byte("title = \"test\"\n\n[[items]]\nname = \"first\"\n\n[[items]]\nname = \"second\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Title != "test" {
+		t.Fatalf("Title = %q, want \"test\"", cfg.Title)
+	}
+	if len(cfg.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(cfg.Items))
+	}
+	if cfg.Items[0] == nil || cfg.Items[0].Name != "first" {
+		t.Fatalf("Items[0].Name = %q, want \"first\"", cfg.Items[0].Name)
+	}
+	if cfg.Items[1] == nil || cfg.Items[1].Name != "second" {
+		t.Fatalf("Items[1].Name = %q, want \"second\"", cfg.Items[1].Name)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if len(d2.Items) != 2 {
+		t.Fatalf("re-decoded items count = %d, want 2", len(d2.Items))
+	}
+	if d2.Items[1].Name != "second" {
+		t.Fatalf("re-decoded Items[1].Name = %q, want \"second\"", d2.Items[1].Name)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 // Sub-case 3: Cross-package slice alias and non-TextMarshaler struct (#22)
 func TestIntegrationCrossPackageSliceAlias(t *testing.T) {
 	if testing.Short() {
