@@ -2996,3 +2996,80 @@ type Config struct {
 		t.Fatalf("generated file does not compile (unused import?):\n%s", buildOutput)
 	}
 }
+
+// Regression test for #28: type aliases (type TagStruct = tagStruct) cause
+// obj.Type().(*types.Named) to fail because aliases resolve to the target type.
+// The import path must still be extracted for []pkg.AliasType fields.
+func TestIntegrationSliceTextMarshalerTypeAlias(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/test",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	// Cross-package types using aliases to unexported structs (dodder pattern)
+	idsDir := filepath.Join(dir, "ids")
+	writeFixture(t, idsDir, "ids.go", `package ids
+
+type tagStruct struct{ value string }
+func (t tagStruct) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *tagStruct) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+
+type TagStruct = tagStruct
+
+type typeStruct struct{ value string }
+func (t typeStruct) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *typeStruct) UnmarshalText(b []byte) error { t.value = string(b); return nil }
+
+type TypeStruct = typeStruct
+`)
+
+	configDir := filepath.Join(dir, "config")
+	writeFixture(t, configDir, "config.go", `package config
+
+import "example.com/test/ids"
+
+//go:generate tommy generate
+type Defaults struct {
+	Typ       ids.TypeStruct  `+"`"+`toml:"typ"`+"`"+`
+	Etiketten []ids.TagStruct `+"`"+`toml:"etiketten"`+"`"+`
+}
+`)
+
+	if err := Generate(configDir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	generated, err := os.ReadFile(filepath.Join(configDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("reading generated file: %v", err)
+	}
+	if !strings.Contains(string(generated), `"example.com/test/ids"`) {
+		t.Errorf("generated file missing import for cross-package type alias.\nGenerated:\n%s", string(generated))
+	}
+
+	// Must compile
+	cmdBuild := exec.Command("go", "build", ".")
+	cmdBuild.Dir = configDir
+	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	buildOutput, err := cmdBuild.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated file does not compile:\n%s", buildOutput)
+	}
+}

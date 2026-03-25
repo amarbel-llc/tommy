@@ -283,8 +283,8 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 				fi.Kind = FieldSliceTextMarshaler
 				fi.TypeName = qualifiedName
 				fi.ElemType = qualifiedName
-				if named, ok := obj.Type().(*types.Named); ok {
-					fi.ImportPath = named.Obj().Pkg().Path()
+				if p := obj.Pkg(); p != nil {
+					fi.ImportPath = p.Path()
 				}
 				return fi, nil
 			}
