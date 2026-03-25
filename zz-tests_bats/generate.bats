@@ -47,7 +47,7 @@ function generate_output_contains_decode_function { # @test
   cd "$BATS_TEST_TMPDIR/proj"
   run go generate ./...
   assert_success
-  run grep -c "func DecodeConfig" config_tommy.go
+  run grep -c "func DecodeConfig(" config_tommy.go
   assert_output "1"
 }
 
