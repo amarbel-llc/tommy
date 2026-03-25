@@ -11,11 +11,21 @@ func emitDecodeBody(si StructInfo) string {
 	for _, fi := range si.Fields {
 		buf.WriteString(emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", ""))
 	}
+	if si.Validatable {
+		fmt.Fprintf(&buf, "\tif err := d.data.Validate(); err != nil {\n")
+		fmt.Fprintf(&buf, "\t\treturn nil, fmt.Errorf(\"validation failed: %%w\", err)\n")
+		fmt.Fprintf(&buf, "\t}\n")
+	}
 	return buf.String()
 }
 
 func emitEncodeBody(si StructInfo) string {
 	var buf bytes.Buffer
+	if si.Validatable {
+		fmt.Fprintf(&buf, "\tif err := d.data.Validate(); err != nil {\n")
+		fmt.Fprintf(&buf, "\t\treturn nil, fmt.Errorf(\"validation failed: %%w\", err)\n")
+		fmt.Fprintf(&buf, "\t}\n")
+	}
 	for _, fi := range si.Fields {
 		buf.WriteString(emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()"))
 	}

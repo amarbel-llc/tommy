@@ -77,3 +77,57 @@ func TestEmitDecodePointerStruct(t *testing.T) {
 		t.Fatalf("expected AnnotationFilter construction, got:\n%s", code)
 	}
 }
+
+func TestEmitDecodeBodyWithValidation(t *testing.T) {
+	si := StructInfo{
+		Name:        "Config",
+		Validatable: true,
+		Fields: []FieldInfo{
+			{GoName: "Port", TomlKey: "port", Kind: FieldPrimitive, TypeName: "int"},
+		},
+	}
+	code := emitDecodeBody(si)
+	if !strings.Contains(code, "d.data.Validate()") {
+		t.Fatalf("expected Validate() call in decode, got:\n%s", code)
+	}
+}
+
+func TestEmitDecodeBodyWithoutValidation(t *testing.T) {
+	si := StructInfo{
+		Name: "Config",
+		Fields: []FieldInfo{
+			{GoName: "Port", TomlKey: "port", Kind: FieldPrimitive, TypeName: "int"},
+		},
+	}
+	code := emitDecodeBody(si)
+	if strings.Contains(code, "Validate") {
+		t.Fatalf("unexpected Validate() call in decode, got:\n%s", code)
+	}
+}
+
+func TestEmitEncodeBodyWithValidation(t *testing.T) {
+	si := StructInfo{
+		Name:        "Config",
+		Validatable: true,
+		Fields: []FieldInfo{
+			{GoName: "Port", TomlKey: "port", Kind: FieldPrimitive, TypeName: "int"},
+		},
+	}
+	code := emitEncodeBody(si)
+	if !strings.Contains(code, "d.data.Validate()") {
+		t.Fatalf("expected Validate() call in encode, got:\n%s", code)
+	}
+}
+
+func TestEmitEncodeBodyWithoutValidation(t *testing.T) {
+	si := StructInfo{
+		Name: "Config",
+		Fields: []FieldInfo{
+			{GoName: "Port", TomlKey: "port", Kind: FieldPrimitive, TypeName: "int"},
+		},
+	}
+	code := emitEncodeBody(si)
+	if strings.Contains(code, "Validate") {
+		t.Fatalf("unexpected Validate() call in encode, got:\n%s", code)
+	}
+}
