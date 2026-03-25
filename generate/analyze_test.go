@@ -592,6 +592,56 @@ type Defaults struct {
 	}
 }
 
+func TestAnalyzeValidatableStruct(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	Port int `+"`"+`toml:"port"`+"`"+`
+}
+
+func (c Config) Validate() error {
+	return nil
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	if !infos[0].Validatable {
+		t.Fatal("expected Validatable to be true")
+	}
+}
+
+func TestAnalyzeNonValidatableStruct(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	if infos[0].Validatable {
+		t.Fatal("expected Validatable to be false")
+	}
+}
+
 func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")

@@ -30,8 +30,9 @@ const (
 
 // StructInfo describes a struct that needs code generation.
 type StructInfo struct {
-	Name   string
-	Fields []FieldInfo
+	Name        string
+	Fields      []FieldInfo
+	Validatable bool
 }
 
 // FieldInfo describes a single field within a struct.
@@ -168,6 +169,11 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 			fi.Multiline = opts.multiline
 			si.Fields = append(si.Fields, fi)
 		}
+	}
+
+	obj := pkg.Types.Scope().Lookup(name)
+	if obj != nil {
+		si.Validatable = hasMethod(obj, "Validate")
 	}
 
 	return si, nil
