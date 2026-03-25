@@ -3087,16 +3087,30 @@ func TestIntegrationCrossPackageNamedStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// "other" package with a simple struct
+	// "other" package with a simple struct (also tommy-generated for delegation)
 	otherDir := filepath.Join(dir, "other")
-	writeFixture(t, otherDir, "go.mod", "module example.com/test/other\n\ngo 1.26\n")
+	writeFixture(t, otherDir, "go.mod", strings.Join([]string{
+		"module example.com/test/other",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
 	writeFixture(t, otherDir, "config.go", `package other
 
+//go:generate tommy generate
 type Config struct {
 	Host string `+"`"+`toml:"host"`+"`"+`
 	Port int    `+"`"+`toml:"port"`+"`"+`
 }
 `)
+
+	if err := Generate(otherDir, "config.go"); err != nil {
+		t.Fatalf("Generate other: %v", err)
+	}
 
 	// Consumer using other.Config as a named field
 	consumerDir := filepath.Join(dir, "consumer")
@@ -3306,9 +3320,18 @@ func TestIntegrationCrossPackageTypeAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// "other" package with a type alias to an unexported struct
+	// "other" package with a type alias to an unexported struct (also tommy-generated)
 	otherDir := filepath.Join(dir, "other")
-	writeFixture(t, otherDir, "go.mod", "module example.com/test/other\n\ngo 1.26\n")
+	writeFixture(t, otherDir, "go.mod", strings.Join([]string{
+		"module example.com/test/other",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
 	writeFixture(t, otherDir, "types.go", `package other
 
 type inner struct {
@@ -3317,10 +3340,15 @@ type inner struct {
 
 type Alias = inner
 
+//go:generate tommy generate
 type Wrapper struct {
 	Item Alias `+"`"+`toml:"item"`+"`"+`
 }
 `)
+
+	if err := Generate(otherDir, "types.go"); err != nil {
+		t.Fatalf("Generate other: %v", err)
+	}
 
 	// Consumer using other.Wrapper (which contains an alias field)
 	consumerDir := filepath.Join(dir, "consumer")

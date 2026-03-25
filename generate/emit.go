@@ -313,6 +313,35 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
 		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldDelegatedStruct:
+		parts := strings.SplitN(fi.TypeName, ".", 2)
+		if containerExpr == "d.cstDoc.Root()" {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+		} else {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+				docVar, containerExpr, fi.TomlKey)
+		}
+		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s, %s, tableNode, d.consumed, %q); err != nil {\n",
+			parts[0], parts[1], target, docVar, consumedKey+".")
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldPointerDelegatedStruct:
+		parts := strings.SplitN(fi.TypeName, ".", 2)
+		localVar := toLowerFirst(fi.GoName) + "Val"
+		fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+			docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t%s := &%s{}\n", localVar, fi.TypeName)
+		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s, %s, tableNode, d.consumed, %q); err != nil {\n",
+			parts[0], parts[1], localVar, docVar, consumedKey+".")
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t%s = %s\n", target, localVar)
+		fmt.Fprintf(&buf, "\t}\n")
 	}
 
 	return buf.String()
@@ -558,6 +587,32 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, vals); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldDelegatedStruct:
+		parts := strings.SplitN(fi.TypeName, ".", 2)
+		if containerExpr == "d.cstDoc.Root()" {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+		} else {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+				docVar, containerExpr, fi.TomlKey)
+		}
+		fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(&%s, %s, tableNode); err != nil {\n",
+			parts[0], parts[1], source, docVar)
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldPointerDelegatedStruct:
+		parts := strings.SplitN(fi.TypeName, ".", 2)
+		fmt.Fprintf(&buf, "\tif %s != nil {\n", source)
+		fmt.Fprintf(&buf, "\t\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+			docVar, containerExpr, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\tif err := %s.Encode%sFrom(%s, %s, tableNode); err != nil {\n",
+			parts[0], parts[1], source, docVar)
+		fmt.Fprintf(&buf, "\t\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 	}

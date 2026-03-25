@@ -931,6 +931,12 @@ func resolveStructByName(pkg *packages.Package, name string) (StructInfo, error)
 				}
 				structType, ok := typeSpec.Type.(*ast.StructType)
 				if !ok {
+					// Follow type aliases (e.g. type Alias = inner)
+					if typeSpec.Assign.IsValid() {
+						if ident, ok := typeSpec.Type.(*ast.Ident); ok {
+							return resolveStructByName(pkg, ident.Name)
+						}
+					}
 					return StructInfo{}, fmt.Errorf("%s is not a struct", name)
 				}
 				return analyzeStruct(pkg, name, structType)

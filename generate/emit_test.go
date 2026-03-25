@@ -131,3 +131,51 @@ func TestEmitEncodeBodyWithoutValidation(t *testing.T) {
 		t.Fatalf("unexpected Validate() call in encode, got:\n%s", code)
 	}
 }
+
+func TestEmitDecodeDelegatedStruct(t *testing.T) {
+	fi := FieldInfo{
+		GoName:     "Settings",
+		TomlKey:    "settings",
+		Kind:       FieldDelegatedStruct,
+		TypeName:   "ext.Inner",
+		ImportPath: "example.com/ext",
+	}
+	code := emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", "")
+	if !strings.Contains(code, "ext.DecodeInnerInto") {
+		t.Fatalf("expected delegation call ext.DecodeInnerInto, got:\n%s", code)
+	}
+	if !strings.Contains(code, `FindTable("settings")`) {
+		t.Fatalf("expected FindTable, got:\n%s", code)
+	}
+}
+
+func TestEmitEncodeDelegatedStruct(t *testing.T) {
+	fi := FieldInfo{
+		GoName:     "Settings",
+		TomlKey:    "settings",
+		Kind:       FieldDelegatedStruct,
+		TypeName:   "ext.Inner",
+		ImportPath: "example.com/ext",
+	}
+	code := emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()")
+	if !strings.Contains(code, "ext.EncodeInnerFrom") {
+		t.Fatalf("expected delegation call ext.EncodeInnerFrom, got:\n%s", code)
+	}
+}
+
+func TestEmitDecodePointerDelegatedStruct(t *testing.T) {
+	fi := FieldInfo{
+		GoName:     "Options",
+		TomlKey:    "options",
+		Kind:       FieldPointerDelegatedStruct,
+		TypeName:   "ext.Opts",
+		ImportPath: "example.com/ext",
+	}
+	code := emitDecodeField(fi, "d.data", "d.cstDoc", "container", "")
+	if !strings.Contains(code, "ext.DecodeOptsInto") {
+		t.Fatalf("expected delegation call ext.DecodeOptsInto, got:\n%s", code)
+	}
+	if !strings.Contains(code, "ext.Opts{}") {
+		t.Fatalf("expected ext.Opts{} construction, got:\n%s", code)
+	}
+}
