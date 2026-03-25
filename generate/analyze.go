@@ -301,23 +301,49 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 		if !ok || keyIdent.Name != "string" {
 			return fi, fmt.Errorf("unsupported map key type (only string keys supported)")
 		}
-		valIdent, ok := t.Value.(*ast.Ident)
-		if !ok {
+		switch val := t.Value.(type) {
+		case *ast.Ident:
+			if val.Name == "string" {
+				fi.Kind = FieldMapStringString
+				return fi, nil
+			}
+			// map[string]Struct (same package)
+			fi.Kind = FieldMapStringStruct
+			fi.TypeName = val.Name
+			innerInfo, err := resolveStructByName(pkg, val.Name)
+			if err != nil {
+				return fi, err
+			}
+			fi.InnerInfo = &innerInfo
+			return fi, nil
+		case *ast.SelectorExpr:
+			// map[string]pkg.Type — resolve via type info
+			obj := pkg.TypesInfo.Uses[val.Sel]
+			if obj == nil {
+				return fi, fmt.Errorf("cannot resolve map value type %s", val.Sel.Name)
+			}
+			named, ok := obj.Type().(*types.Named)
+			if !ok {
+				return fi, fmt.Errorf("map value type %s is not a named type", val.Sel.Name)
+			}
+			structType, ok := named.Underlying().(*types.Struct)
+			if !ok {
+				return fi, fmt.Errorf("cross-package map value type %s.%s is not a struct",
+					val.X.(*ast.Ident).Name, val.Sel.Name)
+			}
+			qualifiedName := val.X.(*ast.Ident).Name + "." + val.Sel.Name
+			fi.Kind = FieldMapStringStruct
+			fi.TypeName = qualifiedName
+			fi.ImportPath = named.Obj().Pkg().Path()
+			innerInfo, err := resolveStructFromTypes(pkg, val.Sel.Name, structType)
+			if err != nil {
+				return fi, err
+			}
+			fi.InnerInfo = &innerInfo
+			return fi, nil
+		default:
 			return fi, fmt.Errorf("unsupported map value type")
 		}
-		if valIdent.Name == "string" {
-			fi.Kind = FieldMapStringString
-			return fi, nil
-		}
-		// map[string]Struct
-		fi.Kind = FieldMapStringStruct
-		fi.TypeName = valIdent.Name
-		innerInfo, err := resolveStructByName(pkg, valIdent.Name)
-		if err != nil {
-			return fi, err
-		}
-		fi.InnerInfo = &innerInfo
-		return fi, nil
 
 	default:
 		return fi, fmt.Errorf("unsupported type %T", expr)
@@ -366,20 +392,9 @@ func classifySelectorExpr(pkg *packages.Package, fi FieldInfo, sel *ast.Selector
 		return fi, fmt.Errorf("type %s has MarshalText but no UnmarshalText — Decode() requires both", qualifiedName)
 	}
 
-	// Check underlying type for primitive wrapper (e.g., type Version int)
-	if named, ok := obj.Type().(*types.Named); ok {
-		if basic, ok := named.Underlying().(*types.Basic); ok {
-			if primitiveTypes[basic.Name()] {
-				fi.Kind = FieldPrimitive
-				fi.TypeName = basic.Name()
-				fi.ElemType = qualifiedName
-				fi.ImportPath = named.Obj().Pkg().Path()
-				return fi, nil
-			}
-		}
-	}
-
-	return fi, fmt.Errorf("cross-package type %s must implement TextMarshaler/TextUnmarshaler", qualifiedName)
+	// Delegate to go/types-based classification for all other cases
+	// (structs, slice aliases, primitive wrappers, etc.)
+	return classifyFromType(pkg, fi.GoName, fi.TomlKey, obj.Type())
 }
 
 func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (FieldInfo, error) {
@@ -654,6 +669,20 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 			}
 			fi.InnerInfo = &innerInfo
 			return fi, nil
+		}
+
+		// Check if underlying is a slice (e.g., type IntSlice []int)
+		if sliceType, ok := t.Underlying().(*types.Slice); ok {
+			qualifiedName := obj.Pkg().Name() + "." + obj.Name()
+			elem := sliceType.Elem()
+			if basic, ok := elem.(*types.Basic); ok && primitiveTypes[basic.Name()] {
+				fi.Kind = FieldSlicePrimitive
+				fi.ElemType = basic.Name()
+				fi.TypeName = qualifiedName
+				fi.ImportPath = obj.Pkg().Path()
+				return fi, nil
+			}
+			return fi, fmt.Errorf("unsupported cross-package slice alias %s (element type %s)", qualifiedName, elem)
 		}
 
 		return fi, fmt.Errorf("unsupported cross-package type %s.%s", obj.Pkg().Name(), obj.Name())

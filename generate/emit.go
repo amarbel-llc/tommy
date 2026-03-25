@@ -105,7 +105,11 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 	case FieldSlicePrimitive:
 		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[[]%s](%s, %s, %q); err == nil {\n",
 			fi.ElemType, docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		if fi.TypeName != "" {
+			fmt.Fprintf(&buf, "\t\t%s = %s(v)\n", target, fi.TypeName)
+		} else {
+			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
+		}
 		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
 		fmt.Fprintf(&buf, "\t}\n")
 
@@ -344,8 +348,12 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 			fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
 				source, docVar, containerExpr, fi.TomlKey)
 		}
+		encodeSource := source
+		if fi.TypeName != "" {
+			encodeSource = "[]" + fi.ElemType + "(" + source + ")"
+		}
 		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
-			docVar, containerExpr, fi.TomlKey, source)
+			docVar, containerExpr, fi.TomlKey, encodeSource)
 		fmt.Fprintf(&buf, "\t\treturn nil, err\n")
 		fmt.Fprintf(&buf, "\t}\n")
 		if fi.OmitEmpty {

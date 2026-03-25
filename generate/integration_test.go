@@ -3073,3 +3073,319 @@ type Defaults struct {
 		t.Fatalf("generated file does not compile:\n%s", buildOutput)
 	}
 }
+
+// Sub-case 1: Cross-package named struct fields (#22)
+func TestIntegrationCrossPackageNamedStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "other" package with a simple struct
+	otherDir := filepath.Join(dir, "other")
+	writeFixture(t, otherDir, "go.mod", "module example.com/test/other\n\ngo 1.26\n")
+	writeFixture(t, otherDir, "config.go", `package other
+
+type Config struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	// Consumer using other.Config as a named field
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/other v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/other => ../other",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/test/other"
+
+//go:generate tommy generate
+type Server struct {
+	Name     string       `+"`"+`toml:"name"`+"`"+`
+	Settings other.Config `+"`"+`toml:"settings"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "consumer.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestCrossPackageNamedStructRoundTrip(t *testing.T) {
+	input := []byte("name = \"web\"\n\n[settings]\nhost = \"localhost\"\nport = 8080\n")
+
+	doc, err := DecodeServer(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "web" {
+		t.Fatalf("Name = %q, want \"web\"", cfg.Name)
+	}
+	if cfg.Settings.Host != "localhost" {
+		t.Fatalf("Settings.Host = %q, want \"localhost\"", cfg.Settings.Host)
+	}
+	if cfg.Settings.Port != 8080 {
+		t.Fatalf("Settings.Port = %d, want 8080", cfg.Settings.Port)
+	}
+
+	cfg.Settings.Port = 9090
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeServer(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if d2.Settings.Port != 9090 {
+		t.Fatalf("re-decoded Port = %d, want 9090", d2.Settings.Port)
+	}
+	if d2.Settings.Host != "localhost" {
+		t.Fatalf("re-decoded Host = %q, want \"localhost\"", d2.Settings.Host)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Sub-case 2: map[string]CrossPackageStruct (#22)
+func TestIntegrationMapStringCrossPackageStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "other" package with a struct
+	otherDir := filepath.Join(dir, "other")
+	writeFixture(t, otherDir, "go.mod", "module example.com/test/other\n\ngo 1.26\n")
+	writeFixture(t, otherDir, "action.go", `package other
+
+type Action struct {
+	Command string `+"`"+`toml:"command"`+"`"+`
+	Timeout int    `+"`"+`toml:"timeout"`+"`"+`
+}
+`)
+
+	// Consumer using map[string]other.Action
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/other v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/other => ../other",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/test/other"
+
+//go:generate tommy generate
+type Config struct {
+	Name    string                    `+"`"+`toml:"name"`+"`"+`
+	Actions map[string]other.Action   `+"`"+`toml:"actions,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "consumer.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestMapCrossPackageStructRoundTrip(t *testing.T) {
+	input := []byte("name = \"myapp\"\n\n[actions.build]\ncommand = \"make\"\ntimeout = 30\n\n[actions.test]\ncommand = \"go test\"\ntimeout = 60\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "myapp" {
+		t.Fatalf("Name = %q, want \"myapp\"", cfg.Name)
+	}
+	if len(cfg.Actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(cfg.Actions))
+	}
+	build := cfg.Actions["build"]
+	if build.Command != "make" {
+		t.Fatalf("Actions[build].Command = %q, want \"make\"", build.Command)
+	}
+	if build.Timeout != 30 {
+		t.Fatalf("Actions[build].Timeout = %d, want 30", build.Timeout)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if len(d2.Actions) != 2 {
+		t.Fatalf("re-decoded actions count = %d, want 2", len(d2.Actions))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Sub-case 3: Cross-package slice alias and non-TextMarshaler struct (#22)
+func TestIntegrationCrossPackageSliceAlias(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "other" package with a slice alias and a non-TextMarshaler struct
+	otherDir := filepath.Join(dir, "other")
+	writeFixture(t, otherDir, "go.mod", "module example.com/test/other\n\ngo 1.26\n")
+	writeFixture(t, otherDir, "types.go", `package other
+
+type IntSlice []int
+`)
+
+	// Consumer using other.IntSlice
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/other v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/other => ../other",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/test/other"
+
+//go:generate tommy generate
+type Config struct {
+	Name    string          `+"`"+`toml:"name"`+"`"+`
+	Buckets other.IntSlice  `+"`"+`toml:"buckets"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "consumer.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestCrossPackageSliceAliasRoundTrip(t *testing.T) {
+	input := []byte("name = \"store\"\nbuckets = [1, 2, 4, 8]\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "store" {
+		t.Fatalf("Name = %q, want \"store\"", cfg.Name)
+	}
+	if len(cfg.Buckets) != 4 {
+		t.Fatalf("expected 4 buckets, got %d", len(cfg.Buckets))
+	}
+	if cfg.Buckets[0] != 1 || cfg.Buckets[3] != 8 {
+		t.Fatalf("unexpected bucket values: %v", cfg.Buckets)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
