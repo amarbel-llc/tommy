@@ -139,12 +139,39 @@ The code generator handles:
   `*string`, `*int`, `*bool`, etc.              Optional scalars
   Nested structs                                `[table]` sections
   `*Struct`                                     `[table]` or flat dotted keys
+  Cross-package structs                         `[table]` via delegation
   `[]int`, `[]string`                           Arrays
   `[]Struct`                                    `[[array-of-tables]]`
   `map[string]string`                           `[table]` with string values
   `map[string]Struct`                           Sub-tables (`[parent.key]`)
   `TOMLMarshaler`/`TOMLUnmarshaler`             Custom marshal via `any`
   `TextMarshaler`/`TextUnmarshaler`             Custom marshal via string
+
+### Cross-Package Structs
+
+When a struct field references a type from another package, the generated code
+delegates to that package's `DecodeInto`/`EncodeFrom` functions instead of
+inlining field-by-field decoding. This means the external package must also use
+`//go:generate tommy generate` on its structs.
+
+``` go
+// In package "options":
+//go:generate tommy generate
+type PrintOptions struct {
+    Abbreviations *abbreviations `toml:"abbreviations"`
+    PrintColors   *bool          `toml:"print-colors"`
+}
+
+// In your package:
+//go:generate tommy generate
+type Config struct {
+    Name         string               `toml:"name"`
+    PrintOptions options.PrintOptions `toml:"cli-output"`
+}
+```
+
+This delegation enables cross-package structs that contain unexported types ---
+the external package handles its own internals, and the consumer just delegates.
 
 ### Validation
 

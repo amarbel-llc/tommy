@@ -69,7 +69,10 @@ The library has four layers, each depending only on the one below it:
 `FieldKind` for each tagged field (primitive, struct, pointer, slice, map,
 custom marshaler, text marshaler, etc.) - `emit.go` generates decode/encode
 method bodies as Go source - `template.go` renders the final `*_tommy.go` file
-via `text/template`
+via `text/template` - Cross-package struct fields use delegation:
+`FieldDelegatedStruct` emits calls to the target package's
+`DecodeInto`/`EncodeFrom` instead of inlining field-by-field decoding, enabling
+structs that contain unexported types
 
 **Formatter** (`internal/formatter/`) --- CST-based TOML formatter that
 normalizes whitespace, comment spacing, and blank lines.
@@ -83,6 +86,9 @@ encode/decode codegen paths:
   aliases)
 - `FieldPointerPrimitive` --- `*bool`, `*int`, etc.
 - `FieldStruct` / `FieldPointerStruct` --- nested structs with toml tags
+  (same-package only)
+- `FieldDelegatedStruct` / `FieldPointerDelegatedStruct` --- cross-package
+  structs that delegate to the target package's `DecodeInto`/`EncodeFrom`
 - `FieldSlicePrimitive` --- `[]int`, `[]string`
 - `FieldSliceStruct` --- `[]Server` (array-of-tables)
 - `FieldCustom` --- implements `TOMLUnmarshaler`/`TOMLMarshaler`
