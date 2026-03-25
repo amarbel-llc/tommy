@@ -873,6 +873,34 @@ func TestFindArrayTableNodesDottedKey(t *testing.T) {
 	}
 }
 
+func TestGetMultilineBasicString(t *testing.T) {
+	input := []byte("[hooks]\ncreate = \"\"\"\necho hello\n\necho world\n\"\"\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get[string](doc, "hooks.create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "echo hello\n\necho world\n"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestGetMultilineBasicStringRoundTrip(t *testing.T) {
+	input := []byte("[hooks]\ncreate = \"\"\"\necho hello\n\necho world\n\"\"\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(doc.Bytes())
+	if got != string(input) {
+		t.Fatalf("round-trip failed.\nexpected:\n%s\ngot:\n%s", string(input), got)
+	}
+}
+
 func TestFindNestedArrayTableNodes(t *testing.T) {
 	// Layer 3: Can we find [[servers.plugins]] scoped to a specific [[servers]] entry?
 	// This is the key new API needed for codegen.

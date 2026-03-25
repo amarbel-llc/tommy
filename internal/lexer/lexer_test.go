@@ -271,6 +271,24 @@ func TestLexMalformedTripleBracket(t *testing.T) {
 	})
 }
 
+func TestLexMultilineBasicStringInTable(t *testing.T) {
+	input := "[hooks]\ncreate = \"\"\"\necho hello\n\necho world\n\"\"\"\n"
+	tokens := Lex([]byte(input))
+	assertRoundTrip(t, input, tokens)
+	assertTokenKinds(t, tokens, []TokenKind{
+		TokenBracketOpen,
+		TokenBareKey,
+		TokenBracketClose,
+		TokenNewline,
+		TokenBareKey,
+		TokenWhitespace,
+		TokenEquals,
+		TokenWhitespace,
+		TokenMultilineBasicString,
+		TokenNewline,
+	})
+}
+
 func TestLexCommentAfterValue(t *testing.T) {
 	input := "key = \"val\" # trailing\n"
 	tokens := Lex([]byte(input))

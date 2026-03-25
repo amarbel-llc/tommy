@@ -305,6 +305,9 @@ func encodeField(doc *document.Document, fv reflect.Value, key string) error {
 
 	switch fv.Kind() {
 	case reflect.String:
+		if doc.IsMultilineString(key) {
+			return doc.SetMultiline(key, fv.String())
+		}
 		val = fv.String()
 	case reflect.Int:
 		val = int(fv.Int())
@@ -372,7 +375,14 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 			if !ok {
 				continue
 			}
-			val := encodeFieldValue(elem.Field(j))
+			fieldVal := elem.Field(j)
+			if fieldVal.Kind() == reflect.String && document.IsMultilineStringInContainer(container, name) {
+				if err := doc.SetMultilineInContainer(container, name, fieldVal.String()); err != nil {
+					return err
+				}
+				continue
+			}
+			val := encodeFieldValue(fieldVal)
 			if val == nil {
 				continue
 			}

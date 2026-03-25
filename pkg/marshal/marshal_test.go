@@ -292,6 +292,41 @@ func TestUnmarshalArrayOfTablesSkipsMissingKeys(t *testing.T) {
 	}
 }
 
+type HooksConfig struct {
+	Hooks struct {
+		Create string `toml:"create"`
+	} `toml:"hooks"`
+}
+
+func TestUnmarshalMultilineBasicString(t *testing.T) {
+	input := []byte("[hooks]\ncreate = \"\"\"\necho hello\n\necho world\n\"\"\"\n")
+	var cfg HooksConfig
+	_, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "echo hello\n\necho world\n"
+	if cfg.Hooks.Create != expected {
+		t.Fatalf("expected %q, got %q", expected, cfg.Hooks.Create)
+	}
+}
+
+func TestRoundTripMultilineBasicString(t *testing.T) {
+	input := []byte("[hooks]\ncreate = \"\"\"\necho hello\n\necho world\n\"\"\"\n")
+	var cfg HooksConfig
+	doc, err := UnmarshalDocument(input, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := MarshalDocument(doc, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(input) {
+		t.Fatalf("round-trip failed.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+
 func TestMarshalNestedNoChangesPreserves(t *testing.T) {
 	input := []byte("[storage]\n# comment\nhash_buckets = [2, 4]\nbase_path = \"/data\"  # path\n")
 	var cfg FullConfig

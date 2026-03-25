@@ -288,6 +288,24 @@ func (doc *Document) SetInContainer(container *cst.Node, key string, value any) 
 	return setInContainer(container, key, encoded, nodeKind)
 }
 
+// SetMultiline sets a string value using multiline basic string syntax (""").
+func (doc *Document) SetMultiline(key string, value string) error {
+	encoded := []byte(`"""` + "\n" + value + `"""`)
+
+	parts := strings.Split(key, ".")
+	if len(parts) == 1 {
+		return setInContainer(doc.root, parts[0], encoded, cst.NodeString)
+	}
+
+	tableName := strings.Join(parts[:len(parts)-1], ".")
+	leafKey := parts[len(parts)-1]
+	tableNode := findTableNode(doc.root, tableName)
+	if tableNode == nil {
+		return fmt.Errorf("table %q not found", tableName)
+	}
+	return setInContainer(tableNode, leafKey, encoded, cst.NodeString)
+}
+
 // SetMultilineInContainer sets a string value using multiline basic string syntax (""").
 func (doc *Document) SetMultilineInContainer(container *cst.Node, key string, value string) error {
 	encoded := []byte(`"""` + "\n" + value + `"""`)
@@ -538,6 +556,35 @@ func convertStringArray(node *cst.Node) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+// IsMultilineString reports whether the value node for the given key uses
+// multiline string syntax (""" or ''').
+func (doc *Document) IsMultilineString(key string) bool {
+	node, err := findValueNode(doc.root, key)
+	if err != nil {
+		return false
+	}
+	return isMultilineStringNode(node)
+}
+
+// IsMultilineStringInContainer is like IsMultilineString but searches within
+// a specific container node.
+func IsMultilineStringInContainer(container *cst.Node, key string) bool {
+	node, err := findValueInContainer(container, key)
+	if err != nil {
+		return false
+	}
+	return isMultilineStringNode(node)
+}
+
+func isMultilineStringNode(node *cst.Node) bool {
+	if node.Kind != cst.NodeString || len(node.Raw) < 6 {
+		return false
+	}
+	s := string(node.Raw)
+	return (s[:3] == `"""` && s[len(s)-3:] == `"""`) ||
+		(s[:3] == `'''` && s[len(s)-3:] == `'''`)
 }
 
 func encodeValue(value any) ([]byte, cst.NodeKind, error) {
