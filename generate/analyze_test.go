@@ -653,8 +653,52 @@ func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 	}
 }
 
+func TestAnalyzeCrossPackageStructDelegation(t *testing.T) {
+	dir := t.TempDir()
+
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "go.mod", "module example.com/ext\n\ngo 1.26\n")
+	writeFixture(t, extDir, "ext.go", `package ext
+
+type Inner struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ext v0.0.0\n\nreplace example.com/ext => ../ext\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/ext"
+
+//go:generate tommy generate
+type Config struct {
+	Settings ext.Inner `+"`"+`toml:"settings"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldDelegatedStruct {
+		t.Fatalf("expected FieldDelegatedStruct (%d), got %d", FieldDelegatedStruct, f.Kind)
+	}
+	if f.TypeName != "ext.Inner" {
+		t.Fatalf("expected TypeName ext.Inner, got %s", f.TypeName)
+	}
+	if f.ImportPath != "example.com/ext" {
+		t.Fatalf("expected ImportPath example.com/ext, got %s", f.ImportPath)
+	}
+}
+
 // Regression test for #35: cross-package struct with unexported nested pointer
-// struct should not emit code referencing unexported types from external packages.
+// struct should be classified as FieldDelegatedStruct — delegation avoids
+// emitting code that references unexported types.
 func TestAnalyzeCrossPackageUnexportedNestedStruct(t *testing.T) {
 	dir := t.TempDir()
 
@@ -687,15 +731,16 @@ type Config struct {
 }
 `)
 
-	_, err := Analyze(consumerDir, "config.go")
-	// The generator must not silently produce code that references
-	// options.abbreviations (unexported). It should either handle this
-	// gracefully or return a clear error.
-	if err == nil {
-		t.Fatal("expected error when cross-package struct contains unexported pointer struct field, but got nil")
+	infos, err := Analyze(consumerDir, "config.go")
+	if err != nil {
+		t.Fatalf("expected no error with delegation, got: %s", err)
 	}
-	if !strings.Contains(err.Error(), "unexported") && !strings.Contains(err.Error(), "Unexported") {
-		t.Fatalf("expected error mentioning unexported type, got: %s", err)
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldDelegatedStruct {
+		t.Fatalf("expected FieldDelegatedStruct (%d), got %d", FieldDelegatedStruct, f.Kind)
 	}
 }
 

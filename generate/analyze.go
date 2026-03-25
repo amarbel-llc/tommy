@@ -25,7 +25,9 @@ const (
 	FieldTextMarshaler                     // implements encoding.TextMarshaler/TextUnmarshaler
 	FieldMapStringStruct                   // map[string]SomeStruct
 	FieldSliceTextMarshaler                // []TextMarshalerType
-	FieldMapStringMapStringString          // map[string]NamedMap where NamedMap is map[string]string
+	FieldMapStringMapStringString           // map[string]NamedMap where NamedMap is map[string]string
+	FieldDelegatedStruct                   // cross-package struct — delegate to its DecodeInto/EncodeFrom
+	FieldPointerDelegatedStruct            // pointer to cross-package struct — delegate
 )
 
 // StructInfo describes a struct that needs code generation.
@@ -733,10 +735,11 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 			}
 		}
 
-		// Check if underlying is struct
+		// Check if underlying is struct — delegate to cross-package DecodeInto/EncodeFrom
 		if structType, ok := t.Underlying().(*types.Struct); ok {
-			fi.Kind = FieldStruct
+			fi.Kind = FieldDelegatedStruct
 			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
+			fi.ImportPath = obj.Pkg().Path()
 			innerInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
 			if err != nil {
 				return fi, err
@@ -777,15 +780,9 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 			}
 			// Upgrade to pointer variant where applicable
 			if innerFi.Kind == FieldStruct {
-				// Cross-package unexported pointer structs cannot be constructed
-				// in generated code (would emit &pkg.unexportedType{}).
-				// TODO(#35): delegate to the cross-package type's own tommy-
-				// generated Decode/Encode methods instead of erroring.
-				obj := named.Obj()
-				if obj.Pkg() != nil && obj.Pkg() != pkg.Types && !obj.Exported() {
-					return fi, fmt.Errorf("cannot generate code for unexported cross-package type %s.%s", obj.Pkg().Name(), obj.Name())
-				}
 				innerFi.Kind = FieldPointerStruct
+			} else if innerFi.Kind == FieldDelegatedStruct {
+				innerFi.Kind = FieldPointerDelegatedStruct
 			}
 			return innerFi, nil
 		}
