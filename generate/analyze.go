@@ -396,6 +396,10 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 					return fi, nil
 				}
 			}
+			if _, ok := named.Underlying().(*types.Interface); ok {
+				return fi, fmt.Errorf("map value type %s.%s is an interface, which cannot be statically decoded; use `toml:\"-\"` to skip this field, or define a concrete struct that mirrors the TOML shape and convert to the interface after decoding",
+					val.X.(*ast.Ident).Name, val.Sel.Name)
+			}
 			structType, ok := named.Underlying().(*types.Struct)
 			if !ok {
 				return fi, fmt.Errorf("cross-package map value type %s.%s is not a struct",
@@ -773,6 +777,14 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 			}
 			// Upgrade to pointer variant where applicable
 			if innerFi.Kind == FieldStruct {
+				// Cross-package unexported pointer structs cannot be constructed
+				// in generated code (would emit &pkg.unexportedType{}).
+				// TODO(#35): delegate to the cross-package type's own tommy-
+				// generated Decode/Encode methods instead of erroring.
+				obj := named.Obj()
+				if obj.Pkg() != nil && obj.Pkg() != pkg.Types && !obj.Exported() {
+					return fi, fmt.Errorf("cannot generate code for unexported cross-package type %s.%s", obj.Pkg().Name(), obj.Name())
+				}
 				innerFi.Kind = FieldPointerStruct
 			}
 			return innerFi, nil
@@ -853,6 +865,10 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 				}
 			}
 		}
+		// Unwrap type aliases (e.g., type TagStruct = tagStruct)
+		if _, ok := elem.(*types.Alias); ok {
+			return classifyFromType(pkg, goName, tomlKey, types.NewSlice(types.Unalias(elem)))
+		}
 		return fi, fmt.Errorf("unsupported slice element type")
 
 	case *types.Map:
@@ -878,6 +894,9 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 				}
 				return fi, nil
 			}
+		}
+		if _, ok := t.Elem().Underlying().(*types.Interface); ok {
+			return fi, fmt.Errorf("map value type is an interface, which cannot be statically decoded; use `toml:\"-\"` to skip this field, or define a concrete struct that mirrors the TOML shape and convert to the interface after decoding")
 		}
 		return fi, fmt.Errorf("unsupported map value type")
 

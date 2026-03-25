@@ -3,6 +3,7 @@ package generate
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"unicode"
 )
 
@@ -29,6 +30,102 @@ func emitEncodeBody(si StructInfo) string {
 	for _, fi := range si.Fields {
 		buf.WriteString(emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()"))
 	}
+	return buf.String()
+}
+
+func emitDecodeIntoBody(si StructInfo) string {
+	var buf bytes.Buffer
+	for _, fi := range si.Fields {
+		if fi.Kind == FieldSliceStruct {
+			buf.WriteString(emitDecodeIntoSliceStruct(fi, "data", "doc"))
+		} else {
+			code := emitDecodeField(fi, "data", "doc", "container", "")
+			code = strings.ReplaceAll(code, "d.consumed", "consumed")
+			code = strings.ReplaceAll(code, "return nil, ", "return ")
+			// Replace consumed key literals to prepend keyPrefix variable
+			code = replaceConsumedKeys(code)
+			buf.WriteString(code)
+		}
+	}
+	return buf.String()
+}
+
+func replaceConsumedKeys(code string) string {
+	// Replace consumed["key"] = true with consumed[keyPrefix + "key"] = true
+	// and similar patterns like consumed["key.subkey"]
+	result := strings.Builder{}
+	for len(code) > 0 {
+		idx := strings.Index(code, `consumed["`)
+		if idx < 0 {
+			result.WriteString(code)
+			break
+		}
+		result.WriteString(code[:idx])
+		result.WriteString(`consumed[keyPrefix + "`)
+		code = code[idx+len(`consumed["`):]
+	}
+	return result.String()
+}
+
+func emitDecodeIntoSliceStruct(fi FieldInfo, dataPath, docVar string) string {
+	var buf bytes.Buffer
+	target := dataPath + "." + fi.GoName
+
+	nodesVar := fi.TomlKey + "Nodes"
+	fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
+	if fi.SlicePointer {
+		fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
+	} else {
+		fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
+	}
+	fmt.Fprintf(&buf, "\tconsumed[keyPrefix + %q] = true\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
+	if fi.SlicePointer {
+		fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
+	}
+	if fi.InnerInfo != nil {
+		for _, inner := range fi.InnerInfo.Fields {
+			indexedTarget := fmt.Sprintf("%s[i]", target)
+			code := emitDecodeField(inner, indexedTarget, docVar, "node", fi.TomlKey+".")
+			code = strings.ReplaceAll(code, "d.consumed", "consumed")
+			code = strings.ReplaceAll(code, "return nil, ", "return ")
+			code = replaceConsumedKeys(code)
+			buf.WriteString("\t" + code)
+		}
+	}
+	fmt.Fprintf(&buf, "\t}\n")
+	return buf.String()
+}
+
+func emitEncodeFromBody(si StructInfo) string {
+	var buf bytes.Buffer
+	for _, fi := range si.Fields {
+		if fi.Kind == FieldSliceStruct {
+			buf.WriteString(emitEncodeFromSliceStruct(fi, "data", "doc", "container"))
+		} else {
+			code := emitEncodeField(fi, "data", "doc", "container")
+			code = strings.ReplaceAll(code, "return nil, ", "return ")
+			buf.WriteString(code)
+		}
+	}
+	return buf.String()
+}
+
+func emitEncodeFromSliceStruct(fi FieldInfo, dataPath, docVar, containerExpr string) string {
+	var buf bytes.Buffer
+	source := dataPath + "." + fi.GoName
+
+	fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
+	fmt.Fprintf(&buf, "\t\tcontainer := %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+	if fi.InnerInfo != nil {
+		for _, inner := range fi.InnerInfo.Fields {
+			indexedSource := fmt.Sprintf("%s[i]", source)
+			code := emitEncodeField(inner, indexedSource, docVar, "container")
+			code = strings.ReplaceAll(code, "return nil, ", "return ")
+			buf.WriteString("\t" + code)
+		}
+	}
+	fmt.Fprintf(&buf, "\t}\n")
 	return buf.String()
 }
 

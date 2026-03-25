@@ -69,3 +69,23 @@ func TestTemplateRendersUnexportedHandle(t *testing.T) {
 		t.Fatal("missing unexported serverHandle type")
 	}
 }
+
+func TestTemplateRendersDecodeInto(t *testing.T) {
+	si := StructInfo{
+		Name: "Config",
+		Fields: []FieldInfo{
+			{GoName: "Name", TomlKey: "name", Kind: FieldPrimitive, TypeName: "string"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := RenderFile(&buf, "test", []StructInfo{si}); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "func DecodeConfigInto(") {
+		t.Fatalf("expected DecodeConfigInto function in output:\n%s", output)
+	}
+	if !strings.Contains(output, "func EncodeConfigFrom(") {
+		t.Fatalf("expected EncodeConfigFrom function in output:\n%s", output)
+	}
+}

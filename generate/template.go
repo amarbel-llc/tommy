@@ -63,6 +63,16 @@ func (d *{{.Name}}Document) Encode() ([]byte, error) {
 func (d *{{.Name}}Document) Undecoded() []string {
 	return document.UndecodedKeys(d.cstDoc.Root(), d.consumed)
 }
+
+func Decode{{.Name}}Into(data *{{.Name}}, doc *document.Document, container *cst.Node, consumed map[string]bool, keyPrefix string) error {
+{{emitDecodeInto .}}
+	return nil
+}
+
+func Encode{{.Name}}From(data *{{.Name}}, doc *document.Document, container *cst.Node) error {
+{{emitEncodeFrom .}}
+	return nil
+}
 {{end}}`
 
 type fileData struct {
@@ -108,8 +118,10 @@ func RenderFile(w io.Writer, pkg string, structs []StructInfo) error {
 		"unexport":   unexport,
 		"lower":      strings.ToLower,
 		"kindInt":    func(k FieldKind) int { return int(k) },
-		"emitDecode": func(si StructInfo) string { return emitDecodeBody(si) },
-		"emitEncode": func(si StructInfo) string { return emitEncodeBody(si) },
+		"emitDecode":     func(si StructInfo) string { return emitDecodeBody(si) },
+		"emitEncode":     func(si StructInfo) string { return emitEncodeBody(si) },
+		"emitDecodeInto": func(si StructInfo) string { return emitDecodeIntoBody(si) },
+		"emitEncodeFrom": func(si StructInfo) string { return emitEncodeFromBody(si) },
 	}).Parse(fileTemplate))
 
 	return tmpl.Execute(w, fileData{

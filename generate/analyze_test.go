@@ -652,3 +652,156 @@ func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 		t.Fatal("expected error for unsupported map value type")
 	}
 }
+
+// Regression test for #35: cross-package struct with unexported nested pointer
+// struct should not emit code referencing unexported types from external packages.
+func TestAnalyzeCrossPackageUnexportedNestedStruct(t *testing.T) {
+	dir := t.TempDir()
+
+	// External package with an exported struct containing an unexported pointer struct field
+	extDir := filepath.Join(dir, "options")
+	writeFixture(t, extDir, "go.mod", "module example.com/options\n\ngo 1.26\n")
+	writeFixture(t, extDir, "options.go", `package options
+
+type abbreviations struct {
+	ZettelIds *bool `+"`"+`toml:"zettel_ids"`+"`"+`
+	MarkIds   *bool `+"`"+`toml:"mark_ids"`+"`"+`
+}
+
+type V2 struct {
+	Abbreviations *abbreviations `+"`"+`toml:"abbreviations"`+"`"+`
+	PrintColors   *bool          `+"`"+`toml:"print-colors"`+"`"+`
+}
+`)
+
+	// Consumer package with a field of type options.V2
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/options v0.0.0\n\nreplace example.com/options => ../options\n")
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/options"
+
+//go:generate tommy generate
+type Config struct {
+	PrintOptions options.V2 `+"`"+`toml:"cli-output"`+"`"+`
+}
+`)
+
+	_, err := Analyze(consumerDir, "config.go")
+	// The generator must not silently produce code that references
+	// options.abbreviations (unexported). It should either handle this
+	// gracefully or return a clear error.
+	if err == nil {
+		t.Fatal("expected error when cross-package struct contains unexported pointer struct field, but got nil")
+	}
+	if !strings.Contains(err.Error(), "unexported") && !strings.Contains(err.Error(), "Unexported") {
+		t.Fatalf("expected error mentioning unexported type, got: %s", err)
+	}
+}
+
+// Regression test for #36: []TypeAlias where alias target is unexported should
+// be handled in the recursive classifyFromType path (cross-package struct resolution).
+func TestAnalyzeCrossPackageSliceTypeAliasInRecursion(t *testing.T) {
+	dir := t.TempDir()
+
+	// External package with a type alias to an unexported TextMarshaler type
+	idsDir := filepath.Join(dir, "ids")
+	writeFixture(t, idsDir, "go.mod", "module example.com/ids\n\ngo 1.26\n")
+	writeFixture(t, idsDir, "ids.go", `package ids
+
+type tagStruct struct{ value string }
+
+type TagStruct = tagStruct
+
+func (t tagStruct) MarshalText() ([]byte, error)  { return []byte(t.value), nil }
+func (t *tagStruct) UnmarshalText(b []byte) error  { t.value = string(b); return nil }
+
+type Container struct {
+	Tags []TagStruct `+"`"+`toml:"tags"`+"`"+`
+}
+`)
+
+	// Consumer package with a cross-package struct field containing []TagStruct
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ids v0.0.0\n\nreplace example.com/ids => ../ids\n")
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/ids"
+
+//go:generate tommy generate
+type Wrapper struct {
+	Inner ids.Container `+"`"+`toml:"inner"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "config.go")
+	if err != nil {
+		t.Fatalf("expected no error for []TypeAlias with TextMarshaler in recursive resolution, got: %s", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+
+	// Find the Inner field, then check its InnerInfo has Tags classified correctly
+	innerField := infos[0].Fields[0]
+	if innerField.GoName != "Inner" {
+		t.Fatalf("expected first field Inner, got %s", innerField.GoName)
+	}
+	if innerField.InnerInfo == nil {
+		t.Fatal("expected InnerInfo to be set for struct field")
+	}
+
+	var tagsField *FieldInfo
+	for _, f := range innerField.InnerInfo.Fields {
+		if f.GoName == "Tags" {
+			tagsField = &f
+			break
+		}
+	}
+	if tagsField == nil {
+		t.Fatal("expected Tags field in Container inner info")
+	}
+	if tagsField.Kind != FieldSliceTextMarshaler {
+		t.Fatalf("Tags field kind = %d, want FieldSliceTextMarshaler (%d)", tagsField.Kind, FieldSliceTextMarshaler)
+	}
+}
+
+// Regression test for #37: map[string]InterfaceType should produce a clear
+// error at generation time, not invalid code.
+func TestAnalyzeMapStringInterfaceErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	// External package with an interface type
+	extDir := filepath.Join(dir, "scripts")
+	writeFixture(t, extDir, "go.mod", "module example.com/scripts\n\ngo 1.26\n")
+	writeFixture(t, extDir, "scripts.go", `package scripts
+
+type RemoteScript interface {
+	Cmd(args ...string) error
+}
+`)
+
+	// Consumer package with map[string]InterfaceType
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/scripts v0.0.0\n\nreplace example.com/scripts => ../scripts\n")
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/scripts"
+
+//go:generate tommy generate
+type Config struct {
+	Name          string                              `+"`"+`toml:"name"`+"`"+`
+	RemoteScripts map[string]scripts.RemoteScript     `+"`"+`toml:"remote-scripts"`+"`"+`
+}
+`)
+
+	_, err := Analyze(consumerDir, "config.go")
+	if err == nil {
+		t.Fatal("expected error for map[string]InterfaceType, but got nil")
+	}
+	// Error should mention interface and suggest toml:"-"
+	errStr := err.Error()
+	if !strings.Contains(errStr, "interface") {
+		t.Fatalf("expected error mentioning 'interface', got: %s", errStr)
+	}
+}
