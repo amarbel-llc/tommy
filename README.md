@@ -146,6 +146,31 @@ The code generator handles:
   `TOMLMarshaler`/`TOMLUnmarshaler`             Custom marshal via `any`
   `TextMarshaler`/`TextUnmarshaler`             Custom marshal via string
 
+### Validation
+
+If your struct implements `Validate() error`, the generated `Decode` and
+`Encode` methods call it automatically. Decode validates after all fields are
+set; Encode validates before writing to the CST.
+
+``` go
+//go:generate tommy generate
+type Config struct {
+    Port int    `toml:"port"`
+    Name string `toml:"name"`
+}
+
+func (c Config) Validate() error {
+    if c.Port < 1 || c.Port > 65535 {
+        return fmt.Errorf("port must be 1-65535, got %d", c.Port)
+    }
+    return nil
+}
+```
+
+No interface import is required --- just add the method and re-run
+`go generate`. This also works with newtypes to validate individual values while
+preserving their native TOML types (no string coercion).
+
 ### Struct Tag Options
 
 ``` go
