@@ -40,6 +40,8 @@ func emitDecodeIntoBody(si StructInfo) string {
 			buf.WriteString(emitDecodeIntoSliceStruct(fi, "data", "doc"))
 		} else if fi.Kind == FieldSliceDelegatedStruct {
 			buf.WriteString(emitDecodeIntoSliceDelegatedStruct(fi, "data", "doc"))
+		} else if fi.Kind == FieldMapStringDelegatedStruct {
+			buf.WriteString(emitDecodeIntoMapDelegatedStruct(fi, "data", "doc"))
 		} else {
 			code := emitDecodeField(fi, "data", "doc", "container", "")
 			code = strings.ReplaceAll(code, "d.consumed", "consumed")
@@ -75,6 +77,34 @@ func emitDecodeIntoSliceDelegatedStruct(fi FieldInfo, dataPath, docVar string) s
 			parts[0], parts[1], target, docVar, fi.TomlKey+".")
 	}
 	fmt.Fprintf(&buf, "\t\t\treturn fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t}\n")
+	fmt.Fprintf(&buf, "\t}\n")
+	return buf.String()
+}
+
+func emitDecodeIntoMapDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
+	var buf bytes.Buffer
+	target := dataPath + "." + fi.GoName
+	parts := strings.SplitN(fi.ElemType, ".", 2)
+
+	fmt.Fprintf(&buf, "\t{\n")
+	fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTables(%q)\n", docVar, fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
+	fmt.Fprintf(&buf, "\t\t\tconsumed[keyPrefix + %q] = true\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.ElemType)
+	fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
+	fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t\t\tif strings.Contains(mapKey, \".\") {\n")
+	fmt.Fprintf(&buf, "\t\t\t\t\tcontinue\n")
+	fmt.Fprintf(&buf, "\t\t\t\t}\n")
+	fmt.Fprintf(&buf, "\t\t\t\tconsumed[keyPrefix + %q + \".\" + mapKey] = true\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t\t\tvar entry %s\n", fi.ElemType)
+	fmt.Fprintf(&buf, "\t\t\t\tif err := %s.Decode%sInto(&entry, %s, subTable, consumed, keyPrefix + %q + \".\" + mapKey + \".\"); err != nil {\n",
+		parts[0], parts[1], docVar, fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t\t\t\treturn fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t\t\t}\n")
+	fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = entry\n", target)
+	fmt.Fprintf(&buf, "\t\t\t}\n")
 	fmt.Fprintf(&buf, "\t\t}\n")
 	fmt.Fprintf(&buf, "\t}\n")
 	return buf.String()
@@ -134,6 +164,8 @@ func emitEncodeFromBody(si StructInfo) string {
 			buf.WriteString(emitEncodeFromSliceStruct(fi, "data", "doc", "container"))
 		} else if fi.Kind == FieldSliceDelegatedStruct {
 			buf.WriteString(emitEncodeFromSliceDelegatedStruct(fi, "data", "doc"))
+		} else if fi.Kind == FieldMapStringDelegatedStruct {
+			buf.WriteString(emitEncodeFromMapDelegatedStruct(fi, "data", "doc"))
 		} else {
 			code := emitEncodeField(fi, "data", "doc", "container")
 			code = strings.ReplaceAll(code, "return nil, ", "return ")
@@ -158,6 +190,23 @@ func emitEncodeFromSliceDelegatedStruct(fi FieldInfo, dataPath, docVar string) s
 			parts[0], parts[1], source, docVar)
 	}
 	fmt.Fprintf(&buf, "\t\t\treturn fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t}\n")
+	fmt.Fprintf(&buf, "\t}\n")
+	return buf.String()
+}
+
+func emitEncodeFromMapDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
+	var buf bytes.Buffer
+	source := dataPath + "." + fi.GoName
+	parts := strings.SplitN(fi.ElemType, ".", 2)
+
+	fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
+	fmt.Fprintf(&buf, "\t\tfor mapKey, mapVal := range %s {\n", source)
+	fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTable(%q, mapKey)\n", docVar, fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t\tif err := %s.Encode%sFrom(&mapVal, %s, subTable); err != nil {\n",
+		parts[0], parts[1], docVar)
+	fmt.Fprintf(&buf, "\t\t\t\treturn fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t\t}\n")
 	fmt.Fprintf(&buf, "\t\t}\n")
 	fmt.Fprintf(&buf, "\t}\n")
 	return buf.String()
@@ -358,6 +407,29 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		}
+
+	case FieldMapStringDelegatedStruct:
+		parts := strings.SplitN(fi.ElemType, ".", 2)
+		fmt.Fprintf(&buf, "\t{\n")
+		fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTables(%q)\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
+		fmt.Fprintf(&buf, "\t\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.ElemType)
+		fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
+		fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\tif strings.Contains(mapKey, \".\") {\n")
+		fmt.Fprintf(&buf, "\t\t\t\t\tcontinue\n")
+		fmt.Fprintf(&buf, "\t\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t\t\td.consumed[%q + \".\" + mapKey] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t\t\tvar entry %s\n", fi.ElemType)
+		fmt.Fprintf(&buf, "\t\t\t\tif err := %s.Decode%sInto(&entry, %s, subTable, d.consumed, %q + \".\" + mapKey + \".\"); err != nil {\n",
+			parts[0], parts[1], docVar, consumedKey)
+		fmt.Fprintf(&buf, "\t\t\t\t\treturn nil, fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = entry\n", target)
+		fmt.Fprintf(&buf, "\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldMapStringMapStringString:
 		fmt.Fprintf(&buf, "\t{\n")
@@ -679,6 +751,18 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		}
+
+	case FieldMapStringDelegatedStruct:
+		parts := strings.SplitN(fi.ElemType, ".", 2)
+		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
+		fmt.Fprintf(&buf, "\t\tfor mapKey, mapVal := range %s {\n", source)
+		fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTable(%q, mapKey)\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\tif err := %s.Encode%sFrom(&mapVal, %s, subTable); err != nil {\n",
+			parts[0], parts[1], docVar)
+		fmt.Fprintf(&buf, "\t\t\t\treturn nil, fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t}\n")
+		fmt.Fprintf(&buf, "\t\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldMapStringMapStringString:
 		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)

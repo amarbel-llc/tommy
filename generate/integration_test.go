@@ -3211,16 +3211,30 @@ func TestIntegrationMapStringCrossPackageStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// "other" package with a struct
+	// "other" package with a struct (must also be generated for delegation)
 	otherDir := filepath.Join(dir, "other")
-	writeFixture(t, otherDir, "go.mod", "module example.com/test/other\n\ngo 1.26\n")
+	writeFixture(t, otherDir, "go.mod", strings.Join([]string{
+		"module example.com/test/other",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
 	writeFixture(t, otherDir, "action.go", `package other
 
+//go:generate tommy generate
 type Action struct {
 	Command string `+"`"+`toml:"command"`+"`"+`
 	Timeout int    `+"`"+`toml:"timeout"`+"`"+`
 }
 `)
+
+	if err := Generate(otherDir, "action.go"); err != nil {
+		t.Fatalf("Generate other: %v", err)
+	}
 
 	// Consumer using map[string]other.Action
 	consumerDir := filepath.Join(dir, "consumer")
@@ -5511,6 +5525,480 @@ type Config struct {
 
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
+	}
+}
+
+// Regression #47 case 2: map[string]CrossPackageStruct where the struct has
+// unexported nested fields should delegate to DecodeInto/EncodeFrom rather than
+// inlining fields (which would fail because the consumer can't access unexported types).
+func TestIntegrationMapStringCrossPackageStructWithUnexported(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pkga: struct with unexported nested type
+	pkgaDir := filepath.Join(dir, "pkga")
+	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkga",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, pkgaDir, "pkga.go", `package pkga
+
+type outputFormat struct {
+	Extension string `+"`"+`toml:"extension"`+"`"+`
+	MimeType  string `+"`"+`toml:"mime_type"`+"`"+`
+}
+
+//go:generate tommy generate
+type ScriptConfig struct {
+	Command string        `+"`"+`toml:"command"`+"`"+`
+	Output  *outputFormat `+"`"+`toml:"output,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(pkgaDir, "pkga.go"); err != nil {
+		t.Fatalf("Generate pkga: %v", err)
+	}
+
+	// pkgb: consumer with map[string]pkga.ScriptConfig
+	pkgbDir := filepath.Join(dir, "pkgb")
+	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkgb",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/pkga v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/pkga => ../pkga",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
+
+import "example.com/test/pkga"
+
+//go:generate tommy generate
+type Config struct {
+	Actions map[string]pkga.ScriptConfig `+"`"+`toml:"actions,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(pkgbDir, "pkgb.go"); err != nil {
+		t.Fatalf("Generate pkgb: %v", err)
+	}
+
+	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
+
+import "testing"
+
+func TestMapCrossPackageUnexportedRoundTrip(t *testing.T) {
+	input := []byte("[actions.build]\ncommand = \"make\"\n\n[actions.build.output]\nextension = \".bin\"\nmime_type = \"application/octet-stream\"\n\n[actions.test]\ncommand = \"go test\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+
+	cfg := doc.Data()
+	if len(cfg.Actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(cfg.Actions))
+	}
+	build := cfg.Actions["build"]
+	if build.Command != "make" {
+		t.Fatalf("build.Command = %q, want \"make\"", build.Command)
+	}
+	if build.Output == nil {
+		t.Fatal("build.Output should not be nil")
+	}
+	if build.Output.Extension != ".bin" {
+		t.Fatalf("build.Output.Extension = %q, want \".bin\"", build.Output.Extension)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if len(d2.Actions) != 2 {
+		t.Fatalf("re-decoded actions count = %d, want 2", len(d2.Actions))
+	}
+	if d2.Actions["build"].Output == nil || d2.Actions["build"].Output.Extension != ".bin" {
+		t.Fatal("re-decoded build.Output.Extension mismatch")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = pkgbDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Regression #47 case 3a: cross-package named slice type (type IntSlice []int)
+// should be unwrapped to its underlying []int and classified as FieldSlicePrimitive.
+func TestIntegrationCrossPackageSliceNamedType(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pkga: external package with a slice type alias
+	pkgaDir := filepath.Join(dir, "pkga")
+	writeFixture(t, pkgaDir, "go.mod", "module example.com/test/pkga\n\ngo 1.26\n")
+	writeFixture(t, pkgaDir, "pkga.go", `package pkga
+
+type IntSlice []int
+`)
+
+	// pkgb: consumer using pkga.IntSlice
+	pkgbDir := filepath.Join(dir, "pkgb")
+	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkgb",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/pkga v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/pkga => ../pkga",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
+
+import "example.com/test/pkga"
+
+//go:generate tommy generate
+type Stats struct {
+	Buckets pkga.IntSlice `+"`"+`toml:"buckets"`+"`"+`
+}
+`)
+
+	if err := Generate(pkgbDir, "pkgb.go"); err != nil {
+		t.Fatalf("Generate pkgb: %v", err)
+	}
+
+	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
+
+import "testing"
+
+func TestCrossPackageSliceAliasRoundTrip(t *testing.T) {
+	input := []byte("buckets = [10, 20, 30, 40]\n")
+
+	doc, err := DecodeStats(input)
+	if err != nil {
+		t.Fatalf("DecodeStats: %v", err)
+	}
+
+	s := doc.Data()
+	if len(s.Buckets) != 4 {
+		t.Fatalf("Buckets length = %d, want 4", len(s.Buckets))
+	}
+	if s.Buckets[0] != 10 || s.Buckets[3] != 40 {
+		t.Fatalf("Buckets = %v, want [10 20 30 40]", s.Buckets)
+	}
+
+	s.Buckets = append(s.Buckets, 50)
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeStats(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if len(d2.Buckets) != 5 {
+		t.Fatalf("re-decoded Buckets length = %d, want 5", len(d2.Buckets))
+	}
+	if d2.Buckets[4] != 50 {
+		t.Fatalf("re-decoded Buckets[4] = %d, want 50", d2.Buckets[4])
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = pkgbDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Regression #47: map[string]CrossPackageStruct with all-exported fields should
+// delegate to DecodeInto/EncodeFrom. This test verifies delegation compiles and
+// round-trips correctly when the struct has a Validate() method (which would cause
+// the generated code to reference the method if inlined incorrectly).
+func TestIntegrationMapStringCrossPackageStructDelegation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pkga: struct with Validate()
+	pkgaDir := filepath.Join(dir, "pkga")
+	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkga",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, pkgaDir, "pkga.go", `package pkga
+
+import "fmt"
+
+//go:generate tommy generate
+type Action struct {
+	Command string `+"`"+`toml:"command"`+"`"+`
+	Timeout int    `+"`"+`toml:"timeout"`+"`"+`
+}
+
+func (a Action) Validate() error {
+	if a.Command == "" {
+		return fmt.Errorf("command must not be empty")
+	}
+	return nil
+}
+`)
+
+	if err := Generate(pkgaDir, "pkga.go"); err != nil {
+		t.Fatalf("Generate pkga: %v", err)
+	}
+
+	// pkgb: consumer with map[string]pkga.Action
+	pkgbDir := filepath.Join(dir, "pkgb")
+	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkgb",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/pkga v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/pkga => ../pkga",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
+
+import "example.com/test/pkga"
+
+//go:generate tommy generate
+type Config struct {
+	Actions map[string]pkga.Action `+"`"+`toml:"actions,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(pkgbDir, "pkgb.go"); err != nil {
+		t.Fatalf("Generate pkgb: %v", err)
+	}
+
+	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
+
+import "testing"
+
+func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
+	input := []byte("[actions.build]\ncommand = \"make\"\ntimeout = 30\n\n[actions.test]\ncommand = \"go test\"\ntimeout = 60\n")
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+
+	cfg := doc.Data()
+	if len(cfg.Actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(cfg.Actions))
+	}
+	build := cfg.Actions["build"]
+	if build.Command != "make" || build.Timeout != 30 {
+		t.Fatalf("build = %+v, want {make 30}", build)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if len(doc2.Data().Actions) != 2 {
+		t.Fatalf("re-decoded actions count = %d, want 2", len(doc2.Data().Actions))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = pkgbDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Regression #47: cross-package named map type alias (type ScriptMap map[string]Struct)
+// used as a direct field goes through classifySelectorExpr → classifyFromType →
+// *types.Map, which has no struct value handling.
+func TestIntegrationCrossPackageMapTypeAlias(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pkga: named map type alias
+	pkgaDir := filepath.Join(dir, "pkga")
+	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkga",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, pkgaDir, "pkga.go", `package pkga
+
+//go:generate tommy generate
+type Script struct {
+	Command string `+"`"+`toml:"command"`+"`"+`
+}
+
+type ScriptMap map[string]Script
+`)
+
+	if err := Generate(pkgaDir, "pkga.go"); err != nil {
+		t.Fatalf("Generate pkga: %v", err)
+	}
+
+	// pkgb: consumer using pkga.ScriptMap as a field type
+	pkgbDir := filepath.Join(dir, "pkgb")
+	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkgb",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/pkga v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/pkga => ../pkga",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
+
+import "example.com/test/pkga"
+
+//go:generate tommy generate
+type Config struct {
+	Actions pkga.ScriptMap `+"`"+`toml:"actions,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(pkgbDir, "pkgb.go"); err != nil {
+		t.Fatalf("Generate pkgb: %v", err)
+	}
+
+	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
+
+import "testing"
+
+func TestCrossPackageMapTypeAliasRoundTrip(t *testing.T) {
+	input := []byte("[actions.build]\ncommand = \"make\"\n\n[actions.test]\ncommand = \"go test\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+
+	cfg := doc.Data()
+	if len(cfg.Actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(cfg.Actions))
+	}
+	if cfg.Actions["build"].Command != "make" {
+		t.Fatalf("Actions[build].Command = %q, want \"make\"", cfg.Actions["build"].Command)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if len(doc2.Data().Actions) != 2 {
+		t.Fatalf("re-decoded actions count = %d, want 2", len(doc2.Data().Actions))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = pkgbDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
 	}
 }
 

@@ -29,6 +29,7 @@ const (
 	FieldDelegatedStruct                   // cross-package struct — delegate to its DecodeInto/EncodeFrom
 	FieldPointerDelegatedStruct            // pointer to cross-package struct — delegate
 	FieldSliceDelegatedStruct              // []cross-package struct — delegate per element
+	FieldMapStringDelegatedStruct          // map[string]cross-package struct — delegate per entry
 )
 
 // StructInfo describes a struct that needs code generation.
@@ -467,14 +468,19 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 					val.X.(*ast.Ident).Name, val.Sel.Name)
 			}
 			qualifiedName := val.X.(*ast.Ident).Name + "." + val.Sel.Name
-			fi.Kind = FieldMapStringStruct
 			fi.TypeName = qualifiedName
 			fi.ImportPath = named.Obj().Pkg().Path()
-			innerInfo, err := resolveStructFromTypes(pkg, val.Sel.Name, structType)
-			if err != nil {
-				return fi, err
+			if named.Obj().Exported() {
+				fi.Kind = FieldMapStringDelegatedStruct
+				fi.ElemType = qualifiedName
+			} else {
+				fi.Kind = FieldMapStringStruct
+				innerInfo, err := resolveStructFromTypes(pkg, val.Sel.Name, structType)
+				if err != nil {
+					return fi, err
+				}
+				fi.InnerInfo = &innerInfo
 			}
-			fi.InnerInfo = &innerInfo
 			return fi, nil
 		default:
 			return fi, fmt.Errorf("unsupported map value type")
@@ -752,6 +758,36 @@ func extractTomlTagFromString(tag string) (string, tagOpts) {
 	return name, opts
 }
 
+func classifyNamedMapType(fi FieldInfo, obj *types.TypeName, mapType *types.Map) (FieldInfo, error) {
+	key, ok := mapType.Key().(*types.Basic)
+	if !ok || key.Kind() != types.String {
+		return fi, fmt.Errorf("unsupported map key type in %s.%s (only string keys supported)", obj.Pkg().Name(), obj.Name())
+	}
+
+	qualifiedName := obj.Pkg().Name() + "." + obj.Name()
+	fi.TypeName = qualifiedName
+	fi.ImportPath = obj.Pkg().Path()
+
+	valElem := mapType.Elem()
+	if basic, ok := valElem.(*types.Basic); ok && basic.Kind() == types.String {
+		fi.Kind = FieldMapStringString
+		return fi, nil
+	}
+
+	valNamed, ok := valElem.(*types.Named)
+	if !ok {
+		return fi, fmt.Errorf("unsupported cross-package map alias %s.%s (value type %s)", obj.Pkg().Name(), obj.Name(), valElem)
+	}
+
+	if _, ok := valNamed.Underlying().(*types.Struct); ok {
+		fi.Kind = FieldMapStringDelegatedStruct
+		fi.ElemType = valNamed.Obj().Pkg().Name() + "." + valNamed.Obj().Name()
+		return fi, nil
+	}
+
+	return fi, fmt.Errorf("unsupported cross-package map value type in %s.%s (value type %s)", obj.Pkg().Name(), obj.Name(), valElem)
+}
+
 func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.Type) (FieldInfo, error) {
 	fi := FieldInfo{GoName: goName, TomlKey: tomlKey}
 
@@ -821,6 +857,10 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 				return fi, nil
 			}
 			return fi, fmt.Errorf("unsupported cross-package slice alias %s (element type %s)", qualifiedName, elem)
+		}
+
+		if mapType, ok := t.Underlying().(*types.Map); ok {
+			return classifyNamedMapType(fi, obj, mapType)
 		}
 
 		return fi, fmt.Errorf("unsupported cross-package type %s.%s", obj.Pkg().Name(), obj.Name())
@@ -985,6 +1025,16 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 		}
 		if _, ok := t.Elem().Underlying().(*types.Interface); ok {
 			return fi, fmt.Errorf("map value type is an interface, which cannot be statically decoded; use `toml:\"-\"` to skip this field, or define a concrete struct that mirrors the TOML shape and convert to the interface after decoding")
+		}
+		if named, ok := t.Elem().(*types.Named); ok {
+			if _, ok := named.Underlying().(*types.Struct); ok {
+				obj := named.Obj()
+				qualifiedName := obj.Pkg().Name() + "." + obj.Name()
+				fi.Kind = FieldMapStringDelegatedStruct
+				fi.ElemType = qualifiedName
+				fi.ImportPath = obj.Pkg().Path()
+				return fi, nil
+			}
 		}
 		return fi, fmt.Errorf("unsupported map value type")
 

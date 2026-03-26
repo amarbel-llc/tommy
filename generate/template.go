@@ -13,6 +13,9 @@ package {{.Package}}
 
 import (
 	"fmt"
+{{- if .NeedsStrings}}
+	"strings"
+{{- end}}
 
 	"github.com/amarbel-llc/tommy/pkg/cst"
 	"github.com/amarbel-llc/tommy/pkg/document"
@@ -25,6 +28,9 @@ import (
 var (
 	_ = fmt.Errorf
 	_ cst.NodeKind
+{{- if .NeedsStrings}}
+	_ = strings.Contains
+{{- end}}
 )
 {{range .Structs}}
 {{- range .Fields}}{{if isSamePackageSliceStruct .}}
@@ -95,6 +101,7 @@ type fileData struct {
 	Package      string
 	Structs      []StructInfo
 	ExtraImports []string
+	NeedsStrings bool
 }
 
 func unexport(s string) string {
@@ -125,10 +132,21 @@ func collectFieldImports(fields []FieldInfo, seen map[string]bool) {
 		}
 		// Don't recurse into delegated fields — their inner imports are
 		// handled by the target package's generated code, not ours.
-		if fi.InnerInfo != nil && fi.Kind != FieldDelegatedStruct && fi.Kind != FieldPointerDelegatedStruct && fi.Kind != FieldSliceDelegatedStruct {
+		if fi.InnerInfo != nil && fi.Kind != FieldDelegatedStruct && fi.Kind != FieldPointerDelegatedStruct && fi.Kind != FieldSliceDelegatedStruct && fi.Kind != FieldMapStringDelegatedStruct {
 			collectFieldImports(fi.InnerInfo.Fields, seen)
 		}
 	}
+}
+
+func hasFieldKind(structs []StructInfo, kind FieldKind) bool {
+	for _, si := range structs {
+		for _, fi := range si.Fields {
+			if fi.Kind == kind {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isSamePackageSliceStruct(fi FieldInfo) bool {
@@ -151,5 +169,6 @@ func RenderFile(w io.Writer, pkg string, structs []StructInfo) error {
 		Package:      pkg,
 		Structs:      structs,
 		ExtraImports: collectImportPaths(structs),
+		NeedsStrings: hasFieldKind(structs, FieldMapStringDelegatedStruct),
 	})
 }
