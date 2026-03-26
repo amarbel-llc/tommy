@@ -5465,3 +5465,52 @@ func TestSliceAliasRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIntegrationEmbeddedNonStructWithTomlIgnoreTag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/embeddedskip",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	// An interface type embedded in a struct with toml:"-" should be
+	// silently skipped. Before the fix, resolveEmbeddedFields is called
+	// before the tag is checked, causing "not a struct" error.
+	writeFixture(t, dir, "config.go", `package embeddedskip
+
+type Pool interface {
+	Acquire() error
+	Release()
+}
+
+//go:generate tommy generate
+type Config struct {
+	Pool `+"`"+`toml:"-"`+"`"+`
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate should succeed when embedded non-struct has toml:\"-\" tag, got: %v", err)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+}
+

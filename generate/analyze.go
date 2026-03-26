@@ -144,6 +144,9 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 	for _, field := range st.Fields.List {
 		// Handle embedded (anonymous) fields — promote their tagged fields.
 		if len(field.Names) == 0 {
+			if isTomlIgnored(field) {
+				continue
+			}
 			embeddedFields, err := resolveEmbeddedFields(pkg, field.Type)
 			if err != nil {
 				return si, fmt.Errorf("embedded field in %s: %w", name, err)
@@ -185,6 +188,23 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 type tagOpts struct {
 	omitEmpty bool
 	multiline bool
+}
+
+func isTomlIgnored(field *ast.Field) bool {
+	if field.Tag == nil {
+		return false
+	}
+	tag := strings.Trim(field.Tag.Value, "`")
+	idx := strings.Index(tag, `toml:"`)
+	if idx < 0 {
+		return false
+	}
+	rest := tag[idx+6:]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return false
+	}
+	return rest[:end] == "-"
 }
 
 func extractTomlTag(raw string) (string, tagOpts) {
