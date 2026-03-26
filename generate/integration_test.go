@@ -4554,3 +4554,653 @@ func TestCommentGetSet(t *testing.T) {
 	}
 	t.Log(string(out))
 }
+
+func TestIntegrationEncodeFromEmptyDocument(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/emptydoc",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package emptydoc
+
+//go:generate tommy generate
+type AppConfig struct {
+	Name     string   `+"`"+`toml:"name"`+"`"+`
+	Tags     []string `+"`"+`toml:"tags"`+"`"+`
+	Defaults Defaults `+"`"+`toml:"defaults"`+"`"+`
+	Output   Output   `+"`"+`toml:"output"`+"`"+`
+}
+
+type Defaults struct {
+	Type    string `+"`"+`toml:"type"`+"`"+`
+	Enabled bool   `+"`"+`toml:"enabled"`+"`"+`
+}
+
+type Output struct {
+	Format  string `+"`"+`toml:"format"`+"`"+`
+	Verbose bool   `+"`"+`toml:"verbose"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+
+
+	writeFixture(t, dir, "emptydoc_test.go", `package emptydoc
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestEncodeFromEmptyDocumentPreservesNestedTables(t *testing.T) {
+	// Issue #42: Encoding a struct into a document parsed from empty bytes
+	// silently drops all nested [table] sections because FindTable returns nil
+	// when no table exists in the CST.
+	doc, err := DecodeAppConfig([]byte{})
+	if err != nil {
+		t.Fatalf("DecodeAppConfig(empty): %v", err)
+	}
+
+	*doc.Data() = AppConfig{
+		Name: "myapp",
+		Tags: []string{"alpha", "beta"},
+		Defaults: Defaults{
+			Type:    "!md",
+			Enabled: true,
+		},
+		Output: Output{
+			Format:  "json",
+			Verbose: true,
+		},
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	result := string(out)
+
+	// Top-level fields must be present.
+	if !strings.Contains(result, "name = \"myapp\"") {
+		t.Fatalf("top-level 'name' missing from output:\n%s", result)
+	}
+
+	// Nested [defaults] table must be present — this is the core of #42.
+	if !strings.Contains(result, "[defaults]") {
+		t.Fatalf("[defaults] table silently dropped when encoding from empty document:\n%s", result)
+	}
+	if !strings.Contains(result, "type = \"!md\"") {
+		t.Fatalf("defaults.type field missing from output:\n%s", result)
+	}
+	if !strings.Contains(result, "enabled = true") {
+		t.Fatalf("defaults.enabled field missing from output:\n%s", result)
+	}
+
+	// Second nested table [output] must also be present.
+	if !strings.Contains(result, "[output]") {
+		t.Fatalf("[output] table silently dropped when encoding from empty document:\n%s", result)
+	}
+	if !strings.Contains(result, "format = \"json\"") {
+		t.Fatalf("output.format field missing from output:\n%s", result)
+	}
+	if !strings.Contains(result, "verbose = true") {
+		t.Fatalf("output.verbose field missing from output:\n%s", result)
+	}
+
+	// Verify the output can be decoded back correctly.
+	doc2, err := DecodeAppConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode failed: %v", err)
+	}
+	d := doc2.Data()
+	if d.Name != "myapp" {
+		t.Fatalf("re-decoded Name = %q, want \"myapp\"", d.Name)
+	}
+	if d.Defaults.Type != "!md" {
+		t.Fatalf("re-decoded Defaults.Type = %q, want \"!md\"", d.Defaults.Type)
+	}
+	if d.Defaults.Enabled != true {
+		t.Fatal("re-decoded Defaults.Enabled = false, want true")
+	}
+	if d.Output.Format != "json" {
+		t.Fatalf("re-decoded Output.Format = %q, want \"json\"", d.Output.Format)
+	}
+	if d.Output.Verbose != true {
+		t.Fatal("re-decoded Output.Verbose = false, want true")
+	}
+}
+
+func TestEncodeFromEmptyDocumentPointerStruct(t *testing.T) {
+	// Same issue but for *Struct fields — FieldPointerStruct uses
+	// FindTableInContainer which also returns nil on empty documents.
+	doc, err := DecodeAppConfig([]byte("name = \"x\"\n"))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	// Set nested struct fields — the document has no [defaults] or [output] tables.
+	d := doc.Data()
+	d.Defaults = Defaults{Type: "txt", Enabled: true}
+	d.Output = Output{Format: "yaml", Verbose: false}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	result := string(out)
+	if !strings.Contains(result, "[defaults]") {
+		t.Fatalf("[defaults] table dropped when not in original input:\n%s", result)
+	}
+	if !strings.Contains(result, "type = \"txt\"") {
+		t.Fatalf("defaults.type missing:\n%s", result)
+	}
+	if !strings.Contains(result, "[output]") {
+		t.Fatalf("[output] table dropped when not in original input:\n%s", result)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromEmpty", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromEmptyPointerStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/emptyptr",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package emptyptr
+
+//go:generate tommy generate
+type Config struct {
+	Name  string  `+"`"+`toml:"name"`+"`"+`
+	Hooks *Hooks  `+"`"+`toml:"hooks"`+"`"+`
+}
+
+type Hooks struct {
+	Create *string `+"`"+`toml:"create"`+"`"+`
+	Stop   *string `+"`"+`toml:"stop"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+
+
+	writeFixture(t, dir, "emptyptr_test.go", `package emptyptr
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestEncodePointerStructFromEmptyDocument(t *testing.T) {
+	// Issue #42: pointer-struct variant. When the document is empty,
+	// FindTableInContainer returns nil and the entire *Hooks is dropped.
+	doc, err := DecodeConfig([]byte{})
+	if err != nil {
+		t.Fatalf("DecodeConfig(empty): %v", err)
+	}
+
+	create := "npm install"
+	stop := "just test"
+	*doc.Data() = Config{
+		Name: "myapp",
+		Hooks: &Hooks{
+			Create: &create,
+			Stop:   &stop,
+		},
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	result := string(out)
+	if !strings.Contains(result, "[hooks]") {
+		t.Fatalf("[hooks] table silently dropped when encoding *Hooks from empty document:\n%s", result)
+	}
+	if !strings.Contains(result, "create = \"npm install\"") {
+		t.Fatalf("hooks.create missing from output:\n%s", result)
+	}
+	if !strings.Contains(result, "stop = \"just test\"") {
+		t.Fatalf("hooks.stop missing from output:\n%s", result)
+	}
+
+	// Round-trip verification.
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode failed: %v", err)
+	}
+	d := doc2.Data()
+	if d.Hooks == nil {
+		t.Fatal("re-decoded Hooks is nil")
+	}
+	if d.Hooks.Create == nil || *d.Hooks.Create != "npm install" {
+		t.Fatalf("re-decoded Hooks.Create = %v, want \"npm install\"", d.Hooks.Create)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodePointerStruct", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromEmptyDelegatedStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// External package with a struct
+	extDir := filepath.Join(dir, "dbcfg")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/dbcfg",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, extDir, "db.go", `package dbcfg
+
+//go:generate tommy generate
+type Database struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	if err := Generate(extDir, "db.go"); err != nil {
+		t.Fatalf("Generate dbcfg: %v", err)
+	}
+
+	// Consumer with dbcfg.Database (non-pointer, delegated)
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/dbcfg v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/dbcfg => ../dbcfg",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "app.go", `package consumer
+
+import "example.com/test/dbcfg"
+
+//go:generate tommy generate
+type App struct {
+	Name string          `+"`"+`toml:"name"`+"`"+`
+	DB   dbcfg.Database  `+"`"+`toml:"database"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "app.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "app_test.go", `package consumer
+
+import (
+	"strings"
+	"testing"
+	"example.com/test/dbcfg"
+)
+
+func TestDelegatedStructFromEmptyDocument(t *testing.T) {
+	// Issue #42: FieldDelegatedStruct uses FindTable which returns nil
+	// on an empty document, silently dropping the delegated table.
+	doc, err := DecodeApp([]byte{})
+	if err != nil {
+		t.Fatalf("DecodeApp(empty): %v", err)
+	}
+
+	*doc.Data() = App{
+		Name: "webapp",
+		DB: dbcfg.Database{
+			Host: "db.example.com",
+			Port: 5432,
+		},
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	result := string(out)
+	if !strings.Contains(result, "[database]") {
+		t.Fatalf("[database] table silently dropped for delegated struct from empty document:\n%s", result)
+	}
+	if !strings.Contains(result, "host = \"db.example.com\"") {
+		t.Fatalf("database.host missing:\n%s", result)
+	}
+	if !strings.Contains(result, "port = 5432") {
+		t.Fatalf("database.port missing:\n%s", result)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestDelegatedStruct", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromEmptyPointerDelegatedStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// External package
+	extDir := filepath.Join(dir, "logcfg")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/logcfg",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, extDir, "log.go", `package logcfg
+
+//go:generate tommy generate
+type LogConfig struct {
+	Level  string `+"`"+`toml:"level"`+"`"+`
+	Format string `+"`"+`toml:"format"`+"`"+`
+}
+`)
+
+	if err := Generate(extDir, "log.go"); err != nil {
+		t.Fatalf("Generate logcfg: %v", err)
+	}
+
+	// Consumer with *logcfg.LogConfig (pointer, delegated)
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/logcfg v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/logcfg => ../logcfg",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "svc.go", `package consumer
+
+import "example.com/test/logcfg"
+
+//go:generate tommy generate
+type Service struct {
+	Name    string             `+"`"+`toml:"name"`+"`"+`
+	Logging *logcfg.LogConfig  `+"`"+`toml:"logging"`+"`"+`
+}
+`)
+
+	if err := Generate(consumerDir, "svc.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "svc_test.go", `package consumer
+
+import (
+	"strings"
+	"testing"
+	"example.com/test/logcfg"
+)
+
+func TestPointerDelegatedStructFromEmptyDocument(t *testing.T) {
+	// Issue #42: FieldPointerDelegatedStruct uses FindTableInContainer
+	// which returns nil on an empty document.
+	doc, err := DecodeService([]byte{})
+	if err != nil {
+		t.Fatalf("DecodeService(empty): %v", err)
+	}
+
+	*doc.Data() = Service{
+		Name: "api",
+		Logging: &logcfg.LogConfig{
+			Level:  "debug",
+			Format: "json",
+		},
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	result := string(out)
+	if !strings.Contains(result, "[logging]") {
+		t.Fatalf("[logging] table silently dropped for pointer-delegated struct from empty document:\n%s", result)
+	}
+	if !strings.Contains(result, "level = \"debug\"") {
+		t.Fatalf("logging.level missing:\n%s", result)
+	}
+	if !strings.Contains(result, "format = \"json\"") {
+		t.Fatalf("logging.format missing:\n%s", result)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestPointerDelegated", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromEmptyNestedStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/nested",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package nested
+
+//go:generate tommy generate
+type Root struct {
+	Name  string `+"`"+`toml:"name"`+"`"+`
+	Mid   Middle `+"`"+`toml:"mid"`+"`"+`
+}
+
+type Middle struct {
+	Label string `+"`"+`toml:"label"`+"`"+`
+	Inner Leaf   `+"`"+`toml:"inner"`+"`"+`
+}
+
+type Leaf struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+
+
+	writeFixture(t, dir, "nested_test.go", `package nested
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestDeeplyNestedStructFromEmptyDocument(t *testing.T) {
+	// Issue #42: struct-within-struct-within-struct from empty document.
+	// The outer FindTable returns nil, so the inner struct is also unreachable.
+	doc, err := DecodeRoot([]byte{})
+	if err != nil {
+		t.Fatalf("DecodeRoot(empty): %v", err)
+	}
+
+	*doc.Data() = Root{
+		Name: "root",
+		Mid: Middle{
+			Label: "middle",
+			Inner: Leaf{
+				Value: "deep",
+			},
+		},
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	result := string(out)
+	if !strings.Contains(result, "[mid]") {
+		t.Fatalf("[mid] table dropped from empty document:\n%s", result)
+	}
+	if !strings.Contains(result, "label = \"middle\"") {
+		t.Fatalf("mid.label missing:\n%s", result)
+	}
+	if !strings.Contains(result, "[mid.inner]") {
+		t.Fatalf("[mid.inner] nested table dropped from empty document:\n%s", result)
+	}
+	if !strings.Contains(result, "value = \"deep\"") {
+		t.Fatalf("mid.inner.value missing:\n%s", result)
+	}
+
+	// Round-trip.
+	doc2, err := DecodeRoot(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d := doc2.Data()
+	if d.Mid.Inner.Value != "deep" {
+		t.Fatalf("re-decoded Mid.Inner.Value = %q, want \"deep\"", d.Mid.Inner.Value)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestDeeplyNested", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
