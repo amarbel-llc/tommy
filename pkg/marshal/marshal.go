@@ -3,6 +3,7 @@ package marshal
 import (
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 
@@ -24,6 +25,26 @@ func UnmarshalDocument(input []byte, v any) (*DocumentHandle, error) {
 	}
 
 	doc, err := document.Parse(input)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := decodeStruct(doc, rv.Elem(), ""); err != nil {
+		return nil, err
+	}
+
+	return &DocumentHandle{doc: doc}, nil
+}
+
+// UnmarshalReader parses TOML from an io.Reader into a CST-backed document
+// and populates the struct pointed to by v using its `toml` struct tags.
+func UnmarshalReader(r io.Reader, v any) (*DocumentHandle, error) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return nil, fmt.Errorf("UnmarshalReader requires a non-nil pointer")
+	}
+
+	doc, err := document.ParseReader(r)
 	if err != nil {
 		return nil, err
 	}

@@ -43,7 +43,9 @@ The library has four layers, each depending only on the one below it:
 
 1.  **Lexer** (`internal/lexer/`) --- Tokenizes TOML input into `Token` structs
     with `Kind` and `Raw` bytes. Every byte of input appears in exactly one
-    token.
+    token. Backed by a ring buffer (`internal/ringbuf/`) that streams from an
+    `io.Reader`, with a cached window for fast per-byte access and arena
+    allocation for token `Raw` bytes.
 
 2.  **CST** (`pkg/cst/`) --- Builds a concrete syntax tree from tokens. Every
     token becomes a leaf `Node`; structural nodes (`NodeTable`,
@@ -73,6 +75,12 @@ via `text/template` - Cross-package struct fields use delegation:
 `FieldDelegatedStruct` emits calls to the target package's
 `DecodeInto`/`EncodeFrom` instead of inlining field-by-field decoding, enabling
 structs that contain unexported types
+
+**Ring Buffer** (`internal/ringbuf/`) --- Circular buffer backed by an
+`io.Reader`, ported from dodder's `catgut` package. Provides `Peek`,
+`AdvanceRead`, `Fill`, and a `Slice` type for split-view access across the wrap
+boundary. Used by the lexer to enable streaming tokenization without requiring
+the entire input in memory.
 
 **Formatter** (`internal/formatter/`) --- CST-based TOML formatter that
 normalizes whitespace, comment spacing, and blank lines.

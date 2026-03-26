@@ -2,6 +2,9 @@ package lexer
 
 import (
 	"bytes"
+	"io"
+
+	"github.com/amarbel-llc/tommy/internal/ringbuf"
 )
 
 type lexerState int
@@ -14,28 +17,91 @@ const (
 )
 
 type lexer struct {
-	input  []byte
-	pos    int
+	rb     *ringbuf.RingBuffer
 	state  lexerState
 	tokens []Token
 	// Track nesting depth for arrays/inline tables to distinguish
 	// value-context brackets from table-header brackets.
 	bracketDepth int
 	braceDepth   int
+	// consumed tracks how many bytes into the current token we've scanned.
+	// These bytes have not yet been advanced past in the ring buffer.
+	consumed int
+	// emitted is set to true by emit() and checked by lex() to detect
+	// whether a state handler made progress (since consumed resets to 0
+	// after each emit).
+	emitted bool
+	// window is a cached contiguous view of the readable bytes in the ring
+	// buffer. Refreshed after emit() or when peek/peekAt needs more data.
+	window []byte
+	// arena is a single backing buffer for all token Raw slices. Tokens
+	// sub-slice into this buffer instead of allocating per-token.
+	arena []byte
 }
 
 // Lex tokenizes raw TOML input into a stream of tokens.
 // Concatenating all token Raw bytes reproduces the original input byte-for-byte.
 func Lex(input []byte) []Token {
-	l := &lexer{input: input, state: stateLineStart}
+	return LexReader(bytes.NewReader(input))
+}
+
+// LexReader tokenizes TOML from an io.Reader.
+func LexReader(r io.Reader) []Token {
+	rb := ringbuf.New(r, 0)
+	l := &lexer{rb: rb, state: stateLineStart}
+	l.refreshWindow()
 	l.lex()
 	return l.tokens
 }
 
+// refreshWindow updates the cached window from the ring buffer's readable region.
+func (l *lexer) refreshWindow() {
+	l.window = l.rb.PeekReadable().Bytes()
+}
+
+// arenaAlloc copies n bytes from src into the arena and returns a sub-slice.
+func (l *lexer) arenaAlloc(src []byte) []byte {
+	n := len(src)
+	if cap(l.arena)-len(l.arena) < n {
+		// Grow: at least double, at least enough for this token.
+		newCap := cap(l.arena) * 2
+		if newCap < len(l.arena)+n {
+			newCap = len(l.arena) + n
+		}
+		if newCap < 4096 {
+			newCap = 4096
+		}
+		newArena := make([]byte, len(l.arena), newCap)
+		copy(newArena, l.arena)
+		l.arena = newArena
+	}
+	start := len(l.arena)
+	l.arena = l.arena[:start+n]
+	copy(l.arena[start:], src)
+	return l.arena[start : start+n]
+}
+
+// ensureWindow makes sure at least n bytes are available in the window.
+// Returns true if n bytes are available.
+func (l *lexer) ensureWindow(n int) bool {
+	if n <= len(l.window) {
+		return true
+	}
+	// Try to fill more data from the reader.
+	_, err := l.rb.Peek(n)
+	if err != nil {
+		l.refreshWindow()
+		return n <= len(l.window)
+	}
+	l.refreshWindow()
+	return n <= len(l.window)
+}
+
 func (l *lexer) lex() {
-	for l.pos < len(l.input) {
-		prevPos := l.pos
+	for l.hasMore() {
+		prevConsumed := l.consumed
 		prevState := l.state
+		l.emitted = false
 		switch l.state {
 		case stateLineStart:
 			l.lexLineStart()
@@ -46,60 +112,82 @@ func (l *lexer) lex() {
 		case stateValue:
 			l.lexValue()
 		}
-		if l.pos == prevPos && l.state == prevState {
+		if !l.emitted && l.consumed == prevConsumed && l.state == prevState {
 			// Neither position nor state advanced — emit the byte as
 			// invalid to guarantee forward progress and prevent infinite loops.
-			start := l.pos
-			l.pos++
-			l.emit(TokenInvalid, start)
+			l.consumed++
+			l.emit(TokenInvalid)
 		}
 	}
 }
 
+// hasMore returns true if there are unprocessed bytes available.
+func (l *lexer) hasMore() bool {
+	if l.consumed < len(l.window) {
+		return true
+	}
+	// Window exhausted — try to get more data.
+	return l.ensureWindow(l.consumed + 1)
+}
+
+// peek returns the byte at the current consumed offset, or 0 if unavailable.
 func (l *lexer) peek() byte {
-	if l.pos < len(l.input) {
-		return l.input[l.pos]
+	if l.consumed < len(l.window) {
+		return l.window[l.consumed]
 	}
-	return 0
+	if !l.ensureWindow(l.consumed + 1) {
+		return 0
+	}
+	return l.window[l.consumed]
 }
 
+// peekAt returns the byte at consumed+offset, or 0 if unavailable.
 func (l *lexer) peekAt(offset int) byte {
-	i := l.pos + offset
-	if i < len(l.input) {
-		return l.input[i]
+	pos := l.consumed + offset
+	if pos < len(l.window) {
+		return l.window[pos]
 	}
-	return 0
+	if !l.ensureWindow(pos + 1) {
+		return 0
+	}
+	return l.window[pos]
 }
 
-func (l *lexer) emit(kind TokenKind, start int) {
-	l.tokens = append(l.tokens, Token{Kind: kind, Raw: l.input[start:l.pos]})
+// emit creates a token from the bytes in [0, consumed), copies them into the
+// arena, and advances the ring buffer read pointer.
+func (l *lexer) emit(kind TokenKind) {
+	if l.consumed == 0 {
+		return
+	}
+	raw := l.arenaAlloc(l.window[:l.consumed])
+	l.tokens = append(l.tokens, Token{Kind: kind, Raw: raw})
+	l.rb.AdvanceRead(l.consumed)
+	l.consumed = 0
+	l.emitted = true
+	l.refreshWindow()
 }
 
 func (l *lexer) lexLineStart() {
 	ch := l.peek()
 	switch {
 	case ch == '\n':
-		start := l.pos
-		l.pos++
-		l.emit(TokenNewline, start)
+		l.consumed++
+		l.emit(TokenNewline)
 	case ch == '\r' && l.peekAt(1) == '\n':
-		start := l.pos
-		l.pos += 2
-		l.emit(TokenNewline, start)
+		l.consumed += 2
+		l.emit(TokenNewline)
 	case ch == ' ' || ch == '\t':
 		l.consumeWhitespace()
 	case ch == '#':
 		l.consumeComment()
 	case ch == '[':
 		if l.peekAt(1) == '[' {
-			start := l.pos
-			l.pos += 2
-			l.emit(TokenDoubleBracketOpen, start)
+			l.consumed += 2
+			l.emit(TokenDoubleBracketOpen)
 			l.state = stateKey
 		} else {
-			start := l.pos
-			l.pos++
-			l.emit(TokenBracketOpen, start)
+			l.consumed++
+			l.emit(TokenBracketOpen)
 			l.state = stateKey
 		}
 	default:
@@ -113,39 +201,33 @@ func (l *lexer) lexKey() {
 	case ch == ' ' || ch == '\t':
 		l.consumeWhitespace()
 	case ch == '\n':
-		start := l.pos
-		l.pos++
-		l.emit(TokenNewline, start)
+		l.consumed++
+		l.emit(TokenNewline)
 		l.state = stateLineStart
 	case ch == '\r' && l.peekAt(1) == '\n':
-		start := l.pos
-		l.pos += 2
-		l.emit(TokenNewline, start)
+		l.consumed += 2
+		l.emit(TokenNewline)
 		l.state = stateLineStart
 	case ch == '#':
 		l.consumeComment()
 	case ch == '=':
-		start := l.pos
-		l.pos++
-		l.emit(TokenEquals, start)
+		l.consumed++
+		l.emit(TokenEquals)
 		l.state = stateAfterEquals
 	case ch == '.':
-		start := l.pos
-		l.pos++
-		l.emit(TokenDot, start)
+		l.consumed++
+		l.emit(TokenDot)
 	case ch == '"':
 		l.consumeBasicString()
 	case ch == '\'':
 		l.consumeLiteralString()
 	case ch == ']':
 		if l.peekAt(1) == ']' {
-			start := l.pos
-			l.pos += 2
-			l.emit(TokenDoubleBracketClose, start)
+			l.consumed += 2
+			l.emit(TokenDoubleBracketClose)
 		} else {
-			start := l.pos
-			l.pos++
-			l.emit(TokenBracketClose, start)
+			l.consumed++
+			l.emit(TokenBracketClose)
 		}
 	case ch == '}':
 		// Closing brace for inline table — switch back to value state
@@ -172,16 +254,14 @@ func (l *lexer) lexValue() {
 	case ch == ' ' || ch == '\t':
 		l.consumeWhitespace()
 	case ch == '\n':
-		start := l.pos
-		l.pos++
-		l.emit(TokenNewline, start)
+		l.consumed++
+		l.emit(TokenNewline)
 		if l.bracketDepth == 0 && l.braceDepth == 0 {
 			l.state = stateLineStart
 		}
 	case ch == '\r' && l.peekAt(1) == '\n':
-		start := l.pos
-		l.pos += 2
-		l.emit(TokenNewline, start)
+		l.consumed += 2
+		l.emit(TokenNewline)
 		if l.bracketDepth == 0 && l.braceDepth == 0 {
 			l.state = stateLineStart
 		}
@@ -192,41 +272,35 @@ func (l *lexer) lexValue() {
 	case ch == '\'':
 		l.consumeLiteralString()
 	case ch == '[':
-		start := l.pos
-		l.pos++
+		l.consumed++
 		l.bracketDepth++
-		l.emit(TokenBracketOpen, start)
+		l.emit(TokenBracketOpen)
 	case ch == ']':
-		start := l.pos
-		l.pos++
+		l.consumed++
 		l.bracketDepth--
-		l.emit(TokenBracketClose, start)
+		l.emit(TokenBracketClose)
 		if l.bracketDepth == 0 && l.braceDepth == 0 {
 			// Stay in value state for potential trailing comments
 		}
 	case ch == '{':
-		start := l.pos
-		l.pos++
+		l.consumed++
 		l.braceDepth++
-		l.emit(TokenBraceOpen, start)
+		l.emit(TokenBraceOpen)
 	case ch == '}':
-		start := l.pos
-		l.pos++
+		l.consumed++
 		l.braceDepth--
-		l.emit(TokenBraceClose, start)
+		l.emit(TokenBraceClose)
 	case ch == ',':
-		start := l.pos
-		l.pos++
-		l.emit(TokenComma, start)
+		l.consumed++
+		l.emit(TokenComma)
 		if l.braceDepth > 0 && l.bracketDepth == 0 {
 			// Inside inline table (not nested in an array), next thing is a key
 			l.state = stateKey
 		}
 	case ch == '=':
 		// Inside inline table
-		start := l.pos
-		l.pos++
-		l.emit(TokenEquals, start)
+		l.consumed++
+		l.emit(TokenEquals)
 		l.state = stateAfterEquals
 	case isLetter(ch) || ch == '_':
 		// Could be bool, bare key (in inline table), or bare value
@@ -241,137 +315,135 @@ func (l *lexer) lexValue() {
 }
 
 func (l *lexer) lookingAtBool() bool {
-	rest := l.input[l.pos:]
-	return bytes.HasPrefix(rest, []byte("true")) && !isBareKeyChar(l.peekAt(4)) ||
-		bytes.HasPrefix(rest, []byte("false")) && !isBareKeyChar(l.peekAt(5))
+	// Check if we're looking at "true" or "false" followed by a non-bare-key char
+	if l.peek() == 't' && l.peekAt(1) == 'r' && l.peekAt(2) == 'u' && l.peekAt(3) == 'e' && !isBareKeyChar(l.peekAt(4)) {
+		return true
+	}
+	if l.peek() == 'f' && l.peekAt(1) == 'a' && l.peekAt(2) == 'l' && l.peekAt(3) == 's' && l.peekAt(4) == 'e' && !isBareKeyChar(l.peekAt(5)) {
+		return true
+	}
+	return false
 }
 
 func (l *lexer) consumeWhitespace() {
-	start := l.pos
-	for l.pos < len(l.input) {
-		ch := l.input[l.pos]
+	for l.hasMore() {
+		ch := l.peek()
 		if ch != ' ' && ch != '\t' {
 			break
 		}
-		l.pos++
+		l.consumed++
 	}
-	l.emit(TokenWhitespace, start)
+	l.emit(TokenWhitespace)
 }
 
 func (l *lexer) consumeComment() {
-	start := l.pos
-	for l.pos < len(l.input) {
-		ch := l.input[l.pos]
+	for l.hasMore() {
+		ch := l.peek()
 		if ch == '\n' || (ch == '\r' && l.peekAt(1) == '\n') {
 			break
 		}
-		l.pos++
+		l.consumed++
 	}
-	l.emit(TokenComment, start)
+	l.emit(TokenComment)
 }
 
 func (l *lexer) consumeBareKey() {
-	start := l.pos
-	for l.pos < len(l.input) && isBareKeyChar(l.input[l.pos]) {
-		l.pos++
+	for l.hasMore() && isBareKeyChar(l.peek()) {
+		l.consumed++
 	}
-	if l.pos > start {
-		l.emit(TokenBareKey, start)
+	if l.consumed > 0 {
+		l.emit(TokenBareKey)
 	}
 }
 
 func (l *lexer) consumeBasicString() {
-	start := l.pos
 	if l.peekAt(1) == '"' && l.peekAt(2) == '"' {
 		// Multiline basic string """..."""
-		l.pos += 3
-		for l.pos < len(l.input) {
-			if l.input[l.pos] == '"' && l.peekAt(1) == '"' && l.peekAt(2) == '"' {
+		l.consumed += 3
+		for l.hasMore() {
+			if l.peek() == '"' && l.peekAt(1) == '"' && l.peekAt(2) == '"' {
 				// Check for escaped quotes (""""" means content ending with ")
-				l.pos += 3
+				l.consumed += 3
 				// Consume any additional trailing quotes (up to 2 more are valid)
-				for l.pos < len(l.input) && l.input[l.pos] == '"' {
-					l.pos++
+				for l.hasMore() && l.peek() == '"' {
+					l.consumed++
 				}
 				break
 			}
-			if l.input[l.pos] == '\\' {
-				l.pos++ // skip escape char
+			if l.peek() == '\\' {
+				l.consumed++ // skip escape char
 			}
-			l.pos++
+			l.consumed++
 		}
-		l.emit(TokenMultilineBasicString, start)
+		l.emit(TokenMultilineBasicString)
 	} else {
 		// Regular basic string "..."
-		l.pos++ // skip opening "
-		for l.pos < len(l.input) {
-			ch := l.input[l.pos]
+		l.consumed++ // skip opening "
+		for l.hasMore() {
+			ch := l.peek()
 			if ch == '\\' {
-				l.pos += 2 // skip escape sequence
+				l.consumed += 2 // skip escape sequence
 				continue
 			}
 			if ch == '"' {
-				l.pos++ // skip closing "
+				l.consumed++ // skip closing "
 				break
 			}
-			l.pos++
+			l.consumed++
 		}
-		l.emit(TokenBasicString, start)
+		l.emit(TokenBasicString)
 	}
 }
 
 func (l *lexer) consumeLiteralString() {
-	start := l.pos
 	if l.peekAt(1) == '\'' && l.peekAt(2) == '\'' {
 		// Multiline literal string '''...'''
-		l.pos += 3
-		for l.pos < len(l.input) {
-			if l.input[l.pos] == '\'' && l.peekAt(1) == '\'' && l.peekAt(2) == '\'' {
-				l.pos += 3
+		l.consumed += 3
+		for l.hasMore() {
+			if l.peek() == '\'' && l.peekAt(1) == '\'' && l.peekAt(2) == '\'' {
+				l.consumed += 3
 				// Consume any additional trailing quotes
-				for l.pos < len(l.input) && l.input[l.pos] == '\'' {
-					l.pos++
+				for l.hasMore() && l.peek() == '\'' {
+					l.consumed++
 				}
 				break
 			}
-			l.pos++
+			l.consumed++
 		}
-		l.emit(TokenMultilineLiteralString, start)
+		l.emit(TokenMultilineLiteralString)
 	} else {
 		// Regular literal string '...'
-		l.pos++ // skip opening '
-		for l.pos < len(l.input) {
-			if l.input[l.pos] == '\'' {
-				l.pos++ // skip closing '
+		l.consumed++ // skip opening '
+		for l.hasMore() {
+			if l.peek() == '\'' {
+				l.consumed++ // skip closing '
 				break
 			}
-			l.pos++
+			l.consumed++
 		}
-		l.emit(TokenLiteralString, start)
+		l.emit(TokenLiteralString)
 	}
 }
 
 func (l *lexer) consumeValueWord() {
-	start := l.pos
-	rest := l.input[l.pos:]
-	if bytes.HasPrefix(rest, []byte("true")) && !isBareKeyChar(l.peekAt(4)) {
-		l.pos += 4
-		l.emit(TokenBool, start)
+	if l.peek() == 't' && l.peekAt(1) == 'r' && l.peekAt(2) == 'u' && l.peekAt(3) == 'e' && !isBareKeyChar(l.peekAt(4)) {
+		l.consumed += 4
+		l.emit(TokenBool)
 		return
 	}
-	if bytes.HasPrefix(rest, []byte("false")) && !isBareKeyChar(l.peekAt(5)) {
-		l.pos += 5
-		l.emit(TokenBool, start)
+	if l.peek() == 'f' && l.peekAt(1) == 'a' && l.peekAt(2) == 'l' && l.peekAt(3) == 's' && l.peekAt(4) == 'e' && !isBareKeyChar(l.peekAt(5)) {
+		l.consumed += 5
+		l.emit(TokenBool)
 		return
 	}
-	if bytes.HasPrefix(rest, []byte("inf")) && !isBareKeyChar(l.peekAt(3)) {
-		l.pos += 3
-		l.emit(TokenFloat, start)
+	if l.peek() == 'i' && l.peekAt(1) == 'n' && l.peekAt(2) == 'f' && !isBareKeyChar(l.peekAt(3)) {
+		l.consumed += 3
+		l.emit(TokenFloat)
 		return
 	}
-	if bytes.HasPrefix(rest, []byte("nan")) && !isBareKeyChar(l.peekAt(3)) {
-		l.pos += 3
-		l.emit(TokenFloat, start)
+	if l.peek() == 'n' && l.peekAt(1) == 'a' && l.peekAt(2) == 'n' && !isBareKeyChar(l.peekAt(3)) {
+		l.consumed += 3
+		l.emit(TokenFloat)
 		return
 	}
 	// Fallback: consume as bare key
@@ -379,21 +451,23 @@ func (l *lexer) consumeValueWord() {
 }
 
 func (l *lexer) consumeNumberOrDateTime() {
-	start := l.pos
-
-	// Consume all characters that could be part of a number or datetime
-	for l.pos < len(l.input) {
-		ch := l.input[l.pos]
+	for l.hasMore() {
+		ch := l.peek()
 		if isValueChar(ch) {
-			l.pos++
+			l.consumed++
 		} else {
 			break
 		}
 	}
 
-	raw := l.input[start:l.pos]
-	kind := classifyNumericValue(raw)
+	// Classify before copying — classifyNumericValue only reads, doesn't retain.
+	kind := classifyNumericValue(l.window[:l.consumed])
+	raw := l.arenaAlloc(l.window[:l.consumed])
 	l.tokens = append(l.tokens, Token{Kind: kind, Raw: raw})
+	l.rb.AdvanceRead(l.consumed)
+	l.consumed = 0
+	l.emitted = true
+	l.refreshWindow()
 }
 
 func classifyNumericValue(raw []byte) TokenKind {

@@ -2,6 +2,7 @@ package document
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -16,6 +17,15 @@ type Document struct {
 
 func Parse(input []byte) (*Document, error) {
 	root, err := cst.Parse(input)
+	if err != nil {
+		return nil, err
+	}
+	return &Document{root: root}, nil
+}
+
+// ParseReader parses TOML from an io.Reader into a Document.
+func ParseReader(r io.Reader) (*Document, error) {
+	root, err := cst.ParseReader(r)
 	if err != nil {
 		return nil, err
 	}

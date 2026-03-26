@@ -1,6 +1,8 @@
 package cst
 
 import (
+	"io"
+
 	"github.com/amarbel-llc/tommy/internal/lexer"
 )
 
@@ -14,6 +16,13 @@ type parser struct {
 // Concatenating all leaf Raw bytes reproduces the original input byte-for-byte.
 func Parse(input []byte) (*Node, error) {
 	tokens := lexer.Lex(input)
+	p := &parser{tokens: tokens}
+	return p.parseDocument(), nil
+}
+
+// ParseReader consumes TOML from an io.Reader and returns a CST document node.
+func ParseReader(r io.Reader) (*Node, error) {
+	tokens := lexer.LexReader(r)
 	p := &parser{tokens: tokens}
 	return p.parseDocument(), nil
 }
