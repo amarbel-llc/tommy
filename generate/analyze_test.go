@@ -1063,3 +1063,63 @@ type Config struct {
 		t.Fatalf("expected error mentioning 'interface', got: %s", errStr)
 	}
 }
+
+func TestAnalyzeEmbeddedCrossPackageInterfaceSkipped(t *testing.T) {
+	dir := t.TempDir()
+
+	// Package with an interface type and a type alias to it
+	ifaceDir := filepath.Join(dir, "interfaces")
+	writeFixture(t, ifaceDir, "go.mod", "module example.com/interfaces\n\ngo 1.26\n")
+	writeFixture(t, ifaceDir, "pool.go", `package interfaces
+
+type Ptr[V any] interface {
+	*V
+}
+
+type PoolPtr[V any, VP Ptr[V]] interface {
+	Get() (VP, func())
+}
+`)
+
+	// Intermediate package with a type alias to the interface
+	luaDir := filepath.Join(dir, "lua")
+	writeFixture(t, luaDir, "go.mod", "module example.com/lua\n\ngo 1.26\n\nrequire example.com/interfaces v0.0.0\n\nreplace example.com/interfaces => ../interfaces\n")
+	writeFixture(t, luaDir, "pool.go", `package lua
+
+import "example.com/interfaces"
+
+type VM struct{}
+
+type VMPool = interfaces.PoolPtr[VM, *VM]
+`)
+
+	// Consumer that embeds the interface alias — should be silently skipped
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire (\n\texample.com/lua v0.0.0\n\texample.com/interfaces v0.0.0\n)\n\nreplace (\n\texample.com/lua => ../lua\n\texample.com/interfaces => ../interfaces\n)\n")
+	writeFixture(t, consumerDir, "consumer.go", `package consumer
+
+import "example.com/lua"
+
+//go:generate tommy generate
+type Config struct {
+	lua.VMPool
+	Filter string `+"`"+`toml:"filter"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "consumer.go")
+	if err != nil {
+		t.Fatalf("expected no error for embedded interface, got: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	// Should have only the Filter field — the embedded interface is skipped
+	if len(infos[0].Fields) != 1 {
+		t.Errorf("expected 1 field (Filter only), got %d: %v",
+			len(infos[0].Fields), fieldNames(infos[0].Fields))
+	}
+	if len(infos[0].Fields) > 0 && infos[0].Fields[0].TomlKey != "filter" {
+		t.Errorf("expected field toml key 'filter', got %q", infos[0].Fields[0].TomlKey)
+	}
+}

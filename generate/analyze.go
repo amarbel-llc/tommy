@@ -633,12 +633,14 @@ func resolveCrossPackageEmbedded(pkg *packages.Package, sel *ast.SelectorExpr) (
 
 	named, ok := types.Unalias(obj.Type()).(*types.Named)
 	if !ok {
-		return nil, fmt.Errorf("%s is not a named type", sel.Sel.Name)
+		// Non-named types have no TOML fields to promote.
+		return nil, nil
 	}
 
 	structType, ok := named.Underlying().(*types.Struct)
 	if !ok {
-		return nil, fmt.Errorf("%s is not a struct type", sel.Sel.Name)
+		// Non-struct types (interfaces, etc.) have no TOML fields to promote.
+		return nil, nil
 	}
 
 	si, err := resolveStructFromTypes(pkg, sel.Sel.Name, structType)
@@ -1026,7 +1028,8 @@ func resolveStructByName(pkg *packages.Package, name string) (StructInfo, error)
 							return resolveStructByName(pkg, ident.Name)
 						}
 					}
-					return StructInfo{}, fmt.Errorf("%s is not a struct", name)
+					// Non-struct types (interfaces, etc.) have no TOML fields to promote.
+				return StructInfo{}, nil
 				}
 				return analyzeStruct(pkg, name, structType)
 			}
