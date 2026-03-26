@@ -6002,3 +6002,296 @@ func TestCrossPackageMapTypeAliasRoundTrip(t *testing.T) {
 	}
 }
 
+
+// gh#48: omitempty lost when inlining cross-package struct fields.
+// When Inner has a TextMarshaler field with omitempty and the zero value,
+// the encoder should omit the key. Instead it writes an empty string,
+// which then fails on decode via UnmarshalText("").
+func TestIntegrationCrossPackageOmitemptyTextMarshaler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "inner" package: struct with a TextMarshaler field tagged omitempty
+	innerDir := filepath.Join(dir, "inner")
+	writeFixture(t, innerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/inner",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, innerDir, "inner.go", `package inner
+
+import "fmt"
+
+//go:generate tommy generate
+type Inner struct {
+	Name CustomType `+"`"+`toml:"name,omitempty"`+"`"+`
+}
+
+type CustomType struct{ Val string }
+
+func (c CustomType) MarshalText() ([]byte, error)  { return []byte(c.Val), nil }
+func (c *CustomType) UnmarshalText(b []byte) error {
+	if len(b) == 0 {
+		return fmt.Errorf("empty value not allowed")
+	}
+	c.Val = string(b)
+	return nil
+}
+`)
+
+	if err := Generate(innerDir, "inner.go"); err != nil {
+		t.Fatalf("Generate inner: %v", err)
+	}
+
+	// "outer" package: uses inner.Inner as a named field
+	outerDir := filepath.Join(dir, "outer")
+	writeFixture(t, outerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/outer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/inner v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/inner => ../inner",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, outerDir, "outer.go", `package outer
+
+import "example.com/test/inner"
+
+//go:generate tommy generate
+type Outer struct {
+	Label string      `+"`"+`toml:"label"`+"`"+`
+	Data  inner.Inner `+"`"+`toml:"data"`+"`"+`
+}
+`)
+
+	if err := Generate(outerDir, "outer.go"); err != nil {
+		t.Fatalf("Generate outer: %v", err)
+	}
+
+	writeFixture(t, outerDir, "outer_test.go", `package outer
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestCrossPackageOmitemptyZeroValue(t *testing.T) {
+	// Only label is set; data.name is zero-valued and omitempty.
+	// The encoder should omit data.name entirely.
+	input := []byte("label = \"hello\"\n\n[data]\n")
+
+	doc, err := DecodeOuter(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Label != "hello" {
+		t.Fatalf("Label = %q, want \"hello\"", doc.Data().Label)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	if strings.Contains(string(out), "name") {
+		t.Fatalf("zero-value omitempty TextMarshaler field leaked into output:\n%s", string(out))
+	}
+
+	// Round-trip: re-decode should succeed (no UnmarshalText("") error)
+	doc2, err := DecodeOuter(out)
+	if err != nil {
+		t.Fatalf("re-decode failed (omitempty not respected): %v", err)
+	}
+	if doc2.Data().Label != "hello" {
+		t.Fatalf("re-decoded Label = %q, want \"hello\"", doc2.Data().Label)
+	}
+}
+
+func TestCrossPackageOmitemptyNonZeroValue(t *testing.T) {
+	// data.name is set — should survive round-trip.
+	input := []byte("label = \"hello\"\n\n[data]\nname = \"world\"\n")
+
+	doc, err := DecodeOuter(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Data.Name.Val != "world" {
+		t.Fatalf("Data.Name.Val = %q, want \"world\"", doc.Data().Data.Name.Val)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(out), "name = \"world\"") {
+		t.Fatalf("expected name in output, got:\n%s", string(out))
+	}
+
+	doc2, err := DecodeOuter(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if doc2.Data().Data.Name.Val != "world" {
+		t.Fatalf("re-decoded Name.Val = %q, want \"world\"", doc2.Data().Data.Name.Val)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = outerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// gh#48: same-package TextMarshaler with omitempty.
+// Proves the bug is in emitEncodeField, not the cross-package delegation path.
+func TestIntegrationSamePackageOmitemptyTextMarshaler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/test/samepkg",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, dir, "config.go", `package samepkg
+
+import "fmt"
+
+//go:generate tommy generate
+type Config struct {
+	Label string     `+"`"+`toml:"label"`+"`"+`
+	Kind  CustomType `+"`"+`toml:"kind,omitempty"`+"`"+`
+}
+
+type CustomType struct{ Val string }
+
+func (c CustomType) MarshalText() ([]byte, error)  { return []byte(c.Val), nil }
+func (c *CustomType) UnmarshalText(b []byte) error {
+	if len(b) == 0 {
+		return fmt.Errorf("empty value not allowed")
+	}
+	c.Val = string(b)
+	return nil
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package samepkg
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestOmitemptyTextMarshalerZeroValue(t *testing.T) {
+	// kind is zero-valued and omitempty — should not appear in output.
+	input := []byte("label = \"hello\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	if strings.Contains(string(out), "kind") {
+		t.Fatalf("zero-value omitempty TextMarshaler field leaked into output:\n%s", string(out))
+	}
+
+	// Round-trip: re-decode should succeed (no UnmarshalText("") error)
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode failed (omitempty not respected): %v", err)
+	}
+	if doc2.Data().Label != "hello" {
+		t.Fatalf("re-decoded Label = %q, want \"hello\"", doc2.Data().Label)
+	}
+}
+
+func TestOmitemptyTextMarshalerNonZeroValue(t *testing.T) {
+	// kind is set — should survive round-trip.
+	input := []byte("label = \"hello\"\nkind = \"widget\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Data().Kind.Val != "widget" {
+		t.Fatalf("Kind.Val = %q, want \"widget\"", doc.Data().Kind.Val)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(out), "kind = \"widget\"") {
+		t.Fatalf("expected kind in output, got:\n%s", string(out))
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if doc2.Data().Kind.Val != "widget" {
+		t.Fatalf("re-decoded Kind.Val = %q, want \"widget\"", doc2.Data().Kind.Val)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}

@@ -616,16 +616,33 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldTextMarshaler:
-		fmt.Fprintf(&buf, "\t{\n")
-		fmt.Fprintf(&buf, "\t\tv, err := %s.MarshalText()\n", source)
-		fmt.Fprintf(&buf, "\t\tif err != nil {\n")
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, string(v)); err != nil {\n",
-			docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
-		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t}\n")
+		if fi.OmitEmpty {
+			fmt.Fprintf(&buf, "\t{\n")
+			fmt.Fprintf(&buf, "\t\tv, err := %s.MarshalText()\n", source)
+			fmt.Fprintf(&buf, "\t\tif err != nil {\n")
+			fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t\tif len(v) > 0 {\n")
+			fmt.Fprintf(&buf, "\t\t\tif err := %s.SetInContainer(%s, %q, string(v)); err != nil {\n",
+				docVar, containerExpr, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t\t}\n")
+			fmt.Fprintf(&buf, "\t\t} else {\n")
+			fmt.Fprintf(&buf, "\t\t\t_ = %s.DeleteFromContainer(%s, %q)\n", docVar, containerExpr, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t}\n")
+		} else {
+			fmt.Fprintf(&buf, "\t{\n")
+			fmt.Fprintf(&buf, "\t\tv, err := %s.MarshalText()\n", source)
+			fmt.Fprintf(&buf, "\t\tif err != nil {\n")
+			fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, string(v)); err != nil {\n",
+				docVar, containerExpr, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t}\n")
+		}
 
 	case FieldStruct:
 		if fi.InnerInfo != nil {
