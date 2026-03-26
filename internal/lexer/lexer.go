@@ -17,9 +17,8 @@ const (
 )
 
 type lexer struct {
-	rb     *ringbuf.RingBuffer
-	state  lexerState
-	tokens []Token
+	rb    *ringbuf.RingBuffer
+	state lexerState
 	// Track nesting depth for arrays/inline tables to distinguish
 	// value-context brackets from table-header brackets.
 	bracketDepth int
@@ -27,7 +26,7 @@ type lexer struct {
 	// consumed tracks how many bytes into the current token we've scanned.
 	// These bytes have not yet been advanced past in the ring buffer.
 	consumed int
-	// emitted is set to true by emit() and checked by lex() to detect
+	// emitted is set to true by emit() and checked by the iterator to detect
 	// whether a state handler made progress (since consumed resets to 0
 	// after each emit).
 	emitted bool
@@ -37,21 +36,87 @@ type lexer struct {
 	// arena is a single backing buffer for all token Raw slices. Tokens
 	// sub-slice into this buffer instead of allocating per-token.
 	arena []byte
+	// pending holds the most recently emitted token.
+	pending Token
 }
 
-// Lex tokenizes raw TOML input into a stream of tokens.
+func newLexer(r io.Reader) *lexer {
+	rb := ringbuf.New(r, 0)
+	l := &lexer{rb: rb, state: stateLineStart}
+	l.refreshWindow()
+	return l
+}
+
+// Lex tokenizes raw TOML input into a slice of tokens.
 // Concatenating all token Raw bytes reproduces the original input byte-for-byte.
 func Lex(input []byte) []Token {
 	return LexReader(bytes.NewReader(input))
 }
 
-// LexReader tokenizes TOML from an io.Reader.
+// LexReader tokenizes TOML from an io.Reader into a slice of tokens.
 func LexReader(r io.Reader) []Token {
-	rb := ringbuf.New(r, 0)
-	l := &lexer{rb: rb, state: stateLineStart}
-	l.refreshWindow()
-	l.lex()
-	return l.tokens
+	return Collect(NewTokenIterator(r))
+}
+
+// Collect drains a TokenIterator into a slice of tokens.
+func Collect(it *TokenIterator) []Token {
+	var tokens []Token
+	for {
+		tok, ok := it.Next()
+		if !ok {
+			break
+		}
+		tokens = append(tokens, tok)
+	}
+	return tokens
+}
+
+// TokenIterator produces tokens one at a time from an io.Reader.
+type TokenIterator struct {
+	l    *lexer
+	done bool
+}
+
+// NewTokenIterator creates a pull-based token iterator over an io.Reader.
+func NewTokenIterator(r io.Reader) *TokenIterator {
+	return &TokenIterator{l: newLexer(r)}
+}
+
+// NewTokenIteratorFromBytes creates a pull-based token iterator over a []byte.
+func NewTokenIteratorFromBytes(input []byte) *TokenIterator {
+	return NewTokenIterator(bytes.NewReader(input))
+}
+
+// Next returns the next token and true, or a zero Token and false at EOF.
+func (it *TokenIterator) Next() (Token, bool) {
+	if it.done {
+		return Token{}, false
+	}
+	l := it.l
+	for l.hasMore() {
+		prevConsumed := l.consumed
+		prevState := l.state
+		l.emitted = false
+		switch l.state {
+		case stateLineStart:
+			l.lexLineStart()
+		case stateKey:
+			l.lexKey()
+		case stateAfterEquals:
+			l.lexAfterEquals()
+		case stateValue:
+			l.lexValue()
+		}
+		if !l.emitted && l.consumed == prevConsumed && l.state == prevState {
+			l.consumed++
+			l.emit(TokenInvalid)
+		}
+		if l.emitted {
+			return l.pending, true
+		}
+	}
+	it.done = true
+	return Token{}, false
 }
 
 // refreshWindow updates the cached window from the ring buffer's readable region.
@@ -97,30 +162,6 @@ func (l *lexer) ensureWindow(n int) bool {
 	return n <= len(l.window)
 }
 
-func (l *lexer) lex() {
-	for l.hasMore() {
-		prevConsumed := l.consumed
-		prevState := l.state
-		l.emitted = false
-		switch l.state {
-		case stateLineStart:
-			l.lexLineStart()
-		case stateKey:
-			l.lexKey()
-		case stateAfterEquals:
-			l.lexAfterEquals()
-		case stateValue:
-			l.lexValue()
-		}
-		if !l.emitted && l.consumed == prevConsumed && l.state == prevState {
-			// Neither position nor state advanced — emit the byte as
-			// invalid to guarantee forward progress and prevent infinite loops.
-			l.consumed++
-			l.emit(TokenInvalid)
-		}
-	}
-}
-
 // hasMore returns true if there are unprocessed bytes available.
 func (l *lexer) hasMore() bool {
 	if l.consumed < len(l.window) {
@@ -160,7 +201,7 @@ func (l *lexer) emit(kind TokenKind) {
 		return
 	}
 	raw := l.arenaAlloc(l.window[:l.consumed])
-	l.tokens = append(l.tokens, Token{Kind: kind, Raw: raw})
+	l.pending = Token{Kind: kind, Raw: raw}
 	l.rb.AdvanceRead(l.consumed)
 	l.consumed = 0
 	l.emitted = true
@@ -460,14 +501,8 @@ func (l *lexer) consumeNumberOrDateTime() {
 		}
 	}
 
-	// Classify before copying — classifyNumericValue only reads, doesn't retain.
 	kind := classifyNumericValue(l.window[:l.consumed])
-	raw := l.arenaAlloc(l.window[:l.consumed])
-	l.tokens = append(l.tokens, Token{Kind: kind, Raw: raw})
-	l.rb.AdvanceRead(l.consumed)
-	l.consumed = 0
-	l.emitted = true
-	l.refreshWindow()
+	l.emit(kind)
 }
 
 func classifyNumericValue(raw []byte) TokenKind {
