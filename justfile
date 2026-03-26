@@ -8,7 +8,7 @@ build-go:
 test: test-go test-bats
 
 test-go:
-  tap-dancer go-test ./...
+  tap-dancer go-test --skip-empty ./...
 
 test-bats: build
   cd zz-tests_bats && TOMMY_BIN=../build/tommy BATS_TEST_TIMEOUT=30 bats --tap --jobs {{num_cpus()}} *.bats
