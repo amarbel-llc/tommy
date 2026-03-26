@@ -64,6 +64,22 @@ func (d *{{.Name}}Document) Undecoded() []string {
 	return document.UndecodedKeys(d.cstDoc.Root(), d.consumed)
 }
 
+func (d *{{.Name}}Document) Comment(key string) string {
+	return d.cstDoc.GetComment(key)
+}
+
+func (d *{{.Name}}Document) SetComment(key, comment string) {
+	d.cstDoc.SetComment(key, comment)
+}
+
+func (d *{{.Name}}Document) InlineComment(key string) string {
+	return d.cstDoc.GetInlineComment(key)
+}
+
+func (d *{{.Name}}Document) SetInlineComment(key, comment string) {
+	d.cstDoc.SetInlineComment(key, comment)
+}
+
 func Decode{{.Name}}Into(data *{{.Name}}, doc *document.Document, container *cst.Node, consumed map[string]bool, keyPrefix string) error {
 {{emitDecodeInto .}}
 	return nil

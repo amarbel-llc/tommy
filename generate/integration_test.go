@@ -4449,3 +4449,108 @@ func TestAppRoundTrip(t *testing.T) {
 		t.Fatalf("go test failed:\n%s", testOut)
 	}
 }
+
+func TestIntegrationCommentAPI(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/commentapi",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package commentapi
+
+//go:generate tommy generate
+type Config struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "comment_test.go", `package commentapi
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestCommentGetSet(t *testing.T) {
+	input := []byte("# Server name\nname = \"myapp\"\nport = 8080 # default port\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Read above-key comment
+	if got := doc.Comment("name"); got != "# Server name" {
+		t.Fatalf("Comment(name) = %q, want %q", got, "# Server name")
+	}
+
+	// Read inline comment
+	if got := doc.InlineComment("port"); got != "# default port" {
+		t.Fatalf("InlineComment(port) = %q, want %q", got, "# default port")
+	}
+
+	// Set a new above-key comment
+	doc.SetComment("port", "# HTTP port")
+
+	// Set a new inline comment
+	doc.SetInlineComment("name", "# app identifier")
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := string(out)
+
+	if !strings.Contains(result, "# HTTP port") {
+		t.Fatalf("SetComment not reflected in output:\n%s", result)
+	}
+	if !strings.Contains(result, "# app identifier") {
+		t.Fatalf("SetInlineComment not reflected in output:\n%s", result)
+	}
+
+	// Round-trip: decode the output and verify comments persist
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc2.Comment("port"); got != "# HTTP port" {
+		t.Fatalf("after round-trip Comment(port) = %q, want %q", got, "# HTTP port")
+	}
+	if got := doc2.InlineComment("name"); got != "# app identifier" {
+		t.Fatalf("after round-trip InlineComment(name) = %q, want %q", got, "# app identifier")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+	t.Log(string(out))
+}

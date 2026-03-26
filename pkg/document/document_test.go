@@ -940,3 +940,128 @@ func TestFindNestedArrayTableNodes(t *testing.T) {
 		t.Fatalf("expected log, got %q", name)
 	}
 }
+
+// Comment API tests
+
+func TestGetComment(t *testing.T) {
+	input := []byte("# server port\nport = 8080\nhost = \"localhost\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comment := doc.GetComment("port")
+	if comment != "# server port" {
+		t.Fatalf("GetComment(port) = %q, want %q", comment, "# server port")
+	}
+
+	// Key without comment returns empty string
+	comment = doc.GetComment("host")
+	if comment != "" {
+		t.Fatalf("GetComment(host) = %q, want empty", comment)
+	}
+}
+
+func TestGetCommentMultiLine(t *testing.T) {
+	input := []byte("# line one\n# line two\nport = 8080\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comment := doc.GetComment("port")
+	if comment != "# line one\n# line two" {
+		t.Fatalf("GetComment(port) = %q, want %q", comment, "# line one\n# line two")
+	}
+}
+
+func TestSetComment(t *testing.T) {
+	input := []byte("port = 8080\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.SetComment("port", "# production port")
+	out := string(doc.Bytes())
+	expected := "# production port\nport = 8080\n"
+	if out != expected {
+		t.Fatalf("after SetComment:\ngot:  %q\nwant: %q", out, expected)
+	}
+}
+
+func TestSetCommentReplacesExisting(t *testing.T) {
+	input := []byte("# old comment\nport = 8080\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.SetComment("port", "# new comment")
+	out := string(doc.Bytes())
+	expected := "# new comment\nport = 8080\n"
+	if out != expected {
+		t.Fatalf("after SetComment:\ngot:  %q\nwant: %q", out, expected)
+	}
+}
+
+func TestGetInlineComment(t *testing.T) {
+	input := []byte("port = 8080 # default port\nhost = \"localhost\"\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comment := doc.GetInlineComment("port")
+	if comment != "# default port" {
+		t.Fatalf("GetInlineComment(port) = %q, want %q", comment, "# default port")
+	}
+
+	comment = doc.GetInlineComment("host")
+	if comment != "" {
+		t.Fatalf("GetInlineComment(host) = %q, want empty", comment)
+	}
+}
+
+func TestSetInlineComment(t *testing.T) {
+	input := []byte("port = 8080\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.SetInlineComment("port", "# default port")
+	out := string(doc.Bytes())
+	expected := "port = 8080 # default port\n"
+	if out != expected {
+		t.Fatalf("after SetInlineComment:\ngot:  %q\nwant: %q", out, expected)
+	}
+}
+
+func TestSetInlineCommentReplacesExisting(t *testing.T) {
+	input := []byte("port = 8080 # old\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc.SetInlineComment("port", "# new")
+	out := string(doc.Bytes())
+	expected := "port = 8080 # new\n"
+	if out != expected {
+		t.Fatalf("after SetInlineComment:\ngot:  %q\nwant: %q", out, expected)
+	}
+}
+
+func TestCommentInTable(t *testing.T) {
+	input := []byte("[server]\n# listen port\nport = 8080\n")
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comment := doc.GetComment("server.port")
+	if comment != "# listen port" {
+		t.Fatalf("GetComment(server.port) = %q, want %q", comment, "# listen port")
+	}
+}
