@@ -704,13 +704,33 @@ func appendKeyValue(container *cst.Node, key string, encoded []byte, kind cst.No
 		},
 	}
 
-	insertIdx := bodyTrailingTriviaStart(container)
+	insertIdx := keyValueInsertIndex(container)
 
 	newChildren := make([]*cst.Node, 0, len(container.Children)+1)
 	newChildren = append(newChildren, container.Children[:insertIdx]...)
 	newChildren = append(newChildren, kv)
 	newChildren = append(newChildren, container.Children[insertIdx:]...)
 	container.Children = newChildren
+}
+
+// keyValueInsertIndex returns the index at which a new key-value node should be
+// inserted into a container. In TOML, all bare key-value pairs in a table must
+// appear before any sub-table headers ([sub] or [[sub]]). When the container
+// has table or array-table children, we insert before the first one (and its
+// preceding blank-line separator). Otherwise we fall back to
+// bodyTrailingTriviaStart.
+func keyValueInsertIndex(container *cst.Node) int {
+	for i, child := range container.Children {
+		if child.Kind == cst.NodeTable || child.Kind == cst.NodeArrayTable {
+			// Skip preceding blank-line separators so the new key-value
+			// doesn't get an extra blank line after it.
+			for i > 0 && container.Children[i-1].Kind == cst.NodeNewline {
+				i--
+			}
+			return i
+		}
+	}
+	return bodyTrailingTriviaStart(container)
 }
 
 // bodyTrailingTriviaStart returns the index where trailing trivia begins in a

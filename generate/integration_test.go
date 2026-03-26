@@ -6295,3 +6295,486 @@ func TestOmitemptyTextMarshalerNonZeroValue(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+func TestIntegrationEncodeFromNilPointerStruct(t *testing.T) {
+	// Issue #49: pointer-to-struct fields silently dropped when encoding from
+	// scratch (nil input). Verifies that DecodeX(nil) followed by populating
+	// *SubStruct and Encode() round-trips correctly.
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/issue49",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "v2.go", `package issue49
+
+//go:generate tommy generate
+type V2 struct {
+	Abbreviations    *abbreviationsV2 `+"`"+`toml:"abbreviations"`+"`"+`
+	PrintBlobDigests *bool            `+"`"+`toml:"print-blob_digests"`+"`"+`
+}
+
+type abbreviationsV2 struct {
+	ZettelIds *bool `+"`"+`toml:"zettel_ids"`+"`"+`
+	MarklIds  *bool `+"`"+`toml:"merkle_ids"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "v2.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "issue49_test.go", `package issue49
+
+import (
+	"testing"
+)
+
+func TestEncodeFromScratchPointerToStruct(t *testing.T) {
+	// Issue #49: Decode(nil) creates an empty document. Populating a
+	// pointer-to-struct field and encoding should produce the sub-table,
+	// not silently drop it.
+	doc, err := DecodeV2(nil)
+	if err != nil {
+		t.Fatalf("DecodeV2(nil): %v", err)
+	}
+
+	zettelIds := true
+	marklIds := true
+	printDigests := false
+	doc.Data().Abbreviations = &abbreviationsV2{
+		ZettelIds: &zettelIds,
+		MarklIds:  &marklIds,
+	}
+	doc.Data().PrintBlobDigests = &printDigests
+
+	encoded, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	// Round-trip verification
+	doc2, err := DecodeV2(encoded)
+	if err != nil {
+		t.Fatalf("re-decode failed: %v", err)
+	}
+
+	d := doc2.Data()
+	if d.Abbreviations == nil {
+		t.Fatal("Abbreviations lost during encode from scratch")
+	}
+	if d.Abbreviations.ZettelIds == nil || !*d.Abbreviations.ZettelIds {
+		t.Fatal("ZettelIds lost or wrong")
+	}
+	if d.Abbreviations.MarklIds == nil || !*d.Abbreviations.MarklIds {
+		t.Fatal("MarklIds lost or wrong")
+	}
+	if d.PrintBlobDigests == nil {
+		t.Fatal("PrintBlobDigests pointer lost during encode from scratch")
+	}
+	if *d.PrintBlobDigests != false {
+		t.Fatalf("PrintBlobDigests wrong: got %v, want false", *d.PrintBlobDigests)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromScratchPrimitiveAfterStruct(t *testing.T) {
+	// Root-level primitive fields placed after a non-pointer struct field
+	// should not end up inside the struct's table section.
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/primafterstruct",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package primafterstruct
+
+//go:generate tommy generate
+type Config struct {
+	Defaults Defaults `+"`"+`toml:"defaults"`+"`"+`
+	Name     string   `+"`"+`toml:"name"`+"`"+`
+	Version  int      `+"`"+`toml:"version"`+"`"+`
+}
+
+type Defaults struct {
+	Type    string `+"`"+`toml:"type"`+"`"+`
+	Enabled bool   `+"`"+`toml:"enabled"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package primafterstruct
+
+import (
+	"testing"
+)
+
+func TestEncodeFromScratchPrimitiveAfterStruct(t *testing.T) {
+	doc, err := DecodeConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := doc.Data()
+	d.Defaults = Defaults{Type: "txt", Enabled: true}
+	d.Name = "myapp"
+	d.Version = 3
+
+	encoded, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(encoded)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+
+	d2 := doc2.Data()
+	if d2.Name != "myapp" {
+		t.Fatalf("Name = %q, want \"myapp\" (may have landed inside [defaults] table)", d2.Name)
+	}
+	if d2.Version != 3 {
+		t.Fatalf("Version = %d, want 3 (may have landed inside [defaults] table)", d2.Version)
+	}
+	if d2.Defaults.Type != "txt" {
+		t.Fatalf("Defaults.Type = %q, want \"txt\"", d2.Defaults.Type)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromScratchPrimitiveAfterSliceStruct(t *testing.T) {
+	// Root-level primitive after an array-of-tables (slice of structs).
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/primafterslice",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package primafterslice
+
+//go:generate tommy generate
+type Config struct {
+	Servers []Server `+"`"+`toml:"servers"`+"`"+`
+	Owner   string   `+"`"+`toml:"owner"`+"`"+`
+}
+
+type Server struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package primafterslice
+
+import (
+	"testing"
+)
+
+func TestEncodeFromScratchPrimitiveAfterSliceStruct(t *testing.T) {
+	doc, err := DecodeConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := doc.Data()
+	d.Servers = []Server{{Name: "alpha", Port: 8080}}
+	d.Owner = "admin"
+
+	encoded, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(encoded)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+
+	if doc2.Data().Owner != "admin" {
+		t.Fatalf("Owner = %q, want \"admin\" (may have landed inside [[servers]])", doc2.Data().Owner)
+	}
+	if len(doc2.Data().Servers) != 1 || doc2.Data().Servers[0].Name != "alpha" {
+		t.Fatalf("Servers lost or corrupted: %+v", doc2.Data().Servers)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromScratchMultipleStructsThenPrimitive(t *testing.T) {
+	// Two struct fields followed by a primitive — primitive must not land
+	// inside the second struct's table.
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/multistructprim",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package multistructprim
+
+//go:generate tommy generate
+type Config struct {
+	Database Database `+"`"+`toml:"database"`+"`"+`
+	Logging  *Logging `+"`"+`toml:"logging"`+"`"+`
+	Debug    bool     `+"`"+`toml:"debug"`+"`"+`
+}
+
+type Database struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+
+type Logging struct {
+	Level  string `+"`"+`toml:"level"`+"`"+`
+	Format string `+"`"+`toml:"format"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package multistructprim
+
+import (
+	"testing"
+)
+
+func TestEncodeFromScratchMultipleStructsThenPrimitive(t *testing.T) {
+	doc, err := DecodeConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := doc.Data()
+	d.Database = Database{Host: "localhost", Port: 5432}
+	d.Logging = &Logging{Level: "debug", Format: "json"}
+	d.Debug = true
+
+	encoded, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(encoded)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+
+	d2 := doc2.Data()
+	if !d2.Debug {
+		t.Fatal("Debug lost (may have landed inside [logging] table)")
+	}
+	if d2.Database.Host != "localhost" {
+		t.Fatalf("Database.Host = %q, want \"localhost\"", d2.Database.Host)
+	}
+	if d2.Logging == nil || d2.Logging.Level != "debug" {
+		t.Fatal("Logging lost or corrupted")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+func TestIntegrationEncodeFromScratchNestedSubTableOrdering(t *testing.T) {
+	// Nested struct inside a struct: inner key-values must not leak into a
+	// sub-sub-table section.
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/nestedorder",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package nestedorder
+
+//go:generate tommy generate
+type Config struct {
+	Server Server `+"`"+`toml:"server"`+"`"+`
+}
+
+type Server struct {
+	TLS  TLS    `+"`"+`toml:"tls"`+"`"+`
+	Name string `+"`"+`toml:"name"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+
+type TLS struct {
+	Cert string `+"`"+`toml:"cert"`+"`"+`
+	Key  string `+"`"+`toml:"key"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package nestedorder
+
+import (
+	"testing"
+)
+
+func TestEncodeFromScratchNestedSubTableOrdering(t *testing.T) {
+	doc, err := DecodeConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := doc.Data()
+	d.Server = Server{
+		TLS:  TLS{Cert: "/path/cert.pem", Key: "/path/key.pem"},
+		Name: "prod",
+		Port: 443,
+	}
+
+	encoded, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc2, err := DecodeConfig(encoded)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+
+	d2 := doc2.Data()
+	if d2.Server.Name != "prod" {
+		t.Fatalf("Server.Name = %q, want \"prod\" (may have landed inside [server.tls])", d2.Server.Name)
+	}
+	if d2.Server.Port != 443 {
+		t.Fatalf("Server.Port = %d, want 443 (may have landed inside [server.tls])", d2.Server.Port)
+	}
+	if d2.Server.TLS.Cert != "/path/cert.pem" {
+		t.Fatalf("Server.TLS.Cert = %q, want \"/path/cert.pem\"", d2.Server.TLS.Cert)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
