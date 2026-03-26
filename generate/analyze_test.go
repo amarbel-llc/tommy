@@ -811,6 +811,219 @@ type Wrapper struct {
 	}
 }
 
+// Regression test for #44: []TypeAlias where alias target is an unexported struct
+// (not a TextMarshaler) should be resolved transitively through the types path.
+// The alias should resolve to the underlying struct for classification, but use
+// the exported alias name in the generated code.
+func TestAnalyzeCrossPackageSliceTypeAliasStructInRecursion(t *testing.T) {
+	dir := t.TempDir()
+
+	// Package ids: type alias from exported name to unexported struct
+	idsDir := filepath.Join(dir, "ids")
+	writeFixture(t, idsDir, "go.mod", "module example.com/ids\n\ngo 1.26\n")
+	writeFixture(t, idsDir, "ids.go", `package ids
+
+type tagStruct struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+
+// TagStruct is an exported alias for the unexported tagStruct.
+type TagStruct = tagStruct
+`)
+
+	// Consumer: wraps struct that contains []ids.TagStruct, resolved transitively
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ids v0.0.0\n\nreplace example.com/ids => ../ids\n")
+	writeFixture(t, consumerDir, "wrapper.go", `package consumer
+
+import "example.com/ids"
+
+// Inner is NOT annotated with //go:generate — resolved transitively
+type Inner struct {
+	Tags []ids.TagStruct `+"`"+`toml:"tags"`+"`"+`
+}
+
+//go:generate tommy generate
+type Outer struct {
+	Data Inner `+"`"+`toml:"data"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "wrapper.go")
+	if err != nil {
+		t.Fatalf("expected no error for transitive []TypeAlias (struct, not TextMarshaler), got: %s", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+
+	// Outer has one field "Data" which should be FieldStruct with InnerInfo
+	dataField := infos[0].Fields[0]
+	if dataField.GoName != "Data" {
+		t.Fatalf("expected first field Data, got %s", dataField.GoName)
+	}
+	if dataField.InnerInfo == nil {
+		t.Fatal("expected InnerInfo to be set for Data field")
+	}
+
+	// Find the Tags field in Inner's InnerInfo
+	var tagsField *FieldInfo
+	for _, f := range dataField.InnerInfo.Fields {
+		if f.GoName == "Tags" {
+			tagsField = &f
+			break
+		}
+	}
+	if tagsField == nil {
+		t.Fatal("expected Tags field in Inner inner info")
+	}
+	// Alias to unexported struct: must inline (can't delegate to unexported DecodeInto)
+	if tagsField.Kind != FieldSliceStruct {
+		t.Fatalf("Tags field kind = %d, want FieldSliceStruct (%d)", tagsField.Kind, FieldSliceStruct)
+	}
+	// TypeName must use the exported alias name, not the unexported underlying name
+	if strings.Contains(tagsField.TypeName, "tagStruct") {
+		t.Fatalf("Tags TypeName = %q references unexported type; should use exported alias", tagsField.TypeName)
+	}
+}
+
+// Regression test for #43/#44: classifyField AST path for []pkg.StructType
+// should support cross-package struct delegation, not only TextMarshaler.
+func TestAnalyzeCrossPackageSliceStructDirect(t *testing.T) {
+	dir := t.TempDir()
+
+	// External package with an exported struct
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "go.mod", "module example.com/ext\n\ngo 1.26\n")
+	writeFixture(t, extDir, "ext.go", `package ext
+
+type Item struct {
+	Name  string `+"`"+`toml:"name"`+"`"+`
+	Value int    `+"`"+`toml:"value"`+"`"+`
+}
+`)
+
+	// Consumer: directly has []ext.Item
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ext v0.0.0\n\nreplace example.com/ext => ../ext\n")
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/ext"
+
+//go:generate tommy generate
+type Config struct {
+	Items []ext.Item `+"`"+`toml:"items"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "config.go")
+	if err != nil {
+		t.Fatalf("expected no error for []pkg.StructType, got: %s", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+
+	itemsField := infos[0].Fields[0]
+	if itemsField.GoName != "Items" {
+		t.Fatalf("expected first field Items, got %s", itemsField.GoName)
+	}
+	if itemsField.Kind != FieldSliceDelegatedStruct {
+		t.Fatalf("Items field kind = %d, want FieldSliceDelegatedStruct (%d)", itemsField.Kind, FieldSliceDelegatedStruct)
+	}
+}
+
+// Regression test for #43/#44: []*pkg.AliasType where alias resolves to
+// unexported struct fails with "is not a named type" because the AST path
+// asserts *types.Named without handling *types.Alias.
+func TestAnalyzeCrossPackagePointerSliceAlias(t *testing.T) {
+	dir := t.TempDir()
+
+	idsDir := filepath.Join(dir, "ids")
+	writeFixture(t, idsDir, "go.mod", "module example.com/ids\n\ngo 1.26\n")
+	writeFixture(t, idsDir, "ids.go", `package ids
+
+type tagStruct struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+
+type TagStruct = tagStruct
+`)
+
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ids v0.0.0\n\nreplace example.com/ids => ../ids\n")
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/ids"
+
+//go:generate tommy generate
+type Config struct {
+	Tags []*ids.TagStruct `+"`"+`toml:"tags"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "config.go")
+	if err != nil {
+		t.Fatalf("expected no error for []*pkg.AliasType, got: %s", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	// Alias to unexported struct: must inline (can't delegate to unexported DecodeInto)
+	if f.Kind != FieldSliceStruct {
+		t.Fatalf("Tags kind = %d, want FieldSliceStruct (%d)", f.Kind, FieldSliceStruct)
+	}
+	if strings.Contains(f.TypeName, "tagStruct") {
+		t.Fatalf("Tags TypeName = %q references unexported type", f.TypeName)
+	}
+}
+
+// Regression test for #43/#44: map[string]pkg.AliasType where alias resolves to
+// unexported struct fails with "is not a named type" because the AST path
+// asserts *types.Named without handling *types.Alias.
+func TestAnalyzeCrossPackageMapValueAlias(t *testing.T) {
+	dir := t.TempDir()
+
+	extDir := filepath.Join(dir, "ext")
+	writeFixture(t, extDir, "go.mod", "module example.com/ext\n\ngo 1.26\n")
+	writeFixture(t, extDir, "ext.go", `package ext
+
+type settings struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+
+type Settings = settings
+`)
+
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/ext v0.0.0\n\nreplace example.com/ext => ../ext\n")
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/ext"
+
+//go:generate tommy generate
+type Config struct {
+	Profiles map[string]ext.Settings `+"`"+`toml:"profiles"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(consumerDir, "config.go")
+	if err != nil {
+		t.Fatalf("expected no error for map[string]pkg.AliasType, got: %s", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldMapStringStruct {
+		t.Fatalf("Profiles kind = %d, want FieldMapStringStruct (%d)", f.Kind, FieldMapStringStruct)
+	}
+	if strings.Contains(f.TypeName, "settings") && !strings.Contains(f.TypeName, "Settings") {
+		t.Fatalf("Profiles TypeName = %q references unexported type", f.TypeName)
+	}
+}
+
 // Regression test for #37: map[string]InterfaceType should produce a clear
 // error at generation time, not invalid code.
 func TestAnalyzeMapStringInterfaceErrors(t *testing.T) {

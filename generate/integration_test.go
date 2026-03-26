@@ -5204,3 +5204,264 @@ func TestDeeplyNestedStructFromEmptyDocument(t *testing.T) {
 		t.Fatalf("test failed:\n%s", output)
 	}
 }
+
+// Issue #43: cross-package slice-of-structs where the external struct has a
+// pointer-to-unexported nested struct.  FieldSliceStruct inlines inner field
+// decode/encode, so the generated consumer code must NOT reference unexported
+// types from the external package.
+func TestIntegrationSliceOfCrossPackageStructWithUnexportedNested(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// External package with an exported struct containing *unexported
+	extDir := filepath.Join(dir, "options_print")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/options_print",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, extDir, "options.go", `package options_print
+
+//go:generate tommy generate
+type abbreviationsV1 struct {
+	ZettelIds *bool `+"`"+`toml:"zettel-ids"`+"`"+`
+	ShaIds    *bool `+"`"+`toml:"shas"`+"`"+`
+}
+
+//go:generate tommy generate
+type V1 struct {
+	Abbreviations *abbreviationsV1 `+"`"+`toml:"abbreviations"`+"`"+`
+	PrintColors   *bool            `+"`"+`toml:"print-colors"`+"`"+`
+}
+`)
+
+	if err := Generate(extDir, "options.go"); err != nil {
+		t.Fatalf("Generate options_print: %v", err)
+	}
+
+	// Consumer package using []options_print.V1 (slice triggers inlined inner field code)
+	consumerDir := filepath.Join(dir, "repo_configs")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/repo_configs",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/options_print v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/options_print => ../options_print",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "config.go", `package repo_configs
+
+import "example.com/test/options_print"
+
+//go:generate tommy generate
+type V0 struct {
+	Outputs []options_print.V1 `+"`"+`toml:"outputs"`+"`"+`
+}
+`)
+
+	// Generation may succeed but produce code referencing unexported types
+	if err := Generate(consumerDir, "config.go"); err != nil {
+		t.Fatalf("Generate repo_configs: %v", err)
+	}
+
+	// Verify the generated file does NOT reference the unexported type
+	genPath := filepath.Join(consumerDir, "config_tommy.go")
+	genBytes, err := os.ReadFile(genPath)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	genCode := string(genBytes)
+	if strings.Contains(genCode, "abbreviationsV1") {
+		t.Fatalf("generated consumer code references unexported type abbreviationsV1:\n%s", genCode)
+	}
+
+	// The generated code should compile and the round-trip should work
+	writeFixture(t, consumerDir, "consumer_test.go", `package repo_configs
+
+import "testing"
+
+func TestSliceCrossPackageUnexportedRoundTrip(t *testing.T) {
+	input := []byte("[[outputs]]\nprint-colors = true\n\n[outputs.abbreviations]\nzettel-ids = true\nshas = false\n\n[[outputs]]\nprint-colors = false\n")
+
+	doc, err := DecodeV0(input)
+	if err != nil {
+		t.Fatalf("DecodeV0: %v", err)
+	}
+
+	cfg := doc.Data()
+	if len(cfg.Outputs) != 2 {
+		t.Fatalf("len(Outputs) = %d, want 2", len(cfg.Outputs))
+	}
+	if cfg.Outputs[0].Abbreviations == nil {
+		t.Fatal("Outputs[0].Abbreviations should not be nil")
+	}
+	if cfg.Outputs[0].Abbreviations.ZettelIds == nil || !*cfg.Outputs[0].Abbreviations.ZettelIds {
+		t.Fatal("ZettelIds should be true")
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeV0(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if len(d2.Outputs) != 2 {
+		t.Fatalf("re-decoded len(Outputs) = %d, want 2", len(d2.Outputs))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
+// Issue #44: codegen fails on slice fields whose element type is a type alias
+// to an unexported struct from another package.
+// Variant A: the struct with the slice is generated directly (AST path).
+func TestIntegrationSliceOfAliasedUnexportedStructDirect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Package with type alias to unexported struct
+	idsDir := filepath.Join(dir, "ids")
+	writeFixture(t, idsDir, "go.mod", "module example.com/test/ids\n\ngo 1.26\n\n"+
+		"require github.com/amarbel-llc/tommy v0.0.0\n\n"+
+		"replace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, idsDir, "ids.go", `package ids
+
+type tagStruct struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+
+// TagStruct is an exported alias for the unexported tagStruct.
+type TagStruct = tagStruct
+
+//go:generate tommy generate
+type TagWrapper struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+`)
+
+	if err := Generate(idsDir, "ids.go"); err != nil {
+		t.Fatalf("Generate ids: %v", err)
+	}
+
+	// Consumer package that directly has a []ids.TagStruct field
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/ids v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/ids => ../ids",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/test/ids"
+
+//go:generate tommy generate
+type Config struct {
+	Name string          `+"`"+`toml:"name"`+"`"+`
+	Tags []ids.TagStruct `+"`"+`toml:"tags"`+"`"+`
+}
+`)
+
+	// This should not error — the alias should be followed to the underlying struct
+	if err := Generate(consumerDir, "config.go"); err != nil {
+		t.Fatalf("Generate consumer (direct slice of aliased type): %v", err)
+	}
+
+	// The generated code should compile and round-trip
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+func TestSliceAliasRoundTrip(t *testing.T) {
+	input := []byte("name = \"test\"\n\n[[tags]]\nvalue = \"hello\"\n\n[[tags]]\nvalue = \"world\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Name != "test" {
+		t.Fatalf("Name = %q, want \"test\"", cfg.Name)
+	}
+	if len(cfg.Tags) != 2 {
+		t.Fatalf("len(Tags) = %d, want 2", len(cfg.Tags))
+	}
+	if cfg.Tags[0].Value != "hello" {
+		t.Fatalf("Tags[0].Value = %q, want \"hello\"", cfg.Tags[0].Value)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if len(d2.Tags) != 2 || d2.Tags[1].Value != "world" {
+		t.Fatalf("re-decoded Tags mismatch: %+v", d2.Tags)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+

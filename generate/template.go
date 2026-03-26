@@ -27,7 +27,7 @@ var (
 	_ cst.NodeKind
 )
 {{range .Structs}}
-{{- range .Fields}}{{if eq (kindInt .Kind) 4}}
+{{- range .Fields}}{{if isSamePackageSliceStruct .}}
 type {{unexport .TypeName}}Handle struct {
 	node *cst.Node
 }
@@ -36,7 +36,7 @@ type {{.Name}}Document struct {
 	data     {{.Name}}
 	cstDoc   *document.Document
 	consumed map[string]bool
-{{- range .Fields}}{{if eq (kindInt .Kind) 4}}
+{{- range .Fields}}{{if isSamePackageSliceStruct .}}
 	{{unexport .GoName}} []{{unexport .TypeName}}Handle
 {{- end}}{{end}}
 }
@@ -125,17 +125,22 @@ func collectFieldImports(fields []FieldInfo, seen map[string]bool) {
 		}
 		// Don't recurse into delegated fields — their inner imports are
 		// handled by the target package's generated code, not ours.
-		if fi.InnerInfo != nil && fi.Kind != FieldDelegatedStruct && fi.Kind != FieldPointerDelegatedStruct {
+		if fi.InnerInfo != nil && fi.Kind != FieldDelegatedStruct && fi.Kind != FieldPointerDelegatedStruct && fi.Kind != FieldSliceDelegatedStruct {
 			collectFieldImports(fi.InnerInfo.Fields, seen)
 		}
 	}
 }
 
+func isSamePackageSliceStruct(fi FieldInfo) bool {
+	return fi.Kind == FieldSliceStruct && !strings.Contains(fi.TypeName, ".")
+}
+
 func RenderFile(w io.Writer, pkg string, structs []StructInfo) error {
 	tmpl := template.Must(template.New("file").Funcs(template.FuncMap{
-		"unexport":   unexport,
-		"lower":      strings.ToLower,
-		"kindInt":    func(k FieldKind) int { return int(k) },
+		"unexport":               unexport,
+		"lower":                  strings.ToLower,
+		"kindInt":                func(k FieldKind) int { return int(k) },
+		"isSamePackageSliceStruct": isSamePackageSliceStruct,
 		"emitDecode":     func(si StructInfo) string { return emitDecodeBody(si) },
 		"emitEncode":     func(si StructInfo) string { return emitEncodeBody(si) },
 		"emitDecodeInto": func(si StructInfo) string { return emitDecodeIntoBody(si) },

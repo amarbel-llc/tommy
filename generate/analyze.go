@@ -28,6 +28,7 @@ const (
 	FieldMapStringMapStringString           // map[string]NamedMap where NamedMap is map[string]string
 	FieldDelegatedStruct                   // cross-package struct — delegate to its DecodeInto/EncodeFrom
 	FieldPointerDelegatedStruct            // pointer to cross-package struct — delegate
+	FieldSliceDelegatedStruct              // []cross-package struct — delegate per element
 )
 
 // StructInfo describes a struct that needs code generation.
@@ -307,7 +308,32 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 				}
 				return fi, nil
 			}
-			return fi, fmt.Errorf("cross-package slice element type %s must implement TextMarshaler/TextUnmarshaler", qualifiedName)
+			// Cross-package struct: delegate or inline depending on exportedness
+			typ := types.Unalias(obj.Type())
+			named, ok := typ.(*types.Named)
+			if !ok {
+				return fi, fmt.Errorf("cross-package slice element type %s is not a struct or TextMarshaler", qualifiedName)
+			}
+			structType, ok := named.Underlying().(*types.Struct)
+			if !ok {
+				return fi, fmt.Errorf("cross-package slice element type %s is not a struct", qualifiedName)
+			}
+			fi.TypeName = qualifiedName
+			fi.ElemType = qualifiedName
+			fi.ImportPath = named.Obj().Pkg().Path()
+			if named.Obj().Exported() {
+				// Exported type: delegate to its DecodeInto/EncodeFrom
+				fi.Kind = FieldSliceDelegatedStruct
+			} else {
+				// Unexported type accessed via exported alias: inline fields
+				fi.Kind = FieldSliceStruct
+				resolvedInfo, err := resolveStructFromTypes(pkg, named.Obj().Name(), structType)
+				if err != nil {
+					return fi, err
+				}
+				fi.InnerInfo = &resolvedInfo
+			}
+			return fi, nil
 		case *ast.StarExpr:
 			switch inner := elem.X.(type) {
 			case *ast.Ident:
@@ -325,24 +351,28 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 				if obj == nil {
 					return fi, fmt.Errorf("cannot resolve slice element type %s", inner.Sel.Name)
 				}
-				named, ok := obj.Type().(*types.Named)
+				named, ok := types.Unalias(obj.Type()).(*types.Named)
 				if !ok {
 					return fi, fmt.Errorf("slice pointer element type %s is not a named type", inner.Sel.Name)
 				}
-				structType, ok := named.Underlying().(*types.Struct)
-				if !ok {
+				if _, ok := named.Underlying().(*types.Struct); !ok {
 					return fi, fmt.Errorf("slice pointer element type %s is not a struct", inner.Sel.Name)
 				}
 				qualifiedName := inner.X.(*ast.Ident).Name + "." + inner.Sel.Name
-				fi.Kind = FieldSliceStruct
 				fi.TypeName = qualifiedName
 				fi.SlicePointer = true
 				fi.ImportPath = named.Obj().Pkg().Path()
-				resolvedInfo, err := resolveStructFromTypes(pkg, inner.Sel.Name, structType)
-				if err != nil {
-					return fi, err
+				if named.Obj().Exported() {
+					fi.Kind = FieldSliceDelegatedStruct
+				} else {
+					fi.Kind = FieldSliceStruct
+					structType := named.Underlying().(*types.Struct)
+					resolvedInfo, err := resolveStructFromTypes(pkg, named.Obj().Name(), structType)
+					if err != nil {
+						return fi, err
+					}
+					fi.InnerInfo = &resolvedInfo
 				}
-				fi.InnerInfo = &resolvedInfo
 				return fi, nil
 			default:
 				return fi, fmt.Errorf("unsupported pointer slice element type")
@@ -393,7 +423,7 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 			if obj == nil {
 				return fi, fmt.Errorf("cannot resolve map value type %s", val.Sel.Name)
 			}
-			named, ok := obj.Type().(*types.Named)
+			named, ok := types.Unalias(obj.Type()).(*types.Named)
 			if !ok {
 				return fi, fmt.Errorf("map value type %s is not a named type", val.Sel.Name)
 			}
@@ -581,7 +611,7 @@ func resolveCrossPackageEmbedded(pkg *packages.Package, sel *ast.SelectorExpr) (
 		return nil, fmt.Errorf("cannot resolve type %s.%s", sel.X.(*ast.Ident).Name, sel.Sel.Name)
 	}
 
-	named, ok := obj.Type().(*types.Named)
+	named, ok := types.Unalias(obj.Type()).(*types.Named)
 	if !ok {
 		return nil, fmt.Errorf("%s is not a named type", sel.Sel.Name)
 	}
@@ -823,21 +853,19 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 				return fi, nil
 			}
 
-			if structType, ok := named.Underlying().(*types.Struct); ok {
-				fi.Kind = FieldSliceStruct
-				fi.TypeName = qualifiedName
+			if _, ok := named.Underlying().(*types.Struct); ok {
 				if obj.Pkg() == pkg.Types {
+					fi.Kind = FieldSliceStruct
+					fi.TypeName = qualifiedName
 					innerInfo, err := resolveStructByName(pkg, obj.Name())
 					if err != nil {
 						return fi, err
 					}
 					fi.InnerInfo = &innerInfo
 				} else {
-					innerInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
-					if err != nil {
-						return fi, err
-					}
-					fi.InnerInfo = &innerInfo
+					fi.Kind = FieldSliceDelegatedStruct
+					fi.TypeName = qualifiedName
+					fi.ImportPath = obj.Pkg().Path()
 				}
 				return fi, nil
 			}
@@ -850,30 +878,62 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 					qualifiedName = obj.Name()
 				}
 
-				if structType, ok := named.Underlying().(*types.Struct); ok {
-					fi.Kind = FieldSliceStruct
+				if _, ok := named.Underlying().(*types.Struct); ok {
 					fi.TypeName = qualifiedName
 					fi.SlicePointer = true
 					if obj.Pkg() == pkg.Types {
+						fi.Kind = FieldSliceStruct
 						innerInfo, err := resolveStructByName(pkg, obj.Name())
 						if err != nil {
 							return fi, err
 						}
 						fi.InnerInfo = &innerInfo
 					} else {
-						innerInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
-						if err != nil {
-							return fi, err
-						}
-						fi.InnerInfo = &innerInfo
+						fi.Kind = FieldSliceDelegatedStruct
+						fi.ImportPath = obj.Pkg().Path()
 					}
 					return fi, nil
 				}
 			}
 		}
 		// Unwrap type aliases (e.g., type TagStruct = tagStruct)
-		if _, ok := elem.(*types.Alias); ok {
-			return classifyFromType(pkg, goName, tomlKey, types.NewSlice(types.Unalias(elem)))
+		if alias, ok := elem.(*types.Alias); ok {
+			underlying := types.Unalias(alias)
+			named, ok := underlying.(*types.Named)
+			if !ok {
+				return classifyFromType(pkg, goName, tomlKey, types.NewSlice(underlying))
+			}
+			obj := named.Obj()
+			// Use the alias name (exported) rather than the underlying name (possibly unexported)
+			qualifiedName := alias.Obj().Pkg().Name() + "." + alias.Obj().Name()
+			if alias.Obj().Pkg() == pkg.Types {
+				qualifiedName = alias.Obj().Name()
+			}
+			if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
+				fi.Kind = FieldSliceTextMarshaler
+				fi.TypeName = qualifiedName
+				fi.ElemType = qualifiedName
+				if alias.Obj().Pkg() != pkg.Types {
+					fi.ImportPath = alias.Obj().Pkg().Path()
+				}
+				return fi, nil
+			}
+			if structType, ok := named.Underlying().(*types.Struct); ok {
+				fi.TypeName = qualifiedName
+				fi.ImportPath = alias.Obj().Pkg().Path()
+				if obj.Exported() {
+					fi.Kind = FieldSliceDelegatedStruct
+				} else {
+					fi.Kind = FieldSliceStruct
+					resolvedInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
+					if err != nil {
+						return fi, err
+					}
+					fi.InnerInfo = &resolvedInfo
+				}
+				return fi, nil
+			}
+			return classifyFromType(pkg, goName, tomlKey, types.NewSlice(underlying))
 		}
 		return fi, fmt.Errorf("unsupported slice element type")
 

@@ -38,6 +38,8 @@ func emitDecodeIntoBody(si StructInfo) string {
 	for _, fi := range si.Fields {
 		if fi.Kind == FieldSliceStruct {
 			buf.WriteString(emitDecodeIntoSliceStruct(fi, "data", "doc"))
+		} else if fi.Kind == FieldSliceDelegatedStruct {
+			buf.WriteString(emitDecodeIntoSliceDelegatedStruct(fi, "data", "doc"))
 		} else {
 			code := emitDecodeField(fi, "data", "doc", "container", "")
 			code = strings.ReplaceAll(code, "d.consumed", "consumed")
@@ -47,6 +49,34 @@ func emitDecodeIntoBody(si StructInfo) string {
 			buf.WriteString(code)
 		}
 	}
+	return buf.String()
+}
+
+func emitDecodeIntoSliceDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
+	var buf bytes.Buffer
+	target := dataPath + "." + fi.GoName
+	parts := strings.SplitN(fi.TypeName, ".", 2)
+
+	nodesVar := fi.TomlKey + "Nodes"
+	fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
+	if fi.SlicePointer {
+		fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
+	} else {
+		fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
+	}
+	fmt.Fprintf(&buf, "\tconsumed[keyPrefix + %q] = true\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
+	if fi.SlicePointer {
+		fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
+		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s[i], %s, node, consumed, keyPrefix + %q); err != nil {\n",
+			parts[0], parts[1], target, docVar, fi.TomlKey+".")
+	} else {
+		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s[i], %s, node, consumed, keyPrefix + %q); err != nil {\n",
+			parts[0], parts[1], target, docVar, fi.TomlKey+".")
+	}
+	fmt.Fprintf(&buf, "\t\t\treturn fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t}\n")
+	fmt.Fprintf(&buf, "\t}\n")
 	return buf.String()
 }
 
@@ -102,12 +132,34 @@ func emitEncodeFromBody(si StructInfo) string {
 	for _, fi := range si.Fields {
 		if fi.Kind == FieldSliceStruct {
 			buf.WriteString(emitEncodeFromSliceStruct(fi, "data", "doc", "container"))
+		} else if fi.Kind == FieldSliceDelegatedStruct {
+			buf.WriteString(emitEncodeFromSliceDelegatedStruct(fi, "data", "doc"))
 		} else {
 			code := emitEncodeField(fi, "data", "doc", "container")
 			code = strings.ReplaceAll(code, "return nil, ", "return ")
 			buf.WriteString(code)
 		}
 	}
+	return buf.String()
+}
+
+func emitEncodeFromSliceDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
+	var buf bytes.Buffer
+	source := dataPath + "." + fi.GoName
+	parts := strings.SplitN(fi.TypeName, ".", 2)
+
+	fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
+	fmt.Fprintf(&buf, "\t\tcontainer := %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+	if fi.SlicePointer {
+		fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(%s[i], %s, container); err != nil {\n",
+			parts[0], parts[1], source, docVar)
+	} else {
+		fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(&%s[i], %s, container); err != nil {\n",
+			parts[0], parts[1], source, docVar)
+	}
+	fmt.Fprintf(&buf, "\t\t\treturn fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+	fmt.Fprintf(&buf, "\t\t}\n")
+	fmt.Fprintf(&buf, "\t}\n")
 	return buf.String()
 }
 
@@ -233,10 +285,13 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSliceStruct:
-		handleName := toLowerFirst(fi.TypeName) + "Handle"
+		crossPkg := strings.Contains(fi.TypeName, ".")
 		nodesVar := fi.TomlKey + "Nodes"
 		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
-		fmt.Fprintf(&buf, "\td.%s = make([]%s, len(%s))\n", toLowerFirst(fi.GoName), handleName, nodesVar)
+		if !crossPkg {
+			handleName := toLowerFirst(fi.TypeName) + "Handle"
+			fmt.Fprintf(&buf, "\td.%s = make([]%s, len(%s))\n", toLowerFirst(fi.GoName), handleName, nodesVar)
+		}
 		if fi.SlicePointer {
 			fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
 		} else {
@@ -244,7 +299,10 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		}
 		fmt.Fprintf(&buf, "\td.consumed[%q] = true\n", consumedKey)
 		fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
-		fmt.Fprintf(&buf, "\t\td.%s[i] = %s{node: node}\n", toLowerFirst(fi.GoName), handleName)
+		if !crossPkg {
+			handleName := toLowerFirst(fi.TypeName) + "Handle"
+			fmt.Fprintf(&buf, "\t\td.%s[i] = %s{node: node}\n", toLowerFirst(fi.GoName), handleName)
+		}
 		if fi.SlicePointer {
 			fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
 		}
@@ -255,6 +313,29 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				buf.WriteString("\t" + code)
 			}
 		}
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldSliceDelegatedStruct:
+		parts := strings.SplitN(fi.TypeName, ".", 2)
+		nodesVar := fi.TomlKey + "Nodes"
+		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
+		if fi.SlicePointer {
+			fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
+		} else {
+			fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
+		}
+		fmt.Fprintf(&buf, "\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
+		if fi.SlicePointer {
+			fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
+			fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s[i], %s, node, d.consumed, %q); err != nil {\n",
+				parts[0], parts[1], target, docVar, consumedKey+".")
+		} else {
+			fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s[i], %s, node, d.consumed, %q); err != nil {\n",
+				parts[0], parts[1], target, docVar, consumedKey+".")
+		}
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldMapStringStruct:
@@ -504,14 +585,28 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		}
 
 	case FieldSliceStruct:
-		handleSlice := "d." + toLowerFirst(fi.GoName)
-		fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
-		fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
-		fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", handleSlice)
-		fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i].node\n", handleSlice)
-		fmt.Fprintf(&buf, "\t\t} else {\n")
-		fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t}\n")
+		crossPkg := strings.Contains(fi.TypeName, ".")
+		fmt.Fprintf(&buf, "\t{\n")
+		if crossPkg {
+			existingVar := fi.TomlKey + "Existing"
+			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", existingVar, docVar, fi.TomlKey)
+			fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
+			fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
+			fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", existingVar)
+			fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i]\n", existingVar)
+			fmt.Fprintf(&buf, "\t\t} else {\n")
+			fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t}\n")
+		} else {
+			handleSlice := "d." + toLowerFirst(fi.GoName)
+			fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
+			fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
+			fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", handleSlice)
+			fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i].node\n", handleSlice)
+			fmt.Fprintf(&buf, "\t\t} else {\n")
+			fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t}\n")
+		}
 		if fi.InnerInfo != nil {
 			for _, inner := range fi.InnerInfo.Fields {
 				indexedSource := fmt.Sprintf("%s[i]", source)
@@ -519,6 +614,29 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 				buf.WriteString("\t" + code)
 			}
 		}
+		fmt.Fprintf(&buf, "\t}\n")
+		fmt.Fprintf(&buf, "\t}\n")
+
+	case FieldSliceDelegatedStruct:
+		parts := strings.SplitN(fi.TypeName, ".", 2)
+		existingVar := fi.TomlKey + "Existing"
+		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", existingVar, docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
+		fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
+		fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", existingVar)
+		fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i]\n", existingVar)
+		fmt.Fprintf(&buf, "\t\t} else {\n")
+		fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
+		if fi.SlicePointer {
+			fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(%s[i], %s, container); err != nil {\n",
+				parts[0], parts[1], source, docVar)
+		} else {
+			fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(&%s[i], %s, container); err != nil {\n",
+				parts[0], parts[1], source, docVar)
+		}
+		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSlicePrimitive:
