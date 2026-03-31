@@ -947,6 +947,37 @@ func (doc *Document) EnsureSubTable(prefix, key string) *cst.Node {
 	return table
 }
 
+// FindSubTablesInContainer returns all [containerKey.prefix.key] table nodes
+// for a given prefix, scoped to the container's qualified header.
+func (doc *Document) FindSubTablesInContainer(container *cst.Node, prefix string) []*cst.Node {
+	containerKey := tableHeaderKey(container)
+	if containerKey == "" {
+		return doc.FindSubTables(prefix)
+	}
+	return doc.FindSubTables(containerKey + "." + prefix)
+}
+
+// EnsureSubTableInContainer finds or creates a [containerKey.prefix.key] table
+// section, scoped to the container's qualified header.
+func (doc *Document) EnsureSubTableInContainer(container *cst.Node, prefix, key string) *cst.Node {
+	containerKey := tableHeaderKey(container)
+	if containerKey == "" {
+		return doc.EnsureSubTable(prefix, key)
+	}
+	return doc.EnsureSubTable(containerKey+"."+prefix, key)
+}
+
+// SubTableKeyInContainer returns the sub-key portion of a table header scoped
+// to a container. For a table with header "outer.actions.build" inside container
+// "outer", SubTableKeyInContainer("actions") returns "build".
+func SubTableKeyInContainer(table *cst.Node, container *cst.Node, prefix string) string {
+	containerKey := tableHeaderKey(container)
+	if containerKey == "" {
+		return SubTableKey(table, prefix)
+	}
+	return SubTableKey(table, containerKey+"."+prefix)
+}
+
 // EnsureTableInContainer finds or creates a table for the given key within a
 // container. It first checks direct children, then the document root for
 // qualified headers (like FindTableInContainer), creating the table if absent.

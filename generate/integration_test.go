@@ -2106,6 +2106,139 @@ func TestMapStringStructModify(t *testing.T) {
 	}
 }
 
+func TestIntegrationNestedMapStringStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/nestedmap",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package nestedmap
+
+//go:generate tommy generate
+type Config struct {
+	Outer OuterConfig `+"`"+`toml:"outer,omitempty"`+"`"+`
+}
+
+type OuterConfig struct {
+	Name     string                 `+"`"+`toml:"name"`+"`"+`
+	Mappings map[string]EntryConfig `+"`"+`toml:"mappings,omitempty"`+"`"+`
+}
+
+type EntryConfig struct {
+	Value string `+"`"+`toml:"value"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+
+	writeFixture(t, dir, "nestedmap_test.go", `package nestedmap
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestNestedMapDecode(t *testing.T) {
+	input := []byte("[outer]\nname = \"test\"\n\n[outer.mappings.key1]\nvalue = \"hello\"\n\n[outer.mappings.key2]\nvalue = \"world\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Outer.Name != "test" {
+		t.Fatalf("expected name test, got %q", cfg.Outer.Name)
+	}
+	if len(cfg.Outer.Mappings) != 2 {
+		t.Fatalf("expected 2 mappings, got %d", len(cfg.Outer.Mappings))
+	}
+	if cfg.Outer.Mappings["key1"].Value != "hello" {
+		t.Fatalf("expected key1=hello, got %q", cfg.Outer.Mappings["key1"].Value)
+	}
+	if cfg.Outer.Mappings["key2"].Value != "world" {
+		t.Fatalf("expected key2=world, got %q", cfg.Outer.Mappings["key2"].Value)
+	}
+}
+
+func TestNestedMapEncode(t *testing.T) {
+	doc, err := DecodeConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	cfg.Outer.Name = "test"
+	cfg.Outer.Mappings = map[string]EntryConfig{
+		"key1": {Value: "hello"},
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := string(out)
+	if !strings.Contains(output, "[outer.mappings.key1]") {
+		t.Fatalf("expected [outer.mappings.key1] in output, got:\n%s", output)
+	}
+	if strings.Contains(output, "\n[mappings.key1]") {
+		t.Fatalf("mappings should be nested under outer, got:\n%s", output)
+	}
+}
+
+func TestNestedMapRoundTrip(t *testing.T) {
+	input := []byte("[outer]\nname = \"test\"\n\n[outer.mappings.key1]\nvalue = \"hello\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 func TestIntegrationSliceTextMarshaler(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
