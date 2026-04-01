@@ -28,7 +28,7 @@ func emitEncodeBody(si StructInfo) string {
 		fmt.Fprintf(&buf, "\t}\n")
 	}
 	for _, fi := range si.Fields {
-		buf.WriteString(emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()"))
+		buf.WriteString(emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", ""))
 	}
 	return buf.String()
 }
@@ -167,7 +167,7 @@ func emitEncodeFromBody(si StructInfo) string {
 		} else if fi.Kind == FieldMapStringDelegatedStruct {
 			buf.WriteString(emitEncodeFromMapDelegatedStruct(fi, "data", "doc"))
 		} else {
-			code := emitEncodeField(fi, "data", "doc", "container")
+			code := emitEncodeField(fi, "data", "doc", "container", "")
 			code = strings.ReplaceAll(code, "return nil, ", "return ")
 			buf.WriteString(code)
 		}
@@ -221,7 +221,7 @@ func emitEncodeFromSliceStruct(fi FieldInfo, dataPath, docVar, containerExpr str
 	if fi.InnerInfo != nil {
 		for _, inner := range fi.InnerInfo.Fields {
 			indexedSource := fmt.Sprintf("%s[i]", source)
-			code := emitEncodeField(inner, indexedSource, docVar, "container")
+			code := emitEncodeField(inner, indexedSource, docVar, "container", "")
 			code = strings.ReplaceAll(code, "return nil, ", "return ")
 			buf.WriteString("\t" + code)
 		}
@@ -335,9 +335,14 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 
 	case FieldSliceStruct:
 		crossPkg := strings.Contains(fi.TypeName, ".")
+		nested := keyPrefix != ""
 		nodesVar := fi.TomlKey + "Nodes"
-		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
-		if !crossPkg {
+		if nested {
+			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, consumedKey)
+		} else {
+			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
+		}
+		if !crossPkg && !nested {
 			handleName := toLowerFirst(fi.TypeName) + "Handle"
 			fmt.Fprintf(&buf, "\td.%s = make([]%s, len(%s))\n", toLowerFirst(fi.GoName), handleName, nodesVar)
 		}
@@ -348,7 +353,7 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		}
 		fmt.Fprintf(&buf, "\td.consumed[%q] = true\n", consumedKey)
 		fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
-		if !crossPkg {
+		if !crossPkg && !nested {
 			handleName := toLowerFirst(fi.TypeName) + "Handle"
 			fmt.Fprintf(&buf, "\t\td.%s[i] = %s{node: node}\n", toLowerFirst(fi.GoName), handleName)
 		}
@@ -566,7 +571,7 @@ func emitFlatKeyDecodeField(fi FieldInfo, localVar, docVar, containerExpr, keyPr
 	return buf.String()
 }
 
-func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) string {
+func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix string) string {
 	var buf bytes.Buffer
 	source := dataPath + "." + fi.GoName
 
@@ -662,6 +667,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 
 	case FieldStruct:
 		if fi.InnerInfo != nil {
+			innerKeyPrefix := keyPrefix + fi.TomlKey + "."
 			if containerExpr == "d.cstDoc.Root()" {
 				fmt.Fprintf(&buf, "\t{\n")
 				fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
@@ -671,7 +677,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 					docVar, containerExpr, fi.TomlKey)
 			}
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitEncodeField(inner, source, docVar, "tableNode")
+				code := emitEncodeField(inner, source, docVar, "tableNode", innerKeyPrefix)
 				buf.WriteString(code)
 			}
 			fmt.Fprintf(&buf, "\t}\n")
@@ -679,11 +685,12 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 
 	case FieldPointerStruct:
 		if fi.InnerInfo != nil {
+			innerKeyPrefix := keyPrefix + fi.TomlKey + "."
 			fmt.Fprintf(&buf, "\tif %s != nil {\n", source)
 			fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTableInContainer(%s, %q)\n",
 				docVar, containerExpr, fi.TomlKey)
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitEncodeField(inner, source, docVar, "tableNode")
+				code := emitEncodeField(inner, source, docVar, "tableNode", innerKeyPrefix)
 				buf.WriteString("\t" + code)
 			}
 			fmt.Fprintf(&buf, "\t}\n")
@@ -691,16 +698,18 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 
 	case FieldSliceStruct:
 		crossPkg := strings.Contains(fi.TypeName, ".")
+		nested := keyPrefix != ""
+		fullKey := keyPrefix + fi.TomlKey
 		fmt.Fprintf(&buf, "\t{\n")
-		if crossPkg {
+		if crossPkg || nested {
 			existingVar := fi.TomlKey + "Existing"
-			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", existingVar, docVar, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", existingVar, docVar, fullKey)
 			fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
 			fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
 			fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", existingVar)
 			fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i]\n", existingVar)
 			fmt.Fprintf(&buf, "\t\t} else {\n")
-			fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fullKey)
 			fmt.Fprintf(&buf, "\t\t}\n")
 		} else {
 			handleSlice := "d." + toLowerFirst(fi.GoName)
@@ -715,7 +724,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 		if fi.InnerInfo != nil {
 			for _, inner := range fi.InnerInfo.Fields {
 				indexedSource := fmt.Sprintf("%s[i]", source)
-				code := emitEncodeField(inner, indexedSource, docVar, "container")
+				code := emitEncodeField(inner, indexedSource, docVar, "container", "")
 				buf.WriteString("\t" + code)
 			}
 		}
@@ -782,7 +791,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr string) strin
 				fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTableInContainer(%s, %q, mapKey)\n", docVar, containerExpr, fi.TomlKey)
 			}
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitEncodeField(inner, "mapVal", docVar, "subTable")
+				code := emitEncodeField(inner, "mapVal", docVar, "subTable", "")
 				buf.WriteString("\t\t" + code)
 			}
 			fmt.Fprintf(&buf, "\t\t}\n")

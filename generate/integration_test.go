@@ -2477,8 +2477,104 @@ func TestUint64Modify(t *testing.T) {
 	}
 }
 
-func TestIntegrationNestedArrayOfTables(t *testing.T) {
-	t.Skip("codegen for nested array-of-tables not yet implemented — see #6")
+func TestIntegrationNestedArrayOfTablesInStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/nestedaot",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package nestedaot
+
+//go:generate tommy generate
+type Config struct {
+	Outer OuterConfig `+"`"+`toml:"outer,omitempty"`+"`"+`
+}
+
+type OuterConfig struct {
+	Name  string       `+"`"+`toml:"name"`+"`"+`
+	Items []ItemConfig `+"`"+`toml:"items,omitempty"`+"`"+`
+}
+
+type ItemConfig struct {
+	URL  string `+"`"+`toml:"url"`+"`"+`
+	Type string `+"`"+`toml:"type"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
+		t.Fatalf("generated file not found: %v", err)
+	}
+
+	writeFixture(t, dir, "nested_test.go", `package nestedaot
+
+import "testing"
+
+func TestNestedArrayOfTablesInStructRoundTrip(t *testing.T) {
+	input := []byte("[outer]\nname = \"test\"\n\n[[outer.items]]\nurl = \"https://a.com\"\ntype = \"task\"\n\n[[outer.items]]\nurl = \"https://b.com\"\ntype = \"chore\"\n")
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+	if cfg.Outer.Name != "test" {
+		t.Fatalf("expected name test, got %q", cfg.Outer.Name)
+	}
+	if len(cfg.Outer.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(cfg.Outer.Items))
+	}
+	if cfg.Outer.Items[0].URL != "https://a.com" {
+		t.Fatalf("expected url https://a.com, got %q", cfg.Outer.Items[0].URL)
+	}
+	if cfg.Outer.Items[1].Type != "chore" {
+		t.Fatalf("expected type chore, got %q", cfg.Outer.Items[1].Type)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(out) != string(input) {
+		t.Fatalf("expected byte-identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
+	}
+}
+`)
+
+	cmdN := exec.Command("go", "test", "-v", "./...")
+	cmdN.Dir = dir
+	cmdN.Env = append(os.Environ(), "GOFLAGS=")
+	outputN, err := cmdN.CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("test failed:\n%s", outputN)
+	}
+}
+
+func TestIntegrationNestedArrayOfTablesInSlice(t *testing.T) {
+	t.Skip("codegen for doubly-nested array-of-tables not yet implemented — see #6")
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -2527,7 +2623,6 @@ type Plugin struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "nested_test.go", `package nestedaot
 

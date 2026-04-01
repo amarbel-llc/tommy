@@ -157,7 +157,7 @@ func TestEmitEncodeDelegatedStruct(t *testing.T) {
 		TypeName:   "ext.Inner",
 		ImportPath: "example.com/ext",
 	}
-	code := emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()")
+	code := emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", "")
 	if !strings.Contains(code, "ext.EncodeInnerFrom") {
 		t.Fatalf("expected delegation call ext.EncodeInnerFrom, got:\n%s", code)
 	}
