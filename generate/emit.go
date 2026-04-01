@@ -7,10 +7,70 @@ import (
 	"unicode"
 )
 
+// emitContext captures the differences between receiver-context (Decode/Encode
+// methods on *XDocument) and free-function context (DecodeXInto/EncodeXFrom).
+type emitContext struct {
+	consumedExpr    string // "d.consumed" or "consumed"
+	returnErr       string // "return nil, " or "return "
+	isRoot          bool   // true when operating at document root level
+	emitHandles     bool   // emit handle-related code (receiver context only)
+	keyPrefix       string // static key prefix for consumed keys (e.g. "servers.")
+	useKeyPrefixVar bool   // when true, prepend Go variable "keyPrefix" to consumed keys
+	foundVar        string // if set, emit "foundVar = true" alongside consumed tracking
+}
+
+func receiverContext() emitContext {
+	return emitContext{
+		consumedExpr: "d.consumed",
+		returnErr:    "return nil, ",
+		isRoot:       true,
+		emitHandles:  true,
+	}
+}
+
+func freeContext() emitContext {
+	return emitContext{
+		consumedExpr:    "consumed",
+		returnErr:       "return ",
+		isRoot:          false,
+		emitHandles:     false,
+		useKeyPrefixVar: true,
+	}
+}
+
+// consumedKeyExpr returns a Go expression for the consumed map key.
+// In receiver context: `"servers.name"`
+// In free-function context: `keyPrefix + "servers.name"`
+func (ctx emitContext) consumedKeyExpr(key string) string {
+	fullKey := ctx.keyPrefix + key
+	if ctx.useKeyPrefixVar {
+		return fmt.Sprintf(`keyPrefix + %q`, fullKey)
+	}
+	return fmt.Sprintf(`%q`, fullKey)
+}
+
+// nested returns a child context for fields inside a parent struct or array table.
+func (ctx emitContext) nested(prefix string) emitContext {
+	child := ctx
+	child.isRoot = false
+	child.emitHandles = false
+	child.keyPrefix = ctx.keyPrefix + prefix
+	return child
+}
+
+// withFoundVar returns a context that emits "foundVar = true" on successful decode.
+func (ctx emitContext) withFoundVar(varName string) emitContext {
+	child := ctx
+	child.foundVar = varName
+	child.emitHandles = false
+	return child
+}
+
 func emitDecodeBody(si StructInfo) string {
+	ctx := receiverContext()
 	var buf bytes.Buffer
 	for _, fi := range si.Fields {
-		buf.WriteString(emitDecodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", ""))
+		buf.WriteString(emitDecodeField(ctx, fi, "d.data", "d.cstDoc", "d.cstDoc.Root()"))
 	}
 	if si.Validatable {
 		fmt.Fprintf(&buf, "\tif err := d.data.Validate(); err != nil {\n")
@@ -21,6 +81,7 @@ func emitDecodeBody(si StructInfo) string {
 }
 
 func emitEncodeBody(si StructInfo) string {
+	ctx := receiverContext()
 	var buf bytes.Buffer
 	if si.Validatable {
 		fmt.Fprintf(&buf, "\tif err := d.data.Validate(); err != nil {\n")
@@ -28,212 +89,33 @@ func emitEncodeBody(si StructInfo) string {
 		fmt.Fprintf(&buf, "\t}\n")
 	}
 	for _, fi := range si.Fields {
-		buf.WriteString(emitEncodeField(fi, "d.data", "d.cstDoc", "d.cstDoc.Root()", ""))
+		buf.WriteString(emitEncodeField(ctx, fi, "d.data", "d.cstDoc", "d.cstDoc.Root()"))
 	}
 	return buf.String()
 }
 
 func emitDecodeIntoBody(si StructInfo) string {
+	ctx := freeContext()
 	var buf bytes.Buffer
 	for _, fi := range si.Fields {
-		if fi.Kind == FieldSliceStruct {
-			buf.WriteString(emitDecodeIntoSliceStruct(fi, "data", "doc"))
-		} else if fi.Kind == FieldSliceDelegatedStruct {
-			buf.WriteString(emitDecodeIntoSliceDelegatedStruct(fi, "data", "doc"))
-		} else if fi.Kind == FieldMapStringDelegatedStruct {
-			buf.WriteString(emitDecodeIntoMapDelegatedStruct(fi, "data", "doc"))
-		} else {
-			code := emitDecodeField(fi, "data", "doc", "container", "")
-			code = strings.ReplaceAll(code, "d.consumed", "consumed")
-			code = strings.ReplaceAll(code, "return nil, ", "return ")
-			// Replace consumed key literals to prepend keyPrefix variable
-			code = replaceConsumedKeys(code)
-			buf.WriteString(code)
-		}
+		buf.WriteString(emitDecodeField(ctx, fi, "data", "doc", "container"))
 	}
-	return buf.String()
-}
-
-func emitDecodeIntoSliceDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
-	var buf bytes.Buffer
-	target := dataPath + "." + fi.GoName
-	parts := strings.SplitN(fi.TypeName, ".", 2)
-
-	nodesVar := fi.TomlKey + "Nodes"
-	fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
-	if fi.SlicePointer {
-		fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
-	} else {
-		fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
-	}
-	fmt.Fprintf(&buf, "\tconsumed[keyPrefix + %q] = true\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
-	if fi.SlicePointer {
-		fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
-		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s[i], %s, node, consumed, keyPrefix + %q); err != nil {\n",
-			parts[0], parts[1], target, docVar, fi.TomlKey+".")
-	} else {
-		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s[i], %s, node, consumed, keyPrefix + %q); err != nil {\n",
-			parts[0], parts[1], target, docVar, fi.TomlKey+".")
-	}
-	fmt.Fprintf(&buf, "\t\t\treturn fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t}\n")
-	fmt.Fprintf(&buf, "\t}\n")
-	return buf.String()
-}
-
-func emitDecodeIntoMapDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
-	var buf bytes.Buffer
-	target := dataPath + "." + fi.GoName
-	parts := strings.SplitN(fi.ElemType, ".", 2)
-
-	fmt.Fprintf(&buf, "\t{\n")
-	fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTables(%q)\n", docVar, fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
-	fmt.Fprintf(&buf, "\t\t\tconsumed[keyPrefix + %q] = true\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.ElemType)
-	fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
-	fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t\t\tif strings.Contains(mapKey, \".\") {\n")
-	fmt.Fprintf(&buf, "\t\t\t\t\tcontinue\n")
-	fmt.Fprintf(&buf, "\t\t\t\t}\n")
-	fmt.Fprintf(&buf, "\t\t\t\tconsumed[keyPrefix + %q + \".\" + mapKey] = true\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t\t\tvar entry %s\n", fi.ElemType)
-	fmt.Fprintf(&buf, "\t\t\t\tif err := %s.Decode%sInto(&entry, %s, subTable, consumed, keyPrefix + %q + \".\" + mapKey + \".\"); err != nil {\n",
-		parts[0], parts[1], docVar, fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t\t\t\treturn fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t\t\t}\n")
-	fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = entry\n", target)
-	fmt.Fprintf(&buf, "\t\t\t}\n")
-	fmt.Fprintf(&buf, "\t\t}\n")
-	fmt.Fprintf(&buf, "\t}\n")
-	return buf.String()
-}
-
-func replaceConsumedKeys(code string) string {
-	// Replace consumed["key"] = true with consumed[keyPrefix + "key"] = true
-	// and similar patterns like consumed["key.subkey"]
-	result := strings.Builder{}
-	for len(code) > 0 {
-		idx := strings.Index(code, `consumed["`)
-		if idx < 0 {
-			result.WriteString(code)
-			break
-		}
-		result.WriteString(code[:idx])
-		result.WriteString(`consumed[keyPrefix + "`)
-		code = code[idx+len(`consumed["`):]
-	}
-	return result.String()
-}
-
-func emitDecodeIntoSliceStruct(fi FieldInfo, dataPath, docVar string) string {
-	var buf bytes.Buffer
-	target := dataPath + "." + fi.GoName
-
-	nodesVar := fi.TomlKey + "Nodes"
-	fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
-	if fi.SlicePointer {
-		fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
-	} else {
-		fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
-	}
-	fmt.Fprintf(&buf, "\tconsumed[keyPrefix + %q] = true\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
-	if fi.SlicePointer {
-		fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
-	}
-	if fi.InnerInfo != nil {
-		for _, inner := range fi.InnerInfo.Fields {
-			indexedTarget := fmt.Sprintf("%s[i]", target)
-			code := emitDecodeField(inner, indexedTarget, docVar, "node", fi.TomlKey+".")
-			code = strings.ReplaceAll(code, "d.consumed", "consumed")
-			code = strings.ReplaceAll(code, "return nil, ", "return ")
-			code = replaceConsumedKeys(code)
-			buf.WriteString("\t" + code)
-		}
-	}
-	fmt.Fprintf(&buf, "\t}\n")
 	return buf.String()
 }
 
 func emitEncodeFromBody(si StructInfo) string {
+	ctx := freeContext()
 	var buf bytes.Buffer
 	for _, fi := range si.Fields {
-		if fi.Kind == FieldSliceStruct {
-			buf.WriteString(emitEncodeFromSliceStruct(fi, "data", "doc", "container"))
-		} else if fi.Kind == FieldSliceDelegatedStruct {
-			buf.WriteString(emitEncodeFromSliceDelegatedStruct(fi, "data", "doc"))
-		} else if fi.Kind == FieldMapStringDelegatedStruct {
-			buf.WriteString(emitEncodeFromMapDelegatedStruct(fi, "data", "doc"))
-		} else {
-			code := emitEncodeField(fi, "data", "doc", "container", "")
-			code = strings.ReplaceAll(code, "return nil, ", "return ")
-			buf.WriteString(code)
-		}
+		buf.WriteString(emitEncodeField(ctx, fi, "data", "doc", "container"))
 	}
 	return buf.String()
 }
 
-func emitEncodeFromSliceDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
-	var buf bytes.Buffer
-	source := dataPath + "." + fi.GoName
-	parts := strings.SplitN(fi.TypeName, ".", 2)
-
-	fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
-	fmt.Fprintf(&buf, "\t\tcontainer := %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
-	if fi.SlicePointer {
-		fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(%s[i], %s, container); err != nil {\n",
-			parts[0], parts[1], source, docVar)
-	} else {
-		fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(&%s[i], %s, container); err != nil {\n",
-			parts[0], parts[1], source, docVar)
-	}
-	fmt.Fprintf(&buf, "\t\t\treturn fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t}\n")
-	fmt.Fprintf(&buf, "\t}\n")
-	return buf.String()
-}
-
-func emitEncodeFromMapDelegatedStruct(fi FieldInfo, dataPath, docVar string) string {
-	var buf bytes.Buffer
-	source := dataPath + "." + fi.GoName
-	parts := strings.SplitN(fi.ElemType, ".", 2)
-
-	fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
-	fmt.Fprintf(&buf, "\t\tfor mapKey, mapVal := range %s {\n", source)
-	fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTable(%q, mapKey)\n", docVar, fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t\tif err := %s.Encode%sFrom(&mapVal, %s, subTable); err != nil {\n",
-		parts[0], parts[1], docVar)
-	fmt.Fprintf(&buf, "\t\t\t\treturn fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
-	fmt.Fprintf(&buf, "\t\t\t}\n")
-	fmt.Fprintf(&buf, "\t\t}\n")
-	fmt.Fprintf(&buf, "\t}\n")
-	return buf.String()
-}
-
-func emitEncodeFromSliceStruct(fi FieldInfo, dataPath, docVar, containerExpr string) string {
-	var buf bytes.Buffer
-	source := dataPath + "." + fi.GoName
-
-	fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
-	fmt.Fprintf(&buf, "\t\tcontainer := %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
-	if fi.InnerInfo != nil {
-		for _, inner := range fi.InnerInfo.Fields {
-			indexedSource := fmt.Sprintf("%s[i]", source)
-			code := emitEncodeField(inner, indexedSource, docVar, "container", "")
-			code = strings.ReplaceAll(code, "return nil, ", "return ")
-			buf.WriteString("\t" + code)
-		}
-	}
-	fmt.Fprintf(&buf, "\t}\n")
-	return buf.String()
-}
-
-func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix string) string {
+func emitDecodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerExpr string) string {
 	var buf bytes.Buffer
 	target := dataPath + "." + fi.GoName
-	consumedKey := keyPrefix + fi.TomlKey
+	consumedKey := ctx.keyPrefix + fi.TomlKey
 
 	switch fi.Kind {
 	case FieldPrimitive:
@@ -244,46 +126,58 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		} else {
 			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
 		}
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		if ctx.foundVar != "" {
+			fmt.Fprintf(&buf, "\t\t%s = true\n", ctx.foundVar)
+		}
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldPointerPrimitive:
 		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
 			fi.TypeName, docVar, containerExpr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t%s = &v\n", target)
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		if ctx.foundVar != "" {
+			fmt.Fprintf(&buf, "\t\t%s = true\n", ctx.foundVar)
+		}
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldCustom:
 		fmt.Fprintf(&buf, "\tif raw, err := document.GetRawFromContainer(%s, %s, %q); err == nil {\n",
 			docVar, containerExpr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\tif err := %s.UnmarshalTOML(raw); err != nil {\n", target)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		if ctx.foundVar != "" {
+			fmt.Fprintf(&buf, "\t\t%s = true\n", ctx.foundVar)
+		}
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldTextMarshaler:
 		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[string](%s, %s, %q); err == nil {\n",
 			docVar, containerExpr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\tif err := %s.UnmarshalText([]byte(v)); err != nil {\n", target)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		if ctx.foundVar != "" {
+			fmt.Fprintf(&buf, "\t\t%s = true\n", ctx.foundVar)
+		}
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldStruct:
 		if fi.InnerInfo != nil {
-			innerPrefix := consumedKey + "."
-			if containerExpr == "d.cstDoc.Root()" {
+			innerCtx := ctx.nested(fi.TomlKey + ".")
+			if ctx.isRoot {
 				fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
 			} else {
 				fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
 					docVar, containerExpr, fi.TomlKey)
 			}
-			fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+			fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitDecodeField(inner, target, docVar, "tableNode", innerPrefix)
+				code := emitDecodeField(innerCtx, inner, target, docVar, "tableNode")
 				buf.WriteString(code)
 			}
 			fmt.Fprintf(&buf, "\t}\n")
@@ -291,22 +185,23 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 
 	case FieldPointerStruct:
 		if fi.InnerInfo != nil {
-			innerPrefix := consumedKey + "."
+			innerCtx := ctx.nested(fi.TomlKey + ".")
 			localVar := toLowerFirst(fi.GoName) + "Val"
 			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
 				docVar, containerExpr, fi.TomlKey)
-			fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+			fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 			fmt.Fprintf(&buf, "\t\t%s := &%s{}\n", localVar, fi.TypeName)
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitDecodeField(inner, localVar, docVar, "tableNode", innerPrefix)
+				code := emitDecodeField(innerCtx, inner, localVar, docVar, "tableNode")
 				buf.WriteString("\t" + code)
 			}
 			fmt.Fprintf(&buf, "\t\t%s = %s\n", target, localVar)
 			fmt.Fprintf(&buf, "\t} else {\n")
 			fmt.Fprintf(&buf, "\t\t%s := &%s{}\n", localVar, fi.TypeName)
 			fmt.Fprintf(&buf, "\t\tfound := false\n")
+			flatCtx := ctx.withFoundVar("found")
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitFlatKeyDecodeField(inner, localVar, docVar, containerExpr, keyPrefix)
+				code := emitDecodeField(flatCtx, inner, localVar, docVar, containerExpr)
 				buf.WriteString("\t" + code)
 			}
 			fmt.Fprintf(&buf, "\t\tif found {\n")
@@ -328,26 +223,28 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		} else {
 			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
 		}
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldMapStringString:
-		fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+		if ctx.isRoot {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
+		} else {
+			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
+				docVar, containerExpr, fi.TomlKey)
+		}
 		fmt.Fprintf(&buf, "\t\t%s = document.GetStringMapFromTable(tableNode)\n", target)
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
-		fmt.Fprintf(&buf, "\t\tdocument.MarkAllConsumed(tableNode, %q, d.consumed)\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
+		fmt.Fprintf(&buf, "\t\tdocument.MarkAllConsumed(tableNode, %s, %s)\n",
+			ctx.consumedKeyExpr(fi.TomlKey), ctx.consumedExpr)
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSliceStruct:
 		crossPkg := strings.Contains(fi.TypeName, ".")
-		nested := keyPrefix != ""
 		nodesVar := fi.TomlKey + "Nodes"
-		if nested {
-			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, consumedKey)
-		} else {
-			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
-		}
-		if !crossPkg && !nested {
+		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%s)\n", nodesVar, docVar,
+			ctx.consumedKeyExpr(fi.TomlKey))
+		if ctx.emitHandles && !crossPkg {
 			handleName := toLowerFirst(fi.TypeName) + "Handle"
 			fmt.Fprintf(&buf, "\td.%s = make([]%s, len(%s))\n", toLowerFirst(fi.GoName), handleName, nodesVar)
 		}
@@ -356,9 +253,9 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		} else {
 			fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
 		}
-		fmt.Fprintf(&buf, "\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
-		if !crossPkg && !nested {
+		if ctx.emitHandles && !crossPkg {
 			handleName := toLowerFirst(fi.TypeName) + "Handle"
 			fmt.Fprintf(&buf, "\t\td.%s[i] = %s{node: node}\n", toLowerFirst(fi.GoName), handleName)
 		}
@@ -366,9 +263,10 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
 		}
 		if fi.InnerInfo != nil {
+			innerCtx := ctx.nested(fi.TomlKey + ".")
 			for _, inner := range fi.InnerInfo.Fields {
 				indexedTarget := fmt.Sprintf("%s[i]", target)
-				code := emitDecodeField(inner, indexedTarget, docVar, "node", consumedKey+".")
+				code := emitDecodeField(innerCtx, inner, indexedTarget, docVar, "node")
 				buf.WriteString("\t" + code)
 			}
 		}
@@ -383,45 +281,57 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		} else {
 			fmt.Fprintf(&buf, "\t%s = make([]%s, len(%s))\n", target, fi.TypeName, nodesVar)
 		}
-		fmt.Fprintf(&buf, "\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\tfor i, node := range %s {\n", nodesVar)
 		if fi.SlicePointer {
 			fmt.Fprintf(&buf, "\t\t%s[i] = &%s{}\n", target, fi.TypeName)
-			fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s[i], %s, node, d.consumed, %q); err != nil {\n",
-				parts[0], parts[1], target, docVar, consumedKey+".")
+			fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s[i], %s, node, %s, %s); err != nil {\n",
+				parts[0], parts[1], target, docVar, ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey+"."))
 		} else {
-			fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s[i], %s, node, d.consumed, %q); err != nil {\n",
-				parts[0], parts[1], target, docVar, consumedKey+".")
+			fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s[i], %s, node, %s, %s); err != nil {\n",
+				parts[0], parts[1], target, docVar, ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey+"."))
 		}
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldMapStringStruct:
 		if fi.InnerInfo != nil {
+			innerCtx := ctx.nested(fi.TomlKey + ".")
 			fmt.Fprintf(&buf, "\t{\n")
-			if containerExpr == "d.cstDoc.Root()" {
+			if ctx.isRoot {
 				fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTables(%q)\n", docVar, fi.TomlKey)
 			} else {
 				fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTablesInContainer(%s, %q)\n", docVar, containerExpr, fi.TomlKey)
 			}
 			fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
-			fmt.Fprintf(&buf, "\t\t\td.consumed[%q] = true\n", consumedKey)
+			fmt.Fprintf(&buf, "\t\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 			if fi.SlicePointer {
 				fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]*%s)\n", target, fi.TypeName)
 			} else {
 				fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.TypeName)
 			}
 			fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
-			if containerExpr == "d.cstDoc.Root()" {
+			if ctx.isRoot {
 				fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
 			} else {
 				fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKeyInContainer(subTable, %s, %q)\n", containerExpr, fi.TomlKey)
 			}
-			fmt.Fprintf(&buf, "\t\t\t\td.consumed[%q + \".\" + mapKey] = true\n", consumedKey)
+			// For the map entry consumed key, we need: consumedKey + "." + mapKey
+			// This is a runtime expression since mapKey is a variable.
+			mapEntryConsumedExpr := ctx.consumedKeyExpr(fi.TomlKey) // base expression
+			fmt.Fprintf(&buf, "\t\t\t\t%s[%s + \".\" + mapKey] = true\n", ctx.consumedExpr, mapEntryConsumedExpr)
 			fmt.Fprintf(&buf, "\t\t\t\tvar entry %s\n", fi.TypeName)
+			// Inner fields use a special context where keyPrefix includes the map key (runtime)
+			// We emit the key as a concatenation: consumedKey + "." + mapKey + "."
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitDecodeField(inner, "entry", docVar, "subTable", consumedKey+".\" + mapKey + \".")
+				code := emitDecodeField(innerCtx, inner, "entry", docVar, "subTable")
+				// The innerCtx already has the static prefix. But we need mapKey injected.
+				// The inner fields' consumed keys will be like: ctx.keyPrefix + consumedKey + "." + inner.TomlKey
+				// But we need them to include mapKey too.
+				// This is the one case where we can't fully use the context system because mapKey
+				// is a runtime variable. We handle it by string replacement on the generated code.
+				code = injectMapKeyIntoConsumedKeys(code, ctx.consumedExpr, consumedKey, innerCtx.keyPrefix)
 				buf.WriteString("\t\t\t" + code)
 			}
 			if fi.SlicePointer {
@@ -437,16 +347,16 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 	case FieldMapStringDelegatedStruct:
 		parts := strings.SplitN(fi.ElemType, ".", 2)
 		fmt.Fprintf(&buf, "\t{\n")
-		if containerExpr == "d.cstDoc.Root()" {
+		if ctx.isRoot {
 			fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTables(%q)\n", docVar, fi.TomlKey)
 		} else {
 			fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTablesInContainer(%s, %q)\n", docVar, containerExpr, fi.TomlKey)
 		}
 		fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
-		fmt.Fprintf(&buf, "\t\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.ElemType)
 		fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
-		if containerExpr == "d.cstDoc.Root()" {
+		if ctx.isRoot {
 			fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
 		} else {
 			fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKeyInContainer(subTable, %s, %q)\n", containerExpr, fi.TomlKey)
@@ -454,11 +364,14 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t\t\t\tif strings.Contains(mapKey, \".\") {\n")
 		fmt.Fprintf(&buf, "\t\t\t\t\tcontinue\n")
 		fmt.Fprintf(&buf, "\t\t\t\t}\n")
-		fmt.Fprintf(&buf, "\t\t\t\td.consumed[%q + \".\" + mapKey] = true\n", consumedKey)
+		mapEntryConsumedExpr := ctx.consumedKeyExpr(fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\t%s[%s + \".\" + mapKey] = true\n", ctx.consumedExpr, mapEntryConsumedExpr)
 		fmt.Fprintf(&buf, "\t\t\t\tvar entry %s\n", fi.ElemType)
-		fmt.Fprintf(&buf, "\t\t\t\tif err := %s.Decode%sInto(&entry, %s, subTable, d.consumed, %q + \".\" + mapKey + \".\"); err != nil {\n",
-			parts[0], parts[1], docVar, consumedKey)
-		fmt.Fprintf(&buf, "\t\t\t\t\treturn nil, fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
+		// For delegated, we pass the consumed expression and a key prefix that includes mapKey
+		delegateConsumedKeyExpr := mapEntryConsumedExpr + ` + "." + mapKey + "."`
+		fmt.Fprintf(&buf, "\t\t\t\tif err := %s.Decode%sInto(&entry, %s, subTable, %s, %s); err != nil {\n",
+			parts[0], parts[1], docVar, ctx.consumedExpr, delegateConsumedKeyExpr)
+		fmt.Fprintf(&buf, "\t\t\t\t\t%sfmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = entry\n", target)
 		fmt.Fprintf(&buf, "\t\t\t}\n")
@@ -469,7 +382,7 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t{\n")
 		fmt.Fprintf(&buf, "\t\tsubTables := %s.FindSubTables(%q)\n", docVar, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
-		fmt.Fprintf(&buf, "\t\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		if fi.TypeName != "" {
 			fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.TypeName)
 		} else {
@@ -477,9 +390,11 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		}
 		fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
 		fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t\t\td.consumed[%q + \".\" + mapKey] = true\n", consumedKey)
+		mapEntryConsumedExpr := ctx.consumedKeyExpr(fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\t%s[%s + \".\" + mapKey] = true\n", ctx.consumedExpr, mapEntryConsumedExpr)
 		fmt.Fprintf(&buf, "\t\t\t\tinner := document.GetStringMapFromTable(subTable)\n")
-		fmt.Fprintf(&buf, "\t\t\t\tdocument.MarkAllConsumed(subTable, %q + \".\" + mapKey, d.consumed)\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t\t\tdocument.MarkAllConsumed(subTable, %s + \".\" + mapKey, %s)\n",
+			mapEntryConsumedExpr, ctx.consumedExpr)
 		if fi.TypeName != "" {
 			fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = %s(inner)\n", target, fi.TypeName)
 		} else {
@@ -495,24 +410,24 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t\t%s = make([]%s, len(v))\n", target, fi.TypeName)
 		fmt.Fprintf(&buf, "\t\tfor i, s := range v {\n")
 		fmt.Fprintf(&buf, "\t\t\tif err := %s[i].UnmarshalText([]byte(s)); err != nil {\n", target)
-		fmt.Fprintf(&buf, "\t\t\t\treturn nil, fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\t%sfmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldDelegatedStruct:
 		parts := strings.SplitN(fi.TypeName, ".", 2)
-		if containerExpr == "d.cstDoc.Root()" {
+		if ctx.isRoot {
 			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTable(%q); tableNode != nil {\n", docVar, fi.TomlKey)
 		} else {
 			fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
 				docVar, containerExpr, fi.TomlKey)
 		}
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
-		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s, %s, tableNode, d.consumed, %q); err != nil {\n",
-			parts[0], parts[1], target, docVar, consumedKey+".")
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
+		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(&%s, %s, tableNode, %s, %s); err != nil {\n",
+			parts[0], parts[1], target, docVar, ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey+"."))
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
@@ -521,11 +436,11 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		localVar := toLowerFirst(fi.GoName) + "Val"
 		fmt.Fprintf(&buf, "\tif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
 			docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
+		fmt.Fprintf(&buf, "\t\t%s[%s] = true\n", ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey))
 		fmt.Fprintf(&buf, "\t\t%s := &%s{}\n", localVar, fi.TypeName)
-		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s, %s, tableNode, d.consumed, %q); err != nil {\n",
-			parts[0], parts[1], localVar, docVar, consumedKey+".")
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\tif err := %s.Decode%sInto(%s, %s, tableNode, %s, %s); err != nil {\n",
+			parts[0], parts[1], localVar, docVar, ctx.consumedExpr, ctx.consumedKeyExpr(fi.TomlKey+"."))
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t%s = %s\n", target, localVar)
 		fmt.Fprintf(&buf, "\t}\n")
@@ -534,64 +449,37 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 	return buf.String()
 }
 
-func emitFlatKeyDecodeField(fi FieldInfo, localVar, docVar, containerExpr, keyPrefix string) string {
-	var buf bytes.Buffer
-	target := localVar + "." + fi.GoName
-	consumedKey := keyPrefix + fi.TomlKey
+// injectMapKeyIntoConsumedKeys replaces consumed key expressions in generated code
+// to include the runtime mapKey variable. This handles the case where inner fields
+// of a map[string]Struct need consumed keys like: baseKey + "." + mapKey + "." + innerKey
+func injectMapKeyIntoConsumedKeys(code, consumedExpr, baseKey, innerPrefix string) string {
+	// The inner fields generated consumed keys using innerPrefix (e.g. "servers.")
+	// We need to replace those with baseKey + "." + mapKey + "." + innerKey
+	// The generated code will have patterns like:
+	//   consumed["servers.name"] or consumed[keyPrefix + "servers.name"]
+	// We need to inject mapKey between the base key and the inner key.
 
-	switch fi.Kind {
-	case FieldPrimitive:
-		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
-			fi.TypeName, docVar, containerExpr, fi.TomlKey)
-		if fi.ElemType != "" {
-			fmt.Fprintf(&buf, "\t\t%s = %s(v)\n", target, fi.ElemType)
-		} else {
-			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
-		}
-		fmt.Fprintf(&buf, "\t\tfound = true\n")
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
-		fmt.Fprintf(&buf, "\t}\n")
+	// For receiver context: consumed["servers.innerKey"] -> consumed["servers." + mapKey + ".innerKey"]
+	// For free context: consumed[keyPrefix + "servers.innerKey"] -> consumed[keyPrefix + "servers." + mapKey + ".innerKey"]
+	oldPrefix := consumedExpr + `[` + fmt.Sprintf(`%q`, innerPrefix)
+	newPrefix := consumedExpr + `[` + fmt.Sprintf(`%q`, baseKey+".") + ` + mapKey + ".`
 
-	case FieldPointerPrimitive:
-		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[%s](%s, %s, %q); err == nil {\n",
-			fi.TypeName, docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t%s = &v\n", target)
-		fmt.Fprintf(&buf, "\t\tfound = true\n")
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
-		fmt.Fprintf(&buf, "\t}\n")
+	// Handle the case where useKeyPrefixVar is true
+	oldPrefixVar := consumedExpr + `[keyPrefix + ` + fmt.Sprintf(`%q`, innerPrefix)
+	newPrefixVar := consumedExpr + `[keyPrefix + ` + fmt.Sprintf(`%q`, baseKey+".") + ` + mapKey + ".`
 
-	case FieldCustom:
-		fmt.Fprintf(&buf, "\tif raw, err := document.GetRawFromContainer(%s, %s, %q); err == nil {\n",
-			docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\tif err := %s.UnmarshalTOML(raw); err != nil {\n", target)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t\tfound = true\n")
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
-		fmt.Fprintf(&buf, "\t}\n")
-
-	case FieldTextMarshaler:
-		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[string](%s, %s, %q); err == nil {\n",
-			docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\tif err := %s.UnmarshalText([]byte(v)); err != nil {\n", target)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t}\n")
-		fmt.Fprintf(&buf, "\t\tfound = true\n")
-		fmt.Fprintf(&buf, "\t\td.consumed[%q] = true\n", consumedKey)
-		fmt.Fprintf(&buf, "\t}\n")
-	}
-
-	return buf.String()
+	code = strings.ReplaceAll(code, oldPrefixVar, newPrefixVar)
+	code = strings.ReplaceAll(code, oldPrefix, newPrefix)
+	return code
 }
 
-func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix string) string {
+func emitEncodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerExpr string) string {
 	var buf bytes.Buffer
 	source := dataPath + "." + fi.GoName
 
 	switch fi.Kind {
 	case FieldPrimitive:
 		zv := zeroLiteral(fi.TypeName)
-		// For wrapper types (ElemType set), convert to underlying primitive
 		encodeSource := source
 		if fi.ElemType != "" {
 			encodeSource = fi.TypeName + "(" + source + ")"
@@ -606,7 +494,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
 					docVar, containerExpr, fi.TomlKey, encodeSource)
 			}
-			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t\t%serr\n", ctx.returnErr)
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t} else {\n")
 			fmt.Fprintf(&buf, "\t\t_ = %s.DeleteFromContainer(%s, %q)\n", docVar, containerExpr, fi.TomlKey)
@@ -616,7 +504,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				source, zv, docVar, containerExpr, fi.TomlKey)
 			fmt.Fprintf(&buf, "\t\tif err := %s.SetMultilineInContainer(%s, %q, %s); err != nil {\n",
 				docVar, containerExpr, fi.TomlKey, encodeSource)
-			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t\t%serr\n", ctx.returnErr)
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		} else {
@@ -624,7 +512,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				source, zv, docVar, containerExpr, fi.TomlKey)
 			fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
 				docVar, containerExpr, fi.TomlKey, encodeSource)
-			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t\t%serr\n", ctx.returnErr)
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		}
@@ -633,7 +521,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\tif %s != nil {\n", source)
 		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, *%s); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey, source)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\t%serr\n", ctx.returnErr)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
@@ -641,11 +529,11 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t{\n")
 		fmt.Fprintf(&buf, "\t\tv, err := %s.MarshalTOML()\n", source)
 		fmt.Fprintf(&buf, "\t\tif err != nil {\n")
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, v); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\t%serr\n", ctx.returnErr)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
@@ -654,12 +542,12 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			fmt.Fprintf(&buf, "\t{\n")
 			fmt.Fprintf(&buf, "\t\tv, err := %s.MarshalText()\n", source)
 			fmt.Fprintf(&buf, "\t\tif err != nil {\n")
-			fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t\tif len(v) > 0 {\n")
 			fmt.Fprintf(&buf, "\t\t\tif err := %s.SetInContainer(%s, %q, string(v)); err != nil {\n",
 				docVar, containerExpr, fi.TomlKey)
-			fmt.Fprintf(&buf, "\t\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t\t\t%serr\n", ctx.returnErr)
 			fmt.Fprintf(&buf, "\t\t\t}\n")
 			fmt.Fprintf(&buf, "\t\t} else {\n")
 			fmt.Fprintf(&buf, "\t\t\t_ = %s.DeleteFromContainer(%s, %q)\n", docVar, containerExpr, fi.TomlKey)
@@ -669,20 +557,20 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			fmt.Fprintf(&buf, "\t{\n")
 			fmt.Fprintf(&buf, "\t\tv, err := %s.MarshalText()\n", source)
 			fmt.Fprintf(&buf, "\t\tif err != nil {\n")
-			fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, string(v)); err != nil {\n",
 				docVar, containerExpr, fi.TomlKey)
-			fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+			fmt.Fprintf(&buf, "\t\t\t%serr\n", ctx.returnErr)
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
 		}
 
 	case FieldStruct:
 		if fi.InnerInfo != nil {
-			innerKeyPrefix := keyPrefix + fi.TomlKey + "."
+			innerCtx := ctx.nested(fi.TomlKey + ".")
 			needsTableNode := innerFieldsNeedContainer(fi.InnerInfo.Fields)
-			if containerExpr == "d.cstDoc.Root()" {
+			if ctx.isRoot {
 				fmt.Fprintf(&buf, "\t{\n")
 				if needsTableNode {
 					fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
@@ -700,7 +588,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				}
 			}
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitEncodeField(inner, source, docVar, "tableNode", innerKeyPrefix)
+				code := emitEncodeField(innerCtx, inner, source, docVar, "tableNode")
 				buf.WriteString(code)
 			}
 			fmt.Fprintf(&buf, "\t}\n")
@@ -708,7 +596,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 
 	case FieldPointerStruct:
 		if fi.InnerInfo != nil {
-			innerKeyPrefix := keyPrefix + fi.TomlKey + "."
+			innerCtx := ctx.nested(fi.TomlKey + ".")
 			fmt.Fprintf(&buf, "\tif %s != nil {\n", source)
 			needsTableNode := innerFieldsNeedContainer(fi.InnerInfo.Fields)
 			if needsTableNode {
@@ -719,7 +607,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 					docVar, containerExpr, fi.TomlKey)
 			}
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitEncodeField(inner, source, docVar, "tableNode", innerKeyPrefix)
+				code := emitEncodeField(innerCtx, inner, source, docVar, "tableNode")
 				buf.WriteString("\t" + code)
 			}
 			fmt.Fprintf(&buf, "\t}\n")
@@ -727,10 +615,18 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 
 	case FieldSliceStruct:
 		crossPkg := strings.Contains(fi.TypeName, ".")
-		nested := keyPrefix != ""
-		fullKey := keyPrefix + fi.TomlKey
+		fullKey := ctx.keyPrefix + fi.TomlKey
 		fmt.Fprintf(&buf, "\t{\n")
-		if crossPkg || nested {
+		if ctx.emitHandles && !crossPkg {
+			handleSlice := "d." + toLowerFirst(fi.GoName)
+			fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
+			fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
+			fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", handleSlice)
+			fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i].node\n", handleSlice)
+			fmt.Fprintf(&buf, "\t\t} else {\n")
+			fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
+			fmt.Fprintf(&buf, "\t\t}\n")
+		} else {
 			existingVar := fi.TomlKey + "Existing"
 			fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", existingVar, docVar, fullKey)
 			fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
@@ -740,20 +636,11 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			fmt.Fprintf(&buf, "\t\t} else {\n")
 			fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fullKey)
 			fmt.Fprintf(&buf, "\t\t}\n")
-		} else {
-			handleSlice := "d." + toLowerFirst(fi.GoName)
-			fmt.Fprintf(&buf, "\tfor i := range %s {\n", source)
-			fmt.Fprintf(&buf, "\t\tvar container *cst.Node\n")
-			fmt.Fprintf(&buf, "\t\tif i < len(%s) {\n", handleSlice)
-			fmt.Fprintf(&buf, "\t\t\tcontainer = %s[i].node\n", handleSlice)
-			fmt.Fprintf(&buf, "\t\t} else {\n")
-			fmt.Fprintf(&buf, "\t\t\tcontainer = %s.AppendArrayTableEntry(%q)\n", docVar, fi.TomlKey)
-			fmt.Fprintf(&buf, "\t\t}\n")
 		}
 		if fi.InnerInfo != nil {
 			for _, inner := range fi.InnerInfo.Fields {
 				indexedSource := fmt.Sprintf("%s[i]", source)
-				code := emitEncodeField(inner, indexedSource, docVar, "container", "")
+				code := emitEncodeField(ctx.nested(""), inner, indexedSource, docVar, "container")
 				buf.WriteString("\t" + code)
 			}
 		}
@@ -778,7 +665,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(&%s[i], %s, container); err != nil {\n",
 				parts[0], parts[1], source, docVar)
 		}
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
@@ -802,7 +689,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		}
 		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey, encodeSource)
-		fmt.Fprintf(&buf, "\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t%serr\n", ctx.returnErr)
 		fmt.Fprintf(&buf, "\t}\n")
 		if fi.OmitEmpty {
 			fmt.Fprintf(&buf, "\t}\n")
@@ -810,11 +697,15 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 
 	case FieldMapStringString:
 		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
-		fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
+		if ctx.isRoot {
+			fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
+		} else {
+			fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTableInContainer(%s, %q)\n", docVar, containerExpr, fi.TomlKey)
+		}
 		fmt.Fprintf(&buf, "\t\tdocument.DeleteAllInContainer(tableNode)\n")
 		fmt.Fprintf(&buf, "\t\tfor k, v := range %s {\n", source)
 		fmt.Fprintf(&buf, "\t\t\tif err := %s.SetInContainer(tableNode, k, v); err != nil {\n", docVar)
-		fmt.Fprintf(&buf, "\t\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\t\t%serr\n", ctx.returnErr)
 		fmt.Fprintf(&buf, "\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
@@ -823,7 +714,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		if fi.InnerInfo != nil {
 			fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
 			fmt.Fprintf(&buf, "\t\tfor mapKey, mapVal := range %s {\n", source)
-			if containerExpr == "d.cstDoc.Root()" {
+			if ctx.isRoot {
 				fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTable(%q, mapKey)\n", docVar, fi.TomlKey)
 			} else {
 				fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTableInContainer(%s, %q, mapKey)\n", docVar, containerExpr, fi.TomlKey)
@@ -833,12 +724,12 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				fmt.Fprintf(&buf, "\t\t\t\tcontinue\n")
 				fmt.Fprintf(&buf, "\t\t\t}\n")
 				for _, inner := range fi.InnerInfo.Fields {
-					code := emitEncodeField(inner, "(*mapVal)", docVar, "subTable", "")
+					code := emitEncodeField(ctx.nested(""), inner, "(*mapVal)", docVar, "subTable")
 					buf.WriteString("\t\t" + code)
 				}
 			} else {
 				for _, inner := range fi.InnerInfo.Fields {
-					code := emitEncodeField(inner, "mapVal", docVar, "subTable", "")
+					code := emitEncodeField(ctx.nested(""), inner, "mapVal", docVar, "subTable")
 					buf.WriteString("\t\t" + code)
 				}
 			}
@@ -850,14 +741,14 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		parts := strings.SplitN(fi.ElemType, ".", 2)
 		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
 		fmt.Fprintf(&buf, "\t\tfor mapKey, mapVal := range %s {\n", source)
-		if containerExpr == "d.cstDoc.Root()" {
+		if ctx.isRoot {
 			fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTable(%q, mapKey)\n", docVar, fi.TomlKey)
 		} else {
 			fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTableInContainer(%s, %q, mapKey)\n", docVar, containerExpr, fi.TomlKey)
 		}
 		fmt.Fprintf(&buf, "\t\t\tif err := %s.Encode%sFrom(&mapVal, %s, subTable); err != nil {\n",
 			parts[0], parts[1], docVar)
-		fmt.Fprintf(&buf, "\t\t\t\treturn nil, fmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\t%sfmt.Errorf(\"%s.%%s: %%w\", mapKey, err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
@@ -869,7 +760,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t\t\tdocument.DeleteAllInContainer(subTable)\n")
 		fmt.Fprintf(&buf, "\t\t\tfor k, v := range map[string]string(mapVal) {\n")
 		fmt.Fprintf(&buf, "\t\t\t\tif err := %s.SetInContainer(subTable, k, v); err != nil {\n", docVar)
-		fmt.Fprintf(&buf, "\t\t\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\t\t\t%serr\n", ctx.returnErr)
 		fmt.Fprintf(&buf, "\t\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t}\n")
@@ -881,19 +772,19 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		fmt.Fprintf(&buf, "\t\tfor i, item := range %s {\n", source)
 		fmt.Fprintf(&buf, "\t\t\tv, err := item.MarshalText()\n")
 		fmt.Fprintf(&buf, "\t\t\tif err != nil {\n")
-		fmt.Fprintf(&buf, "\t\t\t\treturn nil, fmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t\t%sfmt.Errorf(\"%s[%%d]: %%w\", i, err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t\t}\n")
 		fmt.Fprintf(&buf, "\t\t\tvals[i] = string(v)\n")
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t\tif err := %s.SetInContainer(%s, %q, vals); err != nil {\n",
 			docVar, containerExpr, fi.TomlKey)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, err\n")
+		fmt.Fprintf(&buf, "\t\t\t%serr\n", ctx.returnErr)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldDelegatedStruct:
 		parts := strings.SplitN(fi.TypeName, ".", 2)
-		if containerExpr == "d.cstDoc.Root()" {
+		if ctx.isRoot {
 			fmt.Fprintf(&buf, "\t{\n")
 			fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
 		} else {
@@ -903,7 +794,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		}
 		fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(&%s, %s, tableNode); err != nil {\n",
 			parts[0], parts[1], source, docVar)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 
@@ -914,7 +805,7 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			docVar, containerExpr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\tif err := %s.Encode%sFrom(%s, %s, tableNode); err != nil {\n",
 			parts[0], parts[1], source, docVar)
-		fmt.Fprintf(&buf, "\t\t\treturn nil, fmt.Errorf(\"%s: %%w\", err)\n", fi.TomlKey)
+		fmt.Fprintf(&buf, "\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ctx.returnErr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\t}\n")
 		fmt.Fprintf(&buf, "\t}\n")
 	}
@@ -942,8 +833,6 @@ func innerFieldsNeedContainer(fields []FieldInfo) bool {
 	for _, f := range fields {
 		switch f.Kind {
 		case FieldSliceStruct, FieldSliceDelegatedStruct:
-			// These use FindArrayTableNodes/AppendArrayTableEntry by full key,
-			// not the container variable.
 			continue
 		default:
 			return true
