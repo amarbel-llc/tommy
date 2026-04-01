@@ -200,8 +200,18 @@ func emitDecodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 			fmt.Fprintf(&buf, "\t\t%s := &%s{}\n", localVar, fi.TypeName)
 			fmt.Fprintf(&buf, "\t\tfound := false\n")
 			flatCtx := ctx.withFoundVar("found")
+			// FieldSliceStruct/FieldSliceDelegatedStruct use dotted keys from the
+			// document root (e.g. FindArrayTableNodes("exec.allow")), so they need
+			// the parent key prefix even in the flat-key fallback. Other field kinds
+			// look for bare keys at the current container level.
+			arrayTableCtx := innerCtx.withFoundVar("found")
 			for _, inner := range fi.InnerInfo.Fields {
-				code := emitDecodeField(flatCtx, inner, localVar, docVar, containerExpr)
+				var code string
+				if inner.Kind == FieldSliceStruct || inner.Kind == FieldSliceDelegatedStruct {
+					code = emitDecodeField(arrayTableCtx, inner, localVar, docVar, containerExpr)
+				} else {
+					code = emitDecodeField(flatCtx, inner, localVar, docVar, containerExpr)
+				}
 				buf.WriteString("\t" + code)
 			}
 			fmt.Fprintf(&buf, "\t\tif found {\n")
@@ -244,6 +254,11 @@ func emitDecodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 		nodesVar := fi.TomlKey + "Nodes"
 		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%s)\n", nodesVar, docVar,
 			ctx.consumedKeyExpr(fi.TomlKey))
+		if ctx.foundVar != "" {
+			fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", nodesVar)
+			fmt.Fprintf(&buf, "\t\t%s = true\n", ctx.foundVar)
+			fmt.Fprintf(&buf, "\t}\n")
+		}
 		if ctx.emitHandles && !crossPkg {
 			handleName := toLowerFirst(fi.TypeName) + "Handle"
 			fmt.Fprintf(&buf, "\td.%s = make([]%s, len(%s))\n", toLowerFirst(fi.GoName), handleName, nodesVar)
@@ -275,7 +290,13 @@ func emitDecodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 	case FieldSliceDelegatedStruct:
 		parts := strings.SplitN(fi.TypeName, ".", 2)
 		nodesVar := fi.TomlKey + "Nodes"
-		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%q)\n", nodesVar, docVar, fi.TomlKey)
+		fmt.Fprintf(&buf, "\t%s := %s.FindArrayTableNodes(%s)\n", nodesVar, docVar,
+			ctx.consumedKeyExpr(fi.TomlKey))
+		if ctx.foundVar != "" {
+			fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", nodesVar)
+			fmt.Fprintf(&buf, "\t\t%s = true\n", ctx.foundVar)
+			fmt.Fprintf(&buf, "\t}\n")
+		}
 		if fi.SlicePointer {
 			fmt.Fprintf(&buf, "\t%s = make([]*%s, len(%s))\n", target, fi.TypeName, nodesVar)
 		} else {

@@ -562,6 +562,124 @@ binary = "rm"
 	}
 }
 
+// Reproducer for #55: when *Struct contains only []Struct fields and the TOML
+// uses implicit parent tables (no explicit [exec] header), FindTableInContainer
+// returns nil and the entire block is skipped.
+func TestIntegrationImplicitParentTable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/implicit",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package implicit
+
+//go:generate tommy generate
+type Config struct {
+	Exec *ExecConfig `+"`"+`toml:"exec"`+"`"+`
+}
+
+type ExecConfig struct {
+	Allow []ExecRule `+"`"+`toml:"allow"`+"`"+`
+	Deny  []ExecRule `+"`"+`toml:"deny"`+"`"+`
+}
+
+type ExecRule struct {
+	Binary string `+"`"+`toml:"binary"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	// No explicit [exec] header — only [[exec.allow]] and [[exec.deny]].
+	// The parent "exec" table is implicit.
+	writeFixture(t, dir, "implicit_test.go", `package implicit
+
+import "testing"
+
+func TestImplicitParentTable(t *testing.T) {
+	input := []byte(`+"`"+`[[exec.allow]]
+binary = "git"
+
+[[exec.allow]]
+binary = "go"
+
+[[exec.deny]]
+binary = "sudo"
+`+"`"+`)
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	d := doc.Data()
+	if d.Exec == nil {
+		t.Fatal("Exec is nil — implicit parent table not detected")
+	}
+	if len(d.Exec.Allow) != 2 {
+		t.Fatalf("Allow len = %d, want 2", len(d.Exec.Allow))
+	}
+	if d.Exec.Allow[0].Binary != "git" {
+		t.Fatalf("Allow[0].Binary = %q, want %q", d.Exec.Allow[0].Binary, "git")
+	}
+	if d.Exec.Allow[1].Binary != "go" {
+		t.Fatalf("Allow[1].Binary = %q, want %q", d.Exec.Allow[1].Binary, "go")
+	}
+	if len(d.Exec.Deny) != 1 {
+		t.Fatalf("Deny len = %d, want 1", len(d.Exec.Deny))
+	}
+	if d.Exec.Deny[0].Binary != "sudo" {
+		t.Fatalf("Deny[0].Binary = %q, want %q", d.Exec.Deny[0].Binary, "sudo")
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if d2.Exec == nil {
+		t.Fatal("re-decoded Exec is nil")
+	}
+	if len(d2.Exec.Allow) != 2 {
+		t.Fatalf("re-decoded Allow len = %d, want 2", len(d2.Exec.Allow))
+	}
+	if d2.Exec.Allow[0].Binary != "git" {
+		t.Fatalf("re-decoded Allow[0].Binary = %q, want %q", d2.Exec.Allow[0].Binary, "git")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 func TestIntegrationArrayOfTables(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
