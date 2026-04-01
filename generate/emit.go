@@ -318,7 +318,12 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 	case FieldSlicePrimitive:
 		fmt.Fprintf(&buf, "\tif v, err := document.GetFromContainer[[]%s](%s, %s, %q); err == nil {\n",
 			fi.ElemType, docVar, containerExpr, fi.TomlKey)
-		if fi.TypeName != "" {
+		if fi.SlicePointer {
+			fmt.Fprintf(&buf, "\t\t%s = make([]*%s, len(v))\n", target, fi.ElemType)
+			fmt.Fprintf(&buf, "\t\tfor i := range v {\n")
+			fmt.Fprintf(&buf, "\t\t\t%s[i] = &v[i]\n", target)
+			fmt.Fprintf(&buf, "\t\t}\n")
+		} else if fi.TypeName != "" {
 			fmt.Fprintf(&buf, "\t\t%s = %s(v)\n", target, fi.TypeName)
 		} else {
 			fmt.Fprintf(&buf, "\t\t%s = v\n", target)
@@ -402,7 +407,11 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			}
 			fmt.Fprintf(&buf, "\t\tif len(subTables) > 0 {\n")
 			fmt.Fprintf(&buf, "\t\t\td.consumed[%q] = true\n", consumedKey)
-			fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.TypeName)
+			if fi.SlicePointer {
+				fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]*%s)\n", target, fi.TypeName)
+			} else {
+				fmt.Fprintf(&buf, "\t\t\t%s = make(map[string]%s)\n", target, fi.TypeName)
+			}
 			fmt.Fprintf(&buf, "\t\t\tfor _, subTable := range subTables {\n")
 			if containerExpr == "d.cstDoc.Root()" {
 				fmt.Fprintf(&buf, "\t\t\t\tmapKey := document.SubTableKey(subTable, %q)\n", fi.TomlKey)
@@ -415,7 +424,11 @@ func emitDecodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				code := emitDecodeField(inner, "entry", docVar, "subTable", consumedKey+".\" + mapKey + \".")
 				buf.WriteString("\t\t\t" + code)
 			}
-			fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = entry\n", target)
+			if fi.SlicePointer {
+				fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = &entry\n", target)
+			} else {
+				fmt.Fprintf(&buf, "\t\t\t\t%s[mapKey] = entry\n", target)
+			}
 			fmt.Fprintf(&buf, "\t\t\t}\n")
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
@@ -668,13 +681,23 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 	case FieldStruct:
 		if fi.InnerInfo != nil {
 			innerKeyPrefix := keyPrefix + fi.TomlKey + "."
+			needsTableNode := innerFieldsNeedContainer(fi.InnerInfo.Fields)
 			if containerExpr == "d.cstDoc.Root()" {
 				fmt.Fprintf(&buf, "\t{\n")
-				fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
+				if needsTableNode {
+					fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
+				} else {
+					fmt.Fprintf(&buf, "\t\t_ = %s.EnsureTable(%q)\n", docVar, fi.TomlKey)
+				}
 			} else {
 				fmt.Fprintf(&buf, "\t{\n")
-				fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTableInContainer(%s, %q)\n",
-					docVar, containerExpr, fi.TomlKey)
+				if needsTableNode {
+					fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTableInContainer(%s, %q)\n",
+						docVar, containerExpr, fi.TomlKey)
+				} else {
+					fmt.Fprintf(&buf, "\t\t_ = %s.EnsureTableInContainer(%s, %q)\n",
+						docVar, containerExpr, fi.TomlKey)
+				}
 			}
 			for _, inner := range fi.InnerInfo.Fields {
 				code := emitEncodeField(inner, source, docVar, "tableNode", innerKeyPrefix)
@@ -687,8 +710,14 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 		if fi.InnerInfo != nil {
 			innerKeyPrefix := keyPrefix + fi.TomlKey + "."
 			fmt.Fprintf(&buf, "\tif %s != nil {\n", source)
-			fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTableInContainer(%s, %q)\n",
-				docVar, containerExpr, fi.TomlKey)
+			needsTableNode := innerFieldsNeedContainer(fi.InnerInfo.Fields)
+			if needsTableNode {
+				fmt.Fprintf(&buf, "\t\ttableNode := %s.EnsureTableInContainer(%s, %q)\n",
+					docVar, containerExpr, fi.TomlKey)
+			} else {
+				fmt.Fprintf(&buf, "\t\t_ = %s.EnsureTableInContainer(%s, %q)\n",
+					docVar, containerExpr, fi.TomlKey)
+			}
 			for _, inner := range fi.InnerInfo.Fields {
 				code := emitEncodeField(inner, source, docVar, "tableNode", innerKeyPrefix)
 				buf.WriteString("\t" + code)
@@ -759,7 +788,16 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 				source, docVar, containerExpr, fi.TomlKey)
 		}
 		encodeSource := source
-		if fi.TypeName != "" {
+		if fi.SlicePointer {
+			tmpVar := "tmp" + fi.GoName
+			fmt.Fprintf(&buf, "\t%s := make([]%s, 0, len(%s))\n", tmpVar, fi.ElemType, source)
+			fmt.Fprintf(&buf, "\tfor _, p := range %s {\n", source)
+			fmt.Fprintf(&buf, "\t\tif p != nil {\n")
+			fmt.Fprintf(&buf, "\t\t\t%s = append(%s, *p)\n", tmpVar, tmpVar)
+			fmt.Fprintf(&buf, "\t\t}\n")
+			fmt.Fprintf(&buf, "\t}\n")
+			encodeSource = tmpVar
+		} else if fi.TypeName != "" {
 			encodeSource = "[]" + fi.ElemType + "(" + source + ")"
 		}
 		fmt.Fprintf(&buf, "\tif err := %s.SetInContainer(%s, %q, %s); err != nil {\n",
@@ -790,9 +828,19 @@ func emitEncodeField(fi FieldInfo, dataPath, docVar, containerExpr, keyPrefix st
 			} else {
 				fmt.Fprintf(&buf, "\t\t\tsubTable := %s.EnsureSubTableInContainer(%s, %q, mapKey)\n", docVar, containerExpr, fi.TomlKey)
 			}
-			for _, inner := range fi.InnerInfo.Fields {
-				code := emitEncodeField(inner, "mapVal", docVar, "subTable", "")
-				buf.WriteString("\t\t" + code)
+			if fi.SlicePointer {
+				fmt.Fprintf(&buf, "\t\t\tif mapVal == nil {\n")
+				fmt.Fprintf(&buf, "\t\t\t\tcontinue\n")
+				fmt.Fprintf(&buf, "\t\t\t}\n")
+				for _, inner := range fi.InnerInfo.Fields {
+					code := emitEncodeField(inner, "(*mapVal)", docVar, "subTable", "")
+					buf.WriteString("\t\t" + code)
+				}
+			} else {
+				for _, inner := range fi.InnerInfo.Fields {
+					code := emitEncodeField(inner, "mapVal", docVar, "subTable", "")
+					buf.WriteString("\t\t" + code)
+				}
 			}
 			fmt.Fprintf(&buf, "\t\t}\n")
 			fmt.Fprintf(&buf, "\t}\n")
@@ -878,15 +926,30 @@ func zeroLiteral(typeName string) string {
 	switch typeName {
 	case "bool":
 		return "false"
-	case "int", "int64", "uint64":
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64":
 		return "0"
-	case "float64":
+	case "float32", "float64":
 		return "0.0"
 	case "string":
 		return `""`
 	default:
 		return `""`
 	}
+}
+
+func innerFieldsNeedContainer(fields []FieldInfo) bool {
+	for _, f := range fields {
+		switch f.Kind {
+		case FieldSliceStruct, FieldSliceDelegatedStruct:
+			// These use FindArrayTableNodes/AppendArrayTableEntry by full key,
+			// not the container variable.
+			continue
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func toLowerFirst(s string) string {

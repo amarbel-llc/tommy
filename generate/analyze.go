@@ -92,6 +92,8 @@ func Analyze(dir, filename string) ([]StructInfo, error) {
 		return nil, fmt.Errorf("file %s not found in package", filename)
 	}
 
+	resolvingTypes = make(map[string]bool)
+
 	var infos []StructInfo
 
 	for _, decl := range targetFile.Decls {
@@ -241,8 +243,16 @@ func extractTomlTag(raw string) (string, tagOpts) {
 var primitiveTypes = map[string]bool{
 	"string":  true,
 	"int":     true,
+	"int8":    true,
+	"int16":   true,
+	"int32":   true,
 	"int64":   true,
+	"uint":    true,
+	"uint8":   true,
+	"uint16":  true,
+	"uint32":  true,
 	"uint64":  true,
+	"float32": true,
 	"float64": true,
 	"bool":    true,
 }
@@ -358,6 +368,12 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 		case *ast.StarExpr:
 			switch inner := elem.X.(type) {
 			case *ast.Ident:
+				if primitiveTypes[inner.Name] {
+					fi.Kind = FieldSlicePrimitive
+					fi.ElemType = inner.Name
+					fi.SlicePointer = true
+					return fi, nil
+				}
 				fi.Kind = FieldSliceStruct
 				fi.TypeName = inner.Name
 				fi.SlicePointer = true
@@ -482,6 +498,22 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 				fi.InnerInfo = &innerInfo
 			}
 			return fi, nil
+		case *ast.StarExpr:
+			// map[string]*Struct
+			switch inner := val.X.(type) {
+			case *ast.Ident:
+				fi.Kind = FieldMapStringStruct
+				fi.TypeName = inner.Name
+				fi.SlicePointer = true
+				innerInfo, err := resolveStructByName(pkg, inner.Name)
+				if err != nil {
+					return fi, err
+				}
+				fi.InnerInfo = &innerInfo
+				return fi, nil
+			default:
+				return fi, fmt.Errorf("unsupported map pointer value type")
+			}
 		default:
 			return fi, fmt.Errorf("unsupported map value type")
 		}
@@ -1055,7 +1087,17 @@ func isMapStringString(m *types.Map) bool {
 	return ok && val.Kind() == types.String
 }
 
+// resolvingTypes tracks which struct types are currently being resolved
+// to detect recursive type references. Reset at the start of each Analyze call.
+var resolvingTypes map[string]bool
+
 func resolveStructByName(pkg *packages.Package, name string) (StructInfo, error) {
+	if resolvingTypes[name] {
+		return StructInfo{}, fmt.Errorf("recursive struct type %s", name)
+	}
+	resolvingTypes[name] = true
+	defer delete(resolvingTypes, name)
+
 	for _, file := range pkg.Syntax {
 		for _, decl := range file.Decls {
 			genDecl, ok := decl.(*ast.GenDecl)

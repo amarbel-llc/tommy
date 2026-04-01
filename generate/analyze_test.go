@@ -1123,3 +1123,150 @@ type Config struct {
 		t.Errorf("expected field toml key 'filter', got %q", infos[0].Fields[0].TomlKey)
 	}
 }
+
+func TestAnalyzeSelfReferentialStructReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Node struct {
+	Name  string `+"`"+`toml:"name"`+"`"+`
+	Child *Node  `+"`"+`toml:"child"`+"`"+`
+}
+`)
+
+	_, err := Analyze(dir, "config.go")
+	if err == nil {
+		t.Fatal("expected error for self-referential struct, got nil")
+	}
+	if !strings.Contains(err.Error(), "recursive") {
+		t.Fatalf("expected error mentioning 'recursive', got: %v", err)
+	}
+}
+
+func TestAnalyzeSizedIntegers(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	A int8   `+"`"+`toml:"a"`+"`"+`
+	B int16  `+"`"+`toml:"b"`+"`"+`
+	C int32  `+"`"+`toml:"c"`+"`"+`
+	D uint   `+"`"+`toml:"d"`+"`"+`
+	E uint8  `+"`"+`toml:"e"`+"`"+`
+	F uint16 `+"`"+`toml:"f"`+"`"+`
+	G uint32 `+"`"+`toml:"g"`+"`"+`
+	H float32 `+"`"+`toml:"h"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	for _, f := range infos[0].Fields {
+		if f.Kind != FieldPrimitive {
+			t.Errorf("field %s: expected FieldPrimitive, got %v", f.GoName, f.Kind)
+		}
+	}
+}
+
+func TestAnalyzeSlicePointerPrimitive(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	Names []*string `+"`"+`toml:"names"`+"`"+`
+	Ports []*int    `+"`"+`toml:"ports"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	for _, f := range infos[0].Fields {
+		if f.Kind != FieldSlicePrimitive {
+			t.Errorf("field %s: expected FieldSlicePrimitive, got %v", f.GoName, f.Kind)
+		}
+		if !f.SlicePointer {
+			t.Errorf("field %s: expected SlicePointer=true", f.GoName)
+		}
+	}
+}
+
+func TestAnalyzeMapStringPointerStruct(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	Servers map[string]*Server `+"`"+`toml:"servers"`+"`"+`
+}
+
+type Server struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldMapStringStruct {
+		t.Fatalf("expected FieldMapStringStruct, got %v", f.Kind)
+	}
+	if !f.SlicePointer {
+		t.Fatal("expected SlicePointer=true for map[string]*Struct")
+	}
+	if f.InnerInfo == nil {
+		t.Fatal("expected InnerInfo to be set")
+	}
+}
+
+func TestAnalyzePointerPrimitivesAllTypes(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", `package test
+
+//go:generate tommy generate
+type Config struct {
+	A *string  `+"`"+`toml:"a"`+"`"+`
+	B *int     `+"`"+`toml:"b"`+"`"+`
+	C *int64   `+"`"+`toml:"c"`+"`"+`
+	D *float64 `+"`"+`toml:"d"`+"`"+`
+	E *bool    `+"`"+`toml:"e"`+"`"+`
+	F *uint64  `+"`"+`toml:"f"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(dir, "config.go")
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	for _, f := range infos[0].Fields {
+		if f.Kind != FieldPointerPrimitive {
+			t.Errorf("field %s: expected FieldPointerPrimitive, got %v", f.GoName, f.Kind)
+		}
+	}
+}

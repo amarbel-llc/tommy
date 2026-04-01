@@ -513,10 +513,42 @@ func convertNode[T any](node *cst.Node) (T, error) {
 		var v int64
 		v, err = strconv.ParseInt(string(node.Raw), 10, 64)
 		result = int(v)
+	case int8:
+		var v int64
+		v, err = strconv.ParseInt(string(node.Raw), 10, 8)
+		result = int8(v)
+	case int16:
+		var v int64
+		v, err = strconv.ParseInt(string(node.Raw), 10, 16)
+		result = int16(v)
+	case int32:
+		var v int64
+		v, err = strconv.ParseInt(string(node.Raw), 10, 32)
+		result = int32(v)
 	case int64:
 		result, err = strconv.ParseInt(string(node.Raw), 10, 64)
+	case uint:
+		var v uint64
+		v, err = strconv.ParseUint(string(node.Raw), 10, 64)
+		result = uint(v)
+	case uint8:
+		var v uint64
+		v, err = strconv.ParseUint(string(node.Raw), 10, 8)
+		result = uint8(v)
+	case uint16:
+		var v uint64
+		v, err = strconv.ParseUint(string(node.Raw), 10, 16)
+		result = uint16(v)
+	case uint32:
+		var v uint64
+		v, err = strconv.ParseUint(string(node.Raw), 10, 32)
+		result = uint32(v)
 	case uint64:
 		result, err = strconv.ParseUint(string(node.Raw), 10, 64)
+	case float32:
+		var v float64
+		v, err = strconv.ParseFloat(string(node.Raw), 32)
+		result = float32(v)
 	case float64:
 		result, err = strconv.ParseFloat(string(node.Raw), 64)
 	case bool:
@@ -603,10 +635,27 @@ func encodeValue(value any) ([]byte, cst.NodeKind, error) {
 		return []byte(`"` + escapeString(v) + `"`), cst.NodeString, nil
 	case int:
 		return []byte(strconv.Itoa(v)), cst.NodeInteger, nil
+	case int8:
+		return []byte(strconv.FormatInt(int64(v), 10)), cst.NodeInteger, nil
+	case int16:
+		return []byte(strconv.FormatInt(int64(v), 10)), cst.NodeInteger, nil
+	case int32:
+		return []byte(strconv.FormatInt(int64(v), 10)), cst.NodeInteger, nil
 	case int64:
 		return []byte(strconv.FormatInt(v, 10)), cst.NodeInteger, nil
+	case uint:
+		return []byte(strconv.FormatUint(uint64(v), 10)), cst.NodeInteger, nil
+	case uint8:
+		return []byte(strconv.FormatUint(uint64(v), 10)), cst.NodeInteger, nil
+	case uint16:
+		return []byte(strconv.FormatUint(uint64(v), 10)), cst.NodeInteger, nil
+	case uint32:
+		return []byte(strconv.FormatUint(uint64(v), 10)), cst.NodeInteger, nil
 	case uint64:
 		return []byte(strconv.FormatUint(v, 10)), cst.NodeInteger, nil
+	case float32:
+		s := strconv.FormatFloat(float64(v), 'f', -1, 32)
+		return []byte(s), cst.NodeFloat, nil
 	case float64:
 		s := strconv.FormatFloat(v, 'f', -1, 64)
 		return []byte(s), cst.NodeFloat, nil

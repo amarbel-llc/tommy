@@ -133,6 +133,435 @@ func TestDecodeEncode(t *testing.T) {
 	}
 }
 
+func TestIntegrationSizedIntegers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/sizedints",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package sizedints
+
+//go:generate tommy generate
+type Config struct {
+	A int8    `+"`"+`toml:"a"`+"`"+`
+	B int16   `+"`"+`toml:"b"`+"`"+`
+	C int32   `+"`"+`toml:"c"`+"`"+`
+	D uint    `+"`"+`toml:"d"`+"`"+`
+	E uint8   `+"`"+`toml:"e"`+"`"+`
+	F uint16  `+"`"+`toml:"f"`+"`"+`
+	G uint32  `+"`"+`toml:"g"`+"`"+`
+	H float32 `+"`"+`toml:"h"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "sizedints_test.go", `package sizedints
+
+import "testing"
+
+func TestSizedIntRoundTrip(t *testing.T) {
+	input := []byte(`+"`"+`a = 42
+b = 1000
+c = 100000
+d = 99
+e = 200
+f = 50000
+g = 3000000
+h = 3.14
+`+"`"+`)
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	d := doc.Data()
+	if d.A != 42 {
+		t.Fatalf("A = %d, want 42", d.A)
+	}
+	if d.B != 1000 {
+		t.Fatalf("B = %d, want 1000", d.B)
+	}
+	if d.C != 100000 {
+		t.Fatalf("C = %d, want 100000", d.C)
+	}
+	if d.D != 99 {
+		t.Fatalf("D = %d, want 99", d.D)
+	}
+	if d.E != 200 {
+		t.Fatalf("E = %d, want 200", d.E)
+	}
+	if d.F != 50000 {
+		t.Fatalf("F = %d, want 50000", d.F)
+	}
+	if d.G != 3000000 {
+		t.Fatalf("G = %d, want 3000000", d.G)
+	}
+	if d.H < 3.13 || d.H > 3.15 {
+		t.Fatalf("H = %f, want ~3.14", d.H)
+	}
+
+	// Modify and re-encode.
+	d.A = 10
+	d.H = 2.5
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if d2.A != 10 {
+		t.Fatalf("re-decoded A = %d, want 10", d2.A)
+	}
+	if d2.H < 2.49 || d2.H > 2.51 {
+		t.Fatalf("re-decoded H = %f, want ~2.5", d2.H)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
+func TestIntegrationSlicePointerPrimitive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/sliceptr",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package sliceptr
+
+//go:generate tommy generate
+type Config struct {
+	Names []*string `+"`"+`toml:"names"`+"`"+`
+	Ports []*int    `+"`"+`toml:"ports"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "sliceptr_test.go", `package sliceptr
+
+import "testing"
+
+func TestSlicePointerPrimitiveRoundTrip(t *testing.T) {
+	input := []byte(`+"`"+`names = ["alice", "bob"]
+ports = [8080, 9090]
+`+"`"+`)
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	d := doc.Data()
+	if len(d.Names) != 2 {
+		t.Fatalf("Names len = %d, want 2", len(d.Names))
+	}
+	if *d.Names[0] != "alice" {
+		t.Fatalf("Names[0] = %q, want %q", *d.Names[0], "alice")
+	}
+	if *d.Names[1] != "bob" {
+		t.Fatalf("Names[1] = %q, want %q", *d.Names[1], "bob")
+	}
+	if len(d.Ports) != 2 {
+		t.Fatalf("Ports len = %d, want 2", len(d.Ports))
+	}
+	if *d.Ports[0] != 8080 {
+		t.Fatalf("Ports[0] = %d, want 8080", *d.Ports[0])
+	}
+
+	// Modify and re-encode.
+	newName := "charlie"
+	d.Names[0] = &newName
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if *d2.Names[0] != "charlie" {
+		t.Fatalf("re-decoded Names[0] = %q, want %q", *d2.Names[0], "charlie")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
+func TestIntegrationMapStringPointerStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/mapptr",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package mapptr
+
+//go:generate tommy generate
+type Config struct {
+	Servers map[string]*Server `+"`"+`toml:"servers"`+"`"+`
+}
+
+type Server struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "mapptr_test.go", `package mapptr
+
+import "testing"
+
+func TestMapPointerStructRoundTrip(t *testing.T) {
+	input := []byte(`+"`"+`[servers.prod]
+host = "prod.example.com"
+port = 443
+
+[servers.dev]
+host = "dev.example.com"
+port = 8080
+`+"`"+`)
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	d := doc.Data()
+	if len(d.Servers) != 2 {
+		t.Fatalf("Servers len = %d, want 2", len(d.Servers))
+	}
+	if d.Servers["prod"] == nil {
+		t.Fatal("Servers[prod] is nil")
+	}
+	if d.Servers["prod"].Host != "prod.example.com" {
+		t.Fatalf("Servers[prod].Host = %q, want %q", d.Servers["prod"].Host, "prod.example.com")
+	}
+	if d.Servers["prod"].Port != 443 {
+		t.Fatalf("Servers[prod].Port = %d, want 443", d.Servers["prod"].Port)
+	}
+	if d.Servers["dev"].Port != 8080 {
+		t.Fatalf("Servers[dev].Port = %d, want 8080", d.Servers["dev"].Port)
+	}
+
+	// Modify and re-encode.
+	d.Servers["prod"].Port = 8443
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if d2.Servers["prod"].Port != 8443 {
+		t.Fatalf("re-decoded Servers[prod].Port = %d, want 8443", d2.Servers["prod"].Port)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
+func TestIntegrationPointerStructWithSliceStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/ptrslice",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	// Reproducer for #52: *Struct containing []Struct generates code
+	// that references undefined `d` receiver in DecodeInto/EncodeFrom.
+	writeFixture(t, dir, "config.go", `package ptrslice
+
+//go:generate tommy generate
+type Config struct {
+	Exec    *ExecConfig    `+"`"+`toml:"exec"`+"`"+`
+	Servers []ServerConfig `+"`"+`toml:"servers"`+"`"+`
+}
+
+type ExecConfig struct {
+	Allow []ExecRule `+"`"+`toml:"allow"`+"`"+`
+	Deny  []ExecRule `+"`"+`toml:"deny"`+"`"+`
+}
+
+type ExecRule struct {
+	Binary string            `+"`"+`toml:"binary"`+"`"+`
+	Args   []string          `+"`"+`toml:"args"`+"`"+`
+	Cwd    []string          `+"`"+`toml:"cwd"`+"`"+`
+	Env    map[string]string `+"`"+`toml:"env"`+"`"+`
+}
+
+type ServerConfig struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "ptrslice_test.go", `package ptrslice
+
+import "testing"
+
+func TestPointerStructWithSliceStruct(t *testing.T) {
+	input := []byte(`+"`"+`[[servers]]
+name = "grit"
+
+[exec]
+
+[[exec.allow]]
+binary = "go"
+args = ["build"]
+cwd = ["/tmp"]
+
+[[exec.deny]]
+binary = "rm"
+`+"`"+`)
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	d := doc.Data()
+	if d.Exec == nil {
+		t.Fatal("Exec is nil")
+	}
+	if len(d.Exec.Allow) != 1 {
+		t.Fatalf("Allow len = %d, want 1", len(d.Exec.Allow))
+	}
+	if d.Exec.Allow[0].Binary != "go" {
+		t.Fatalf("Allow[0].Binary = %q, want %q", d.Exec.Allow[0].Binary, "go")
+	}
+	if len(d.Exec.Deny) != 1 {
+		t.Fatalf("Deny len = %d, want 1", len(d.Exec.Deny))
+	}
+	if len(d.Servers) != 1 {
+		t.Fatalf("Servers len = %d, want 1", len(d.Servers))
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if d2.Exec.Allow[0].Binary != "go" {
+		t.Fatalf("re-decoded Allow[0].Binary = %q, want %q", d2.Exec.Allow[0].Binary, "go")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 func TestIntegrationArrayOfTables(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
