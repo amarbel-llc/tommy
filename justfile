@@ -107,4 +107,8 @@ debug-all-backends pattern='TestIntegration':
   @echo "=== jen ==="
   TOMMY_CODEGEN_IR=jen go test -run '{{pattern}}' ./generate/ -count=1
 
+[group('debug')]
+debug-bench:
+  go test -run TestBenchmarkBackends ./generate/ -v -count=1
+
 clean-go: clean-go-cache clean-go-modcache
