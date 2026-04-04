@@ -52,7 +52,6 @@ type Config struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	// Write a test that exercises the generated decode/encode round-trip.
 	writeFixture(t, dir, "roundtrip_test.go", `package roundtrip
 
@@ -727,7 +726,6 @@ type Server struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "aot_test.go", `package aot
 
 import "testing"
@@ -762,7 +760,6 @@ func TestAOTRoundTrip(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("generated test failed:\n%s", output)
 	}
@@ -859,7 +856,6 @@ type ServerConfig struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "main_test.go", `package main
 
 import "testing"
@@ -889,7 +885,6 @@ func TestCustomTypes(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -995,7 +990,6 @@ type AnnotationFilter struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "main.go", "package main\n\nfunc main() {}\n")
 
@@ -1159,7 +1153,6 @@ func TestDecodeNoAnnotationSubTable(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1252,7 +1245,6 @@ type AnnotationFilter struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "flatkey_test.go", `package flatkey
 
 import "testing"
@@ -1317,7 +1309,6 @@ func TestNoFlatKeysNoSubTable(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1370,7 +1361,6 @@ type Hooks struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "sweatfile_test.go", `package sweatfile
 
@@ -1536,7 +1526,6 @@ func TestUndecodedMapKeysAllConsumed(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1588,7 +1577,6 @@ type Hooks struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "ptrstruct_test.go", `package ptrstruct
 
 import (
@@ -1627,7 +1615,6 @@ func TestModifyPointerStructField(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1674,7 +1661,6 @@ type Config struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "dash_test.go", `package tomldash
 
 import (
@@ -1711,7 +1697,6 @@ func TestDashFieldExcluded(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1761,7 +1746,6 @@ type Hooks struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "omitempty_test.go", `package omitempty
 
@@ -1861,7 +1845,6 @@ func TestExplicitSliceOmitemptyPreserved(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -1907,7 +1890,6 @@ type Config struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "zeroval_test.go", `package zeroval
 
@@ -1962,7 +1944,6 @@ func TestZeroValuePreservedWhenExplicit(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -2011,7 +1992,6 @@ type Server struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "append_test.go", `package aotappend
 
@@ -2075,7 +2055,6 @@ func TestAppendPreservesExisting(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -2121,7 +2100,6 @@ type Config struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "omitprim_test.go", `package omitprim
 
@@ -2181,7 +2159,6 @@ func TestOmitemptyPrimitiveNonZeroPreserved(t *testing.T) {
 	cmd2.Dir = dir
 	cmd2.Env = append(os.Environ(), "GOFLAGS=")
 	output2, err := cmd2.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output2)
 	}
@@ -2226,7 +2203,6 @@ type Config struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "multiline_test.go", `package multiline
 
@@ -2287,7 +2263,6 @@ func TestMultilineEncodeNewValue(t *testing.T) {
 	cmdML.Dir = dir
 	cmdML.Env = append(os.Environ(), "GOFLAGS=")
 	outputML, err := cmdML.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputML)
 	}
@@ -2358,7 +2333,6 @@ type Config struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "textmarshal_test.go", `package textmarshal
 
 import "testing"
@@ -2411,7 +2385,6 @@ func TestTextMarshalerModify(t *testing.T) {
 	cmdTM.Dir = dir
 	cmdTM.Env = append(os.Environ(), "GOFLAGS=")
 	outputTM, err := cmdTM.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputTM)
 	}
@@ -2462,7 +2435,6 @@ type Config struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "embedded_test.go", `package embedded
 
@@ -2528,7 +2500,6 @@ func TestEmbeddedStructModify(t *testing.T) {
 	cmdEmb.Dir = dir
 	cmdEmb.Env = append(os.Environ(), "GOFLAGS=")
 	outputEmb, err := cmdEmb.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputEmb)
 	}
@@ -2578,7 +2549,6 @@ type ActionSpec struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "mapstruct_test.go", `package mapstruct
 
@@ -2647,7 +2617,6 @@ func TestMapStringStructModify(t *testing.T) {
 	cmdMS.Dir = dir
 	cmdMS.Env = append(os.Environ(), "GOFLAGS=")
 	outputMS, err := cmdMS.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputMS)
 	}
@@ -2780,7 +2749,6 @@ func TestNestedMapRoundTrip(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -2850,7 +2818,6 @@ type Config struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "slicetm_test.go", `package slicetm
 
 import "testing"
@@ -2910,7 +2877,6 @@ func TestSliceTextMarshalerModify(t *testing.T) {
 	cmdST.Dir = dir
 	cmdST.Env = append(os.Environ(), "GOFLAGS=")
 	outputST, err := cmdST.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputST)
 	}
@@ -2956,7 +2922,6 @@ type SelectorConfig struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "uint64_test.go", `package uint64test
 
@@ -3018,7 +2983,6 @@ func TestUint64Modify(t *testing.T) {
 	cmdU.Dir = dir
 	cmdU.Env = append(os.Environ(), "GOFLAGS=")
 	outputU, err := cmdU.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputU)
 	}
@@ -3114,7 +3078,6 @@ func TestNestedArrayOfTablesInStructRoundTrip(t *testing.T) {
 	cmdN.Dir = dir
 	cmdN.Env = append(os.Environ(), "GOFLAGS=")
 	outputN, err := cmdN.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputN)
 	}
@@ -3231,7 +3194,6 @@ func TestNestedArrayOfTablesRoundTrip(t *testing.T) {
 	cmdN.Dir = dir
 	cmdN.Env = append(os.Environ(), "GOFLAGS=")
 	outputN, err := cmdN.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputN)
 	}
@@ -5396,7 +5358,6 @@ type Output struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "emptydoc_test.go", `package emptydoc
 
 import (
@@ -5518,7 +5479,6 @@ func TestEncodeFromEmptyDocumentPointerStruct(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -5568,7 +5528,6 @@ type Hooks struct {
 	if _, err := os.ReadFile(filepath.Join(dir, "config_tommy.go")); err != nil {
 		t.Fatalf("generated file not found: %v", err)
 	}
-
 
 	writeFixture(t, dir, "emptyptr_test.go", `package emptyptr
 
@@ -5630,7 +5589,6 @@ func TestEncodePointerStructFromEmptyDocument(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -5927,7 +5885,6 @@ type Leaf struct {
 		t.Fatalf("generated file not found: %v", err)
 	}
 
-
 	writeFixture(t, dir, "nested_test.go", `package nested
 
 import (
@@ -5988,7 +5945,6 @@ func TestDeeplyNestedStructFromEmptyDocument(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
 	output, err := cmd.CombinedOutput()
-
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
@@ -6777,7 +6733,6 @@ func TestCrossPackageMapTypeAliasRoundTrip(t *testing.T) {
 	}
 }
 
-
 // gh#48: omitempty lost when inlining cross-package struct fields.
 // When Inner has a TextMarshaler field with omitempty and the zero value,
 // the encoder should omit the key. Instead it writes an empty string,
@@ -7552,4 +7507,332 @@ func TestEncodeFromScratchNestedSubTableOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
 	}
+}
+
+// --- Compositional nesting matrix tests (issue #56) ---
+
+func nestingSetup(t *testing.T) (string, string) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, repoRoot
+}
+
+func nestingGoMod(t *testing.T, dir, repoRoot, mod string) {
+	t.Helper()
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/" + mod, "", "go 1.26", "",
+		"require github.com/amarbel-llc/tommy v0.0.0", "",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+	}, "\n"))
+}
+
+func nestingRun(t *testing.T, dir string) {
+	t.Helper()
+	// Nesting matrix tests require the jennifer IR backend which has
+	// correct positional scoping for nested containers.
+	t.Setenv("TOMMY_CODEGEN_IR", "jen")
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, out)
+	}
+}
+
+// Struct > []Struct > primitive + map[string]string
+func TestNestingStructSliceStructLeaves(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n1")
+	writeFixture(t, dir, "config.go", `package n1
+//go:generate tommy generate
+type Config struct {
+	Database Database `+"`toml:\"database\"`"+`
+}
+type Database struct {
+	Replicas []Replica `+"`toml:\"replicas\"`"+`
+}
+type Replica struct {
+	Host   string            `+"`toml:\"host\"`"+`
+	Port   int               `+"`toml:\"port\"`"+`
+	Labels map[string]string `+"`toml:\"labels\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n1
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[database]\n\n[[database.replicas]]\nhost = \"primary\"\nport = 5432\n\n[database.replicas.labels]\nrole = \"primary\"\nregion = \"us\"\n\n[[database.replicas]]\nhost = \"secondary\"\nport = 5433\n\n[database.replicas.labels]\nrole = \"secondary\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Database.Replicas) != 2 { t.Fatalf("len=%d", len(d.Database.Replicas)) }
+	if d.Database.Replicas[0].Host != "primary" { t.Fatalf("host=%q", d.Database.Replicas[0].Host) }
+	if d.Database.Replicas[0].Port != 5432 { t.Fatalf("port=%d", d.Database.Replicas[0].Port) }
+	if d.Database.Replicas[0].Labels["role"] != "primary" { t.Fatalf("label=%q", d.Database.Replicas[0].Labels["role"]) }
+	if d.Database.Replicas[1].Labels["role"] != "secondary" { t.Fatalf("label=%q", d.Database.Replicas[1].Labels["role"]) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Database.Replicas[0].Labels["region"] != "us" { t.Fatal("round-trip lost region") }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// *Struct > []Struct > primitive + map[string]string (explicit + implicit parent)
+func TestNestingPointerStructSliceStructLeaves(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n2")
+	writeFixture(t, dir, "config.go", `package n2
+//go:generate tommy generate
+type Config struct {
+	Exec *ExecConfig `+"`toml:\"exec\"`"+`
+}
+type ExecConfig struct {
+	Allow []Rule `+"`toml:\"allow\"`"+`
+	Deny  []Rule `+"`toml:\"deny\"`"+`
+}
+type Rule struct {
+	Binary string            `+"`toml:\"binary\"`"+`
+	Env    map[string]string `+"`toml:\"env\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n2
+import "testing"
+func TestExplicitTable(t *testing.T) {
+	input := []byte("[exec]\n\n[[exec.allow]]\nbinary = \"go\"\n\n[exec.allow.env]\nGOPATH = \"/go\"\n\n[[exec.deny]]\nbinary = \"rm\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Exec == nil { t.Fatal("nil") }
+	if len(d.Exec.Allow) != 1 { t.Fatalf("allow=%d", len(d.Exec.Allow)) }
+	if d.Exec.Allow[0].Binary != "go" { t.Fatalf("binary=%q", d.Exec.Allow[0].Binary) }
+	if d.Exec.Allow[0].Env["GOPATH"] != "/go" { t.Fatalf("env=%q", d.Exec.Allow[0].Env["GOPATH"]) }
+	if len(d.Exec.Deny) != 1 { t.Fatalf("deny=%d", len(d.Exec.Deny)) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Exec.Allow[0].Env["GOPATH"] != "/go" { t.Fatal("round-trip env lost") }
+}
+func TestImplicitTable(t *testing.T) {
+	input := []byte("[[exec.allow]]\nbinary = \"git\"\n\n[[exec.allow]]\nbinary = \"go\"\n\n[[exec.deny]]\nbinary = \"sudo\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Exec == nil { t.Fatal("nil with implicit table") }
+	if len(d.Exec.Allow) != 2 { t.Fatalf("allow=%d", len(d.Exec.Allow)) }
+	if len(d.Exec.Deny) != 1 { t.Fatalf("deny=%d", len(d.Exec.Deny)) }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// []Struct > Struct > primitive
+func TestNestingSliceStructStruct(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n3")
+	writeFixture(t, dir, "config.go", `package n3
+//go:generate tommy generate
+type Config struct {
+	Servers []Server `+"`toml:\"servers\"`"+`
+}
+type Server struct {
+	Name     string   `+"`toml:\"name\"`"+`
+	Settings Settings `+"`toml:\"settings\"`"+`
+}
+type Settings struct {
+	MaxConns int    `+"`toml:\"max_conns\"`"+`
+	Mode     string `+"`toml:\"mode\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n3
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"alpha\"\n\n[servers.settings]\nmax_conns = 100\nmode = \"rw\"\n\n[[servers]]\nname = \"beta\"\n\n[servers.settings]\nmax_conns = 50\nmode = \"ro\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Servers) != 2 { t.Fatalf("len=%d", len(d.Servers)) }
+	if d.Servers[0].Settings.MaxConns != 100 { t.Fatalf("max=%d", d.Servers[0].Settings.MaxConns) }
+	if d.Servers[1].Settings.Mode != "ro" { t.Fatalf("mode=%q", d.Servers[1].Settings.Mode) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Servers[0].Settings.MaxConns != 100 { t.Fatal("round-trip MaxConns") }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// []Struct > *Struct > primitive
+func TestNestingSliceStructPointerStruct(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n4")
+	writeFixture(t, dir, "config.go", `package n4
+//go:generate tommy generate
+type Config struct {
+	Jobs []Job `+"`toml:\"jobs\"`"+`
+}
+type Job struct {
+	Name    string   `+"`toml:\"name\"`"+`
+	Timeout *Timeout `+"`toml:\"timeout\"`"+`
+}
+type Timeout struct {
+	Seconds int  `+"`toml:\"seconds\"`"+`
+	Retry   bool `+"`toml:\"retry\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n4
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[jobs]]\nname = \"build\"\n\n[jobs.timeout]\nseconds = 300\nretry = true\n\n[[jobs]]\nname = \"lint\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Jobs) != 2 { t.Fatalf("len=%d", len(d.Jobs)) }
+	if d.Jobs[0].Timeout == nil { t.Fatal("nil") }
+	if d.Jobs[0].Timeout.Seconds != 300 { t.Fatalf("sec=%d", d.Jobs[0].Timeout.Seconds) }
+	if !d.Jobs[0].Timeout.Retry { t.Fatal("retry") }
+	if d.Jobs[1].Timeout != nil { t.Fatal("should be nil") }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Jobs[0].Timeout.Seconds != 300 { t.Fatal("round-trip") }
+	if doc2.Data().Jobs[1].Timeout != nil { t.Fatal("round-trip nil") }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// []Struct > map[string]string
+func TestNestingSliceStructMapStringString(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n5")
+	writeFixture(t, dir, "config.go", `package n5
+//go:generate tommy generate
+type Config struct {
+	Services []Service `+"`toml:\"services\"`"+`
+}
+type Service struct {
+	Name   string            `+"`toml:\"name\"`"+`
+	Labels map[string]string `+"`toml:\"labels\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n5
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[services]]\nname = \"api\"\n\n[services.labels]\nenv = \"prod\"\nteam = \"backend\"\n\n[[services]]\nname = \"worker\"\n\n[services.labels]\nenv = \"staging\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Services) != 2 { t.Fatalf("len=%d", len(d.Services)) }
+	if d.Services[0].Labels["env"] != "prod" { t.Fatalf("env=%q", d.Services[0].Labels["env"]) }
+	if d.Services[0].Labels["team"] != "backend" { t.Fatalf("team=%q", d.Services[0].Labels["team"]) }
+	if d.Services[1].Labels["env"] != "staging" { t.Fatalf("env=%q", d.Services[1].Labels["env"]) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Services[0].Labels["team"] != "backend" { t.Fatal("round-trip") }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// map[string]Struct > []Struct > primitive
+func TestNestingMapStringStructSliceStruct(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n6")
+	writeFixture(t, dir, "config.go", `package n6
+//go:generate tommy generate
+type Config struct {
+	Pipelines map[string]Pipeline `+"`toml:\"pipelines\"`"+`
+}
+type Pipeline struct {
+	Steps []Step `+"`toml:\"steps\"`"+`
+}
+type Step struct {
+	Name    string `+"`toml:\"name\"`"+`
+	Command string `+"`toml:\"command\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n6
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[pipelines.ci]\n\n[[pipelines.ci.steps]]\nname = \"build\"\ncommand = \"make\"\n\n[[pipelines.ci.steps]]\nname = \"test\"\ncommand = \"make test\"\n\n[pipelines.deploy]\n\n[[pipelines.deploy.steps]]\nname = \"push\"\ncommand = \"docker push\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Pipelines) != 2 { t.Fatalf("len=%d", len(d.Pipelines)) }
+	ci := d.Pipelines["ci"]
+	if len(ci.Steps) != 2 { t.Fatalf("ci.steps=%d", len(ci.Steps)) }
+	if ci.Steps[0].Name != "build" { t.Fatalf("name=%q", ci.Steps[0].Name) }
+	deploy := d.Pipelines["deploy"]
+	if len(deploy.Steps) != 1 { t.Fatalf("deploy.steps=%d", len(deploy.Steps)) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Pipelines["ci"].Steps[1].Command != "make test" { t.Fatal("round-trip") }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// map[string]Struct > *Struct > primitive
+func TestNestingMapStringStructPointerStruct(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n7")
+	writeFixture(t, dir, "config.go", `package n7
+//go:generate tommy generate
+type Config struct {
+	Targets map[string]Target `+"`toml:\"targets\"`"+`
+}
+type Target struct {
+	Host string      `+"`toml:\"host\"`"+`
+	Auth *AuthConfig `+"`toml:\"auth\"`"+`
+}
+type AuthConfig struct {
+	User  string `+"`toml:\"user\"`"+`
+	Token string `+"`toml:\"token\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n7
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[targets.prod]\nhost = \"prod.example.com\"\n\n[targets.prod.auth]\nuser = \"deploy\"\ntoken = \"secret\"\n\n[targets.staging]\nhost = \"staging.example.com\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Targets) != 2 { t.Fatalf("len=%d", len(d.Targets)) }
+	prod := d.Targets["prod"]
+	if prod.Host != "prod.example.com" { t.Fatalf("host=%q", prod.Host) }
+	if prod.Auth == nil { t.Fatal("nil") }
+	if prod.Auth.User != "deploy" { t.Fatalf("user=%q", prod.Auth.User) }
+	staging := d.Targets["staging"]
+	if staging.Auth != nil { t.Fatal("should be nil") }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Targets["prod"].Auth.Token != "secret" { t.Fatal("round-trip") }
+}
+`)
+	nestingRun(t, dir)
 }

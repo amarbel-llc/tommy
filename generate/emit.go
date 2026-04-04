@@ -3,6 +3,7 @@ package generate
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"unicode"
 )
@@ -67,6 +68,12 @@ func (ctx emitContext) withFoundVar(varName string) emitContext {
 }
 
 func emitDecodeBody(si StructInfo) string {
+	switch os.Getenv("TOMMY_CODEGEN_IR") {
+	case "cst":
+		return irCSTDecodeBody(si)
+	case "api", "1":
+		return irDecodeBody(si)
+	}
 	ctx := receiverContext()
 	var buf bytes.Buffer
 	for _, fi := range si.Fields {
@@ -95,6 +102,12 @@ func emitEncodeBody(si StructInfo) string {
 }
 
 func emitDecodeIntoBody(si StructInfo) string {
+	switch os.Getenv("TOMMY_CODEGEN_IR") {
+	case "cst":
+		return irCSTDecodeIntoBody(si)
+	case "api", "1":
+		return irDecodeIntoBody(si)
+	}
 	ctx := freeContext()
 	var buf bytes.Buffer
 	for _, fi := range si.Fields {

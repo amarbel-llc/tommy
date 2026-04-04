@@ -2,6 +2,7 @@ package generate
 
 import (
 	"io"
+	"os"
 	"strings"
 	"text/template"
 	"unicode"
@@ -155,20 +156,21 @@ func isSamePackageSliceStruct(fi FieldInfo) bool {
 
 func RenderFile(w io.Writer, pkg string, structs []StructInfo) error {
 	tmpl := template.Must(template.New("file").Funcs(template.FuncMap{
-		"unexport":               unexport,
-		"lower":                  strings.ToLower,
-		"kindInt":                func(k FieldKind) int { return int(k) },
+		"unexport":                 unexport,
+		"lower":                    strings.ToLower,
+		"kindInt":                  func(k FieldKind) int { return int(k) },
 		"isSamePackageSliceStruct": isSamePackageSliceStruct,
-		"emitDecode":     func(si StructInfo) string { return emitDecodeBody(si) },
-		"emitEncode":     func(si StructInfo) string { return emitEncodeBody(si) },
-		"emitDecodeInto": func(si StructInfo) string { return emitDecodeIntoBody(si) },
-		"emitEncodeFrom": func(si StructInfo) string { return emitEncodeFromBody(si) },
+		"emitDecode":               func(si StructInfo) string { return emitDecodeBody(si) },
+		"emitEncode":               func(si StructInfo) string { return emitEncodeBody(si) },
+		"emitDecodeInto":           func(si StructInfo) string { return emitDecodeIntoBody(si) },
+		"emitEncodeFrom":           func(si StructInfo) string { return emitEncodeFromBody(si) },
 	}).Parse(fileTemplate))
 
 	return tmpl.Execute(w, fileData{
 		Package:      pkg,
 		Structs:      structs,
 		ExtraImports: collectImportPaths(structs),
-		NeedsStrings: hasFieldKind(structs, FieldMapStringDelegatedStruct),
+		NeedsStrings: hasFieldKind(structs, FieldMapStringDelegatedStruct) ||
+			os.Getenv("TOMMY_CODEGEN_IR") == "cst",
 	})
 }
