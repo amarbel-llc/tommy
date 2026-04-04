@@ -13,45 +13,199 @@ const benchGoFile = `package bench
 
 //go:generate tommy generate
 type Config struct {
-	Title   string            ` + "`toml:\"title\"`" + `
-	Version int               ` + "`toml:\"version\"`" + `
-	Debug   *bool             ` + "`toml:\"debug\"`" + `
-	Tags    []string          ` + "`toml:\"tags\"`" + `
-	Env     map[string]string ` + "`toml:\"env\"`" + `
-	Servers []Server          ` + "`toml:\"servers\"`" + `
+	Title       string            ` + "`toml:\"title\"`" + `
+	Description string            ` + "`toml:\"description\"`" + `
+	Version     int               ` + "`toml:\"version\"`" + `
+	MaxRetries  int               ` + "`toml:\"max_retries\"`" + `
+	Timeout     float64           ` + "`toml:\"timeout\"`" + `
+	Debug       *bool             ` + "`toml:\"debug\"`" + `
+	Verbose     *bool             ` + "`toml:\"verbose\"`" + `
+	Tags        []string          ` + "`toml:\"tags\"`" + `
+	Features    []string          ` + "`toml:\"features\"`" + `
+	Env         map[string]string ` + "`toml:\"env\"`" + `
+	Database    Database          ` + "`toml:\"database\"`" + `
+	Logging     Logging           ` + "`toml:\"logging\"`" + `
+	Servers     []Server          ` + "`toml:\"servers\"`" + `
+}
+
+type Database struct {
+	Host     string ` + "`toml:\"host\"`" + `
+	Port     int    ` + "`toml:\"port\"`" + `
+	Name     string ` + "`toml:\"name\"`" + `
+	User     string ` + "`toml:\"user\"`" + `
+	Password string ` + "`toml:\"password\"`" + `
+	SSLMode  string ` + "`toml:\"ssl_mode\"`" + `
+	MaxConns int    ` + "`toml:\"max_conns\"`" + `
+	IdleConns int   ` + "`toml:\"idle_conns\"`" + `
+}
+
+type Logging struct {
+	Level  string ` + "`toml:\"level\"`" + `
+	Format string ` + "`toml:\"format\"`" + `
+	Output string ` + "`toml:\"output\"`" + `
+	File   string ` + "`toml:\"file\"`" + `
 }
 
 type Server struct {
-	Host string ` + "`toml:\"host\"`" + `
-	Port int    ` + "`toml:\"port\"`" + `
-	Role string ` + "`toml:\"role\"`" + `
+	Host       string            ` + "`toml:\"host\"`" + `
+	Port       int               ` + "`toml:\"port\"`" + `
+	Role       string            ` + "`toml:\"role\"`" + `
+	Weight     int               ` + "`toml:\"weight\"`" + `
+	MaxConns   int               ` + "`toml:\"max_conns\"`" + `
+	TLS        bool              ` + "`toml:\"tls\"`" + `
+	Region     string            ` + "`toml:\"region\"`" + `
+	Datacenter string            ` + "`toml:\"datacenter\"`" + `
+	Labels     map[string]string ` + "`toml:\"labels\"`" + `
+	Healthcheck Healthcheck      ` + "`toml:\"healthcheck\"`" + `
+}
+
+type Healthcheck struct {
+	Path     string ` + "`toml:\"path\"`" + `
+	Interval int    ` + "`toml:\"interval\"`" + `
+	Timeout  int    ` + "`toml:\"timeout\"`" + `
+	Retries  int    ` + "`toml:\"retries\"`" + `
 }
 `
 
-const benchTOML = `title = "My App"
+const benchTOML = `title = "Production App"
+description = "A large configuration for benchmarking codegen backends"
 version = 42
+max_retries = 3
+timeout = 30.5
 debug = true
-tags = ["web", "api", "v2"]
+verbose = false
+tags = ["web", "api", "v2", "production"]
+features = ["auth", "rate-limit", "cors", "logging", "metrics"]
 
 [env]
 HOME = "/home/app"
 PORT = "8080"
 DEBUG = "true"
+LOG_LEVEL = "info"
+DATABASE_URL = "postgres://localhost/mydb"
+REDIS_URL = "redis://localhost:6379"
+SECRET_KEY = "supersecret"
+API_KEY = "abc123def456"
+
+[database]
+host = "db.example.com"
+port = 5432
+name = "production"
+user = "app"
+password = "secret"
+ssl_mode = "require"
+max_conns = 100
+idle_conns = 10
+
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+file = "/var/log/app.log"
 
 [[servers]]
 host = "alpha.example.com"
 port = 8080
 role = "primary"
+weight = 10
+max_conns = 1000
+tls = true
+region = "us-east-1"
+datacenter = "dc1"
+
+[servers.labels]
+env = "prod"
+team = "backend"
+tier = "frontend"
+
+[servers.healthcheck]
+path = "/health"
+interval = 10
+timeout = 5
+retries = 3
 
 [[servers]]
 host = "beta.example.com"
 port = 8081
 role = "replica"
+weight = 5
+max_conns = 500
+tls = true
+region = "us-west-2"
+datacenter = "dc2"
+
+[servers.labels]
+env = "prod"
+team = "backend"
+tier = "backend"
+
+[servers.healthcheck]
+path = "/health"
+interval = 15
+timeout = 5
+retries = 2
 
 [[servers]]
 host = "gamma.example.com"
 port = 8082
 role = "replica"
+weight = 5
+max_conns = 500
+tls = false
+region = "eu-west-1"
+datacenter = "dc3"
+
+[servers.labels]
+env = "staging"
+team = "infra"
+
+[servers.healthcheck]
+path = "/ready"
+interval = 30
+timeout = 10
+retries = 1
+
+[[servers]]
+host = "delta.example.com"
+port = 8083
+role = "replica"
+weight = 3
+max_conns = 250
+tls = true
+region = "ap-southeast-1"
+datacenter = "dc4"
+
+[servers.labels]
+env = "prod"
+team = "backend"
+tier = "cache"
+version = "v2"
+
+[servers.healthcheck]
+path = "/health"
+interval = 10
+timeout = 3
+retries = 5
+
+[[servers]]
+host = "epsilon.example.com"
+port = 8084
+role = "standby"
+weight = 1
+max_conns = 100
+tls = true
+region = "us-east-1"
+datacenter = "dc1"
+
+[servers.labels]
+env = "prod"
+team = "sre"
+
+[servers.healthcheck]
+path = "/health"
+interval = 60
+timeout = 10
+retries = 1
 `
 
 const benchTestFile = `package bench
