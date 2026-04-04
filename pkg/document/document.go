@@ -601,7 +601,7 @@ func convertStringArray(node *cst.Node) ([]string, error) {
 }
 
 // IsMultilineString reports whether the value node for the given key uses
-// multiline string syntax (""" or ''').
+// multiline string syntax (""" or ”').
 func (doc *Document) IsMultilineString(key string) bool {
 	node, err := findValueNode(doc.root, key)
 	if err != nil {
@@ -961,7 +961,12 @@ func (doc *Document) FindSubTables(prefix string) []*cst.Node {
 		}
 		header := tableHeaderKey(child)
 		if strings.HasPrefix(header, dotPrefix) {
-			nodes = append(nodes, child)
+			// Only include direct children — exclude grandchildren
+			// (e.g., for prefix "a.b", include "a.b.c" but not "a.b.c.d")
+			suffix := header[len(dotPrefix):]
+			if !strings.Contains(suffix, ".") {
+				nodes = append(nodes, child)
+			}
 		}
 	}
 	return nodes

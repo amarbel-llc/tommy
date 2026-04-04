@@ -1065,3 +1065,76 @@ func TestCommentInTable(t *testing.T) {
 		t.Fatalf("GetComment(server.port) = %q, want %q", comment, "# listen port")
 	}
 }
+
+func TestFindSubTablesExcludesGrandchildren(t *testing.T) {
+	input := []byte(`[calendars.tasks]
+url = "https://example.com"
+type = "!task"
+
+[calendars.tasks.status-tags]
+COMPLETED = "done"
+
+[calendars.chores]
+url = "https://other.com"
+
+[calendars.chores.status-tags]
+COMPLETED = "archived"
+`)
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subs := doc.FindSubTables("calendars")
+	var keys []string
+	for _, s := range subs {
+		keys = append(keys, SubTableKey(s, "calendars"))
+	}
+
+	if len(subs) != 2 {
+		t.Fatalf("FindSubTables returned %d entries %v, want 2 (tasks, chores)", len(subs), keys)
+	}
+	for _, k := range keys {
+		if k == "tasks.status-tags" || k == "chores.status-tags" {
+			t.Fatalf("FindSubTables returned grandchild %q; want only direct children", k)
+		}
+	}
+}
+
+func TestFindSubTablesInContainerExcludesGrandchildren(t *testing.T) {
+	input := []byte(`[outer]
+
+[outer.calendars.tasks]
+url = "https://example.com"
+
+[outer.calendars.tasks.status-tags]
+COMPLETED = "done"
+
+[outer.calendars.chores]
+url = "https://other.com"
+`)
+	doc, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outerNode := findTableNode(doc.root, "outer")
+	if outerNode == nil {
+		t.Fatal("outer table not found")
+	}
+
+	subs := doc.FindSubTablesInContainer(outerNode, "calendars")
+	var keys []string
+	for _, s := range subs {
+		keys = append(keys, SubTableKeyInContainer(s, outerNode, "calendars"))
+	}
+
+	if len(subs) != 2 {
+		t.Fatalf("FindSubTablesInContainer returned %d entries %v, want 2 (tasks, chores)", len(subs), keys)
+	}
+	for _, k := range keys {
+		if k == "tasks.status-tags" {
+			t.Fatalf("FindSubTablesInContainer returned grandchild %q; want only direct children", k)
+		}
+	}
+}

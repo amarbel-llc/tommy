@@ -7836,3 +7836,117 @@ func TestDecode(t *testing.T) {
 `)
 	nestingRun(t, dir)
 }
+
+// Regression test for #60: map[string]Struct with nested sub-tables should not
+// produce phantom map entries from grandchild tables.
+func TestIntegrationMapStringStructNestedSubTable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/issue60", "", "go 1.26", "",
+		"require github.com/amarbel-llc/tommy v0.0.0", "",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package issue60
+
+//go:generate tommy generate
+type Config struct {
+	Calendars map[string]Calendar `+"`toml:\"calendars\"`"+`
+}
+
+type Calendar struct {
+	URL        string            `+"`toml:\"url\"`"+`
+	Type       string            `+"`toml:\"type\"`"+`
+	StatusTags map[string]string `+"`toml:\"status-tags\"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "config_test.go", `package issue60
+
+import "testing"
+
+func TestMapStructNestedSubTable(t *testing.T) {
+	input := []byte(`+"`"+`[calendars.tasks]
+url = "https://example.com/tasks"
+type = "!task"
+
+[calendars.tasks.status-tags]
+COMPLETED = "done"
+IN_PROGRESS = "wip"
+
+[calendars.chores]
+url = "https://example.com/chores"
+type = "!chore"
+
+[calendars.chores.status-tags]
+COMPLETED = "archived"
+`+"`"+`)
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := doc.Data()
+
+	// Should have exactly 2 calendar entries, not 4
+	if len(cfg.Calendars) != 2 {
+		var keys []string
+		for k := range cfg.Calendars {
+			keys = append(keys, k)
+		}
+		t.Fatalf("expected 2 calendars, got %d: %v", len(cfg.Calendars), keys)
+	}
+
+	tasks := cfg.Calendars["tasks"]
+	if tasks.URL != "https://example.com/tasks" {
+		t.Fatalf("tasks.URL = %q", tasks.URL)
+	}
+	if tasks.StatusTags["COMPLETED"] != "done" {
+		t.Fatalf("tasks.StatusTags[COMPLETED] = %q", tasks.StatusTags["COMPLETED"])
+	}
+
+	chores := cfg.Calendars["chores"]
+	if chores.URL != "https://example.com/chores" {
+		t.Fatalf("chores.URL = %q", chores.URL)
+	}
+
+	// Round-trip
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc2.Data().Calendars) != 2 {
+		t.Fatalf("round-trip: expected 2 calendars, got %d", len(doc2.Data().Calendars))
+	}
+	if doc2.Data().Calendars["tasks"].StatusTags["COMPLETED"] != "done" {
+		t.Fatal("round-trip lost status-tags")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	out, errCmd := cmd.CombinedOutput()
+	if errCmd != nil {
+		t.Fatalf("test failed:\n%s", out)
+	}
+}
