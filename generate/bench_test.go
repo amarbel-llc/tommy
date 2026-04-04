@@ -252,6 +252,154 @@ func BenchmarkRoundTrip(b *testing.B) {
 }
 `
 
+// benchTypesOnly is the struct definitions without //go:generate (for external libs).
+const benchTypesOnly = `package bench
+
+type Config struct {
+	Title       string            ` + "`toml:\"title\"`" + `
+	Description string            ` + "`toml:\"description\"`" + `
+	Version     int               ` + "`toml:\"version\"`" + `
+	MaxRetries  int               ` + "`toml:\"max_retries\"`" + `
+	Timeout     float64           ` + "`toml:\"timeout\"`" + `
+	Debug       *bool             ` + "`toml:\"debug\"`" + `
+	Verbose     *bool             ` + "`toml:\"verbose\"`" + `
+	Tags        []string          ` + "`toml:\"tags\"`" + `
+	Features    []string          ` + "`toml:\"features\"`" + `
+	Env         map[string]string ` + "`toml:\"env\"`" + `
+	Database    Database          ` + "`toml:\"database\"`" + `
+	Logging     Logging           ` + "`toml:\"logging\"`" + `
+	Servers     []Server          ` + "`toml:\"servers\"`" + `
+}
+
+type Database struct {
+	Host      string ` + "`toml:\"host\"`" + `
+	Port      int    ` + "`toml:\"port\"`" + `
+	Name      string ` + "`toml:\"name\"`" + `
+	User      string ` + "`toml:\"user\"`" + `
+	Password  string ` + "`toml:\"password\"`" + `
+	SSLMode   string ` + "`toml:\"ssl_mode\"`" + `
+	MaxConns  int    ` + "`toml:\"max_conns\"`" + `
+	IdleConns int    ` + "`toml:\"idle_conns\"`" + `
+}
+
+type Logging struct {
+	Level  string ` + "`toml:\"level\"`" + `
+	Format string ` + "`toml:\"format\"`" + `
+	Output string ` + "`toml:\"output\"`" + `
+	File   string ` + "`toml:\"file\"`" + `
+}
+
+type Server struct {
+	Host        string            ` + "`toml:\"host\"`" + `
+	Port        int               ` + "`toml:\"port\"`" + `
+	Role        string            ` + "`toml:\"role\"`" + `
+	Weight      int               ` + "`toml:\"weight\"`" + `
+	MaxConns    int               ` + "`toml:\"max_conns\"`" + `
+	TLS         bool              ` + "`toml:\"tls\"`" + `
+	Region      string            ` + "`toml:\"region\"`" + `
+	Datacenter  string            ` + "`toml:\"datacenter\"`" + `
+	Labels      map[string]string ` + "`toml:\"labels\"`" + `
+	Healthcheck Healthcheck       ` + "`toml:\"healthcheck\"`" + `
+}
+
+type Healthcheck struct {
+	Path     string ` + "`toml:\"path\"`" + `
+	Interval int    ` + "`toml:\"interval\"`" + `
+	Timeout  int    ` + "`toml:\"timeout\"`" + `
+	Retries  int    ` + "`toml:\"retries\"`" + `
+}
+`
+
+const benchTestBurntSushi = `package bench
+
+import (
+	"testing"
+
+	"github.com/BurntSushi/toml"
+)
+
+var benchInput = []byte(` + "`" + benchTOML + "`" + `)
+
+func BenchmarkDecode(b *testing.B) {
+	for b.Loop() {
+		var cfg Config
+		if err := toml.Unmarshal(benchInput, &cfg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEncode(b *testing.B) {
+	var cfg Config
+	if err := toml.Unmarshal(benchInput, &cfg); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := toml.Marshal(cfg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkRoundTrip(b *testing.B) {
+	for b.Loop() {
+		var cfg Config
+		if err := toml.Unmarshal(benchInput, &cfg); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := toml.Marshal(cfg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+`
+
+const benchTestPelletier = `package bench
+
+import (
+	"testing"
+
+	toml "github.com/pelletier/go-toml/v2"
+)
+
+var benchInput = []byte(` + "`" + benchTOML + "`" + `)
+
+func BenchmarkDecode(b *testing.B) {
+	for b.Loop() {
+		var cfg Config
+		if err := toml.Unmarshal(benchInput, &cfg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEncode(b *testing.B) {
+	var cfg Config
+	if err := toml.Unmarshal(benchInput, &cfg); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := toml.Marshal(cfg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkRoundTrip(b *testing.B) {
+	for b.Loop() {
+		var cfg Config
+		if err := toml.Unmarshal(benchInput, &cfg); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := toml.Marshal(cfg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+`
+
 func TestBenchmarkBackends(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping benchmark test in short mode")
@@ -326,11 +474,56 @@ func TestBenchmarkBackends(t *testing.T) {
 		})
 	}
 
+	// External libraries
+	externals := []struct {
+		name    string
+		gomod   string
+		testSrc string
+	}{
+		{
+			"burntsushi",
+			"module example.com/bench\n\ngo 1.26\n\nrequire github.com/BurntSushi/toml v1.6.0\n",
+			benchTestBurntSushi,
+		},
+		{
+			"pelletier",
+			"module example.com/bench\n\ngo 1.26\n\nrequire github.com/pelletier/go-toml/v2 v2.2.4\n",
+			benchTestPelletier,
+		},
+	}
+
+	for _, ext := range externals {
+		t.Run(ext.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFixture(t, dir, "go.mod", ext.gomod)
+			writeFixture(t, dir, "types.go", benchTypesOnly)
+			writeFixture(t, dir, "bench_test.go", ext.testSrc)
+
+			tidy := exec.Command("go", "mod", "tidy")
+			tidy.Dir = dir
+			if out, err := tidy.CombinedOutput(); err != nil {
+				t.Fatalf("go mod tidy: %s\n%s", err, out)
+			}
+
+			cmd := exec.Command("go", "test", "-bench=.", "-benchmem", "-benchtime=500ms", "-count=1", "./...")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "GOFLAGS=")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("go test -bench failed for %s:\n%s", ext.name, out)
+			}
+
+			results[ext.name] = extractBenchLines(string(out))
+			t.Logf("=== %s ===\n%s", ext.name, results[ext.name])
+		})
+	}
+
 	// Print summary
+	allNames := []string{"old", "api", "cst", "jen", "burntsushi", "pelletier"}
 	t.Log("\n=== BENCHMARK COMPARISON ===")
-	for _, b := range backends {
-		if r, ok := results[b.name]; ok {
-			t.Logf("\n--- %s ---\n%s", b.name, r)
+	for _, name := range allNames {
+		if r, ok := results[name]; ok {
+			t.Logf("\n--- %s ---\n%s", name, r)
 		}
 	}
 }
