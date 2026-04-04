@@ -5,6 +5,12 @@ build: build-go
 build-go:
   go build -o build/tommy ./cmd/tommy
 
+build-nix: gomod2nix
+  nix build --show-trace
+
+gomod2nix:
+  gomod2nix
+
 test: test-go test-bats
 
 test-go:

@@ -1,6 +1,10 @@
 schema = 3
 
 [mod]
+  [mod.'github.com/dave/jennifer']
+    version = 'v1.7.1'
+    hash = 'sha256-tKr4x0m+Nup2X9UyxIK+5ZXzrb1vyfPzc9hD2xh6H6g='
+
   [mod.'golang.org/x/mod']
     version = 'v0.34.0'
     hash = 'sha256-BJgLn+wh9s/XyS2LDmnXTj4ooR+r0Ew2SlxvJA+6GCs='
