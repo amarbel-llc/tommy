@@ -7950,3 +7950,118 @@ COMPLETED = "archived"
 		t.Fatalf("test failed:\n%s", out)
 	}
 }
+
+// Reproducer for #62: when a parent table exists but an optional nested pointer
+// struct sub-table is missing, the generated else branch shadows tableNode with
+// nil and panics trying to read flat-key fallback fields from it.
+func TestIntegrationOptionalNestedTableMissing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/optmissing",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package optmissing
+
+//go:generate tommy generate
+type Config struct {
+	Haustoria *HaustoriaConfig `+"`"+`toml:"haustoria"`+"`"+`
+}
+
+type HaustoriaConfig struct {
+	Type   string       `+"`"+`toml:"type"`+"`"+`
+	CalDAV *CalDAVConfig `+"`"+`toml:"caldav"`+"`"+`
+	Orgmode *OrgmodeConfig `+"`"+`toml:"orgmode"`+"`"+`
+}
+
+type CalDAVConfig struct {
+	URL string `+"`"+`toml:"url"`+"`"+`
+}
+
+type OrgmodeConfig struct {
+	Transport string `+"`"+`toml:"transport"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "optmissing_test.go", `package optmissing
+
+import "testing"
+
+func TestOptionalNestedTableMissing(t *testing.T) {
+	// Parent [haustoria] exists with [haustoria.orgmode], but
+	// [haustoria.caldav] is absent. The generated else branch for
+	// CalDAV must not panic.
+	input := []byte(`+"`"+`[haustoria]
+type = "orgmode"
+
+[haustoria.orgmode]
+transport = "sftp"
+`+"`"+`)
+
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	d := doc.Data()
+	if d.Haustoria == nil {
+		t.Fatal("Haustoria is nil")
+	}
+	if d.Haustoria.Type != "orgmode" {
+		t.Fatalf("Type = %q, want %q", d.Haustoria.Type, "orgmode")
+	}
+	if d.Haustoria.CalDAV != nil {
+		t.Fatalf("CalDAV should be nil, got %+v", d.Haustoria.CalDAV)
+	}
+	if d.Haustoria.Orgmode == nil {
+		t.Fatal("Orgmode is nil")
+	}
+	if d.Haustoria.Orgmode.Transport != "sftp" {
+		t.Fatalf("Transport = %q, want %q", d.Haustoria.Orgmode.Transport, "sftp")
+	}
+
+	// Round-trip: encode then re-decode should not lose data.
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	d2 := doc2.Data()
+	if d2.Haustoria.CalDAV != nil {
+		t.Fatalf("re-decoded CalDAV should be nil")
+	}
+	if d2.Haustoria.Orgmode == nil || d2.Haustoria.Orgmode.Transport != "sftp" {
+		t.Fatalf("re-decoded Orgmode lost data")
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
