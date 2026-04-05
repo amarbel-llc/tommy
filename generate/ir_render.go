@@ -115,6 +115,23 @@ func tomlKey(fullKey string) string {
 	return fullKey
 }
 
+// keyPathSuffix converts a dotted TOML key to a CamelCase suffix for unique
+// variable names in generated code. Splits on dots, hyphens, and underscores
+// to produce valid Go identifiers.
+// "haustoria.caldav" -> "HaustoriaCaldav", "exec-command" -> "ExecCommand".
+func keyPathSuffix(key string) string {
+	var sb strings.Builder
+	for _, seg := range strings.FieldsFunc(key, func(r rune) bool {
+		return r == '.' || r == '-' || r == '_'
+	}) {
+		seg = strings.TrimSpace(seg)
+		if seg != "" {
+			sb.WriteString(toUpperFirst(seg))
+		}
+	}
+	return sb.String()
+}
+
 func (d *decoder) findTable(indent, containerVar, bareKey string, useRootAPI bool) {
 	if useRootAPI {
 		d.w("%sif tableNode := %s.FindTable(%q); tableNode != nil {\n", indent, d.docVar, bareKey)
@@ -256,7 +273,7 @@ func (d *decoder) inTable(o InTable, containerVar, indent string) {
 func (d *decoder) inPointerTable(o InPointerTable, containerVar, indent string) {
 	bareKey := tomlKey(o.Key)
 	localVar := toLowerFirst(strings.TrimSuffix(o.Target[strings.LastIndex(o.Target, ".")+1:], "")) + "Val"
-	tableVar := bareKey + "Table"
+	tableVar := "_tbl" + keyPathSuffix(o.Key)
 
 	d.w("%s%s := %s.FindTableInContainer(%s, %q)\n",
 		indent, tableVar, d.docVar, containerVar, bareKey)
@@ -276,7 +293,7 @@ func (d *decoder) inPointerTable(o InPointerTable, containerVar, indent string) 
 }
 
 func (d *decoder) forArrayTable(o ForArrayTable, containerVar, indent, foundVar string) {
-	nodesVar := tomlKey(o.Key) + "Nodes"
+	nodesVar := "_nodes" + keyPathSuffix(o.DottedKey)
 	d.w("%s%s := %s.FindArrayTableNodes(%s)\n", indent, nodesVar,
 		d.docVar, d.consumedKeyExpr(o.DottedKey))
 	if foundVar != "" {

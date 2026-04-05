@@ -230,14 +230,15 @@ func (d *cstDecoder) contOp(op DecodeOp, cv, ind, fv string) {
 		d.w("%s\t\tbreak\n%s\t}\n%s}\n", ind, ind, ind)
 	case InPointerTable:
 		lv := toLowerFirst(strings.TrimSuffix(o.Target[strings.LastIndex(o.Target, ".")+1:], "")) + "Val"
-		d.w("%s{\n%s\tvar _ft *cst.Node\n", ind, ind)
+		ftv := "_ft" + keyPathSuffix(o.Key)
+		d.w("%s{\n%s\tvar %s *cst.Node\n", ind, ind, ftv)
 		d.w("%s\tfor _, _ch := range %s.Children {\n", ind, d.rootExpr)
-		d.w("%s\t\tif _ch.Kind == cst.NodeTable && cst.TableHeaderKey(_ch) == %s { _ft = _ch; break }\n", ind, d.tm(o.Key))
+		d.w("%s\t\tif _ch.Kind == cst.NodeTable && cst.TableHeaderKey(_ch) == %s { %s = _ch; break }\n", ind, d.tm(o.Key), ftv)
 		d.w("%s\t}\n", ind)
-		d.w("%s\tif _ft != nil {\n", ind)
+		d.w("%s\tif %s != nil {\n", ind, ftv)
 		d.mc(ind+"\t\t", o.Key)
 		d.w("%s\t\t%s := &%s{}\n", ind, lv, o.TypeName)
-		d.renderOps(o.TableFields, "_ft", ind+"\t\t", "")
+		d.renderOps(o.TableFields, ftv, ind+"\t\t", "")
 		d.w("%s\t\t%s = %s\n", ind, o.Target, lv)
 		d.w("%s\t} else {\n", ind)
 		d.w("%s\t\t%s := &%s{}\n%s\t\t_found := false\n", ind, lv, o.TypeName, ind)
@@ -288,7 +289,7 @@ func (d *cstDecoder) mapSS2(o GetMapStringMapStringString, ind string) {
 }
 
 func (d *cstDecoder) fatCST(o ForArrayTable, ind, fv string) {
-	nv := "_" + tomlKey(o.Key) + "Nodes"
+	nv := "_nodes" + keyPathSuffix(o.DottedKey)
 	d.w("%svar %s []*cst.Node\n", ind, nv)
 	if d.keyPrefixVar {
 		d.w("%s%s = %s.FindArrayTableNodes(%s)\n", ind, nv, d.docVar, d.consumedKeyExpr(o.DottedKey))
@@ -365,7 +366,7 @@ func (d *cstDecoder) posOp(op DecodeOp, pk, ind string) {
 		d.w("%s\t\t\tfor _ik := range %s { %s[%s + \".\" + _ik] = true }\n", ind, o.Target, d.consumedExpr, d.consumedKeyExpr(o.Key))
 		d.w("%s\t\t\tbreak\n%s\t\t}\n%s\t}\n%s}\n", ind, ind, ind, ind)
 	case ForArrayTable:
-		nv := "_" + tomlKey(o.Key) + "Nodes"
+		nv := "_nodes" + keyPathSuffix(o.DottedKey)
 		d.w("%s{\n%s\tvar %s []*cst.Node\n%s\t_pi := 0\n%s\t_inScope := false\n", ind, ind, nv, ind, ind)
 		d.w("%s\tfor _, _rc := range %s.Children {\n", ind, d.rootExpr)
 		d.w("%s\t\tif _rc.Kind == cst.NodeArrayTable {\n%s\t\t\t_hdr := cst.TableHeaderKey(_rc)\n", ind, ind)
@@ -396,16 +397,17 @@ func (d *cstDecoder) posOp(op DecodeOp, pk, ind string) {
 		d.w("%s\t}\n%s}\n", ind, ind)
 	case InPointerTable:
 		lv := toLowerFirst(strings.TrimSuffix(o.Target[strings.LastIndex(o.Target, ".")+1:], "")) + "Val"
-		d.w("%s{\n%s\tvar _ft *cst.Node\n%s\t_pi := 0\n", ind, ind, ind)
+		ftv := "_ft" + keyPathSuffix(o.Key)
+		d.w("%s{\n%s\tvar %s *cst.Node\n%s\t_pi := 0\n", ind, ind, ftv, ind)
 		d.w("%s\tfor _, _rc := range %s.Children {\n", ind, d.rootExpr)
 		d.w("%s\t\tif _rc.Kind == cst.NodeArrayTable && cst.TableHeaderKey(_rc) == %s {\n", ind, d.tm(pk))
 		d.w("%s\t\t\tif _pi > i { break }\n%s\t\t\t_pi++; continue\n%s\t\t}\n", ind, ind, ind)
-		d.w("%s\t\tif _pi == i+1 && _rc.Kind == cst.NodeTable && cst.TableHeaderKey(_rc) == %s { _ft = _rc; break }\n", ind, d.tm(o.Key))
+		d.w("%s\t\tif _pi == i+1 && _rc.Kind == cst.NodeTable && cst.TableHeaderKey(_rc) == %s { %s = _rc; break }\n", ind, d.tm(o.Key), ftv)
 		d.w("%s\t}\n", ind)
-		d.w("%s\tif _ft != nil {\n", ind)
+		d.w("%s\tif %s != nil {\n", ind, ftv)
 		d.mc(ind+"\t\t", o.Key)
 		d.w("%s\t\t%s := &%s{}\n", ind, lv, o.TypeName)
-		d.renderOps(o.TableFields, "_ft", ind+"\t\t", "")
+		d.renderOps(o.TableFields, ftv, ind+"\t\t", "")
 		d.w("%s\t\t%s = %s\n", ind, o.Target, lv)
 		d.w("%s\t} else {\n", ind)
 		d.w("%s\t\t%s := &%s{}\n%s\t\t_found := false\n", ind, lv, o.TypeName, ind)
@@ -509,14 +511,15 @@ func (d *cstDecoder) dsCST(o DelegateStruct, ind string) {
 	bk := tomlKey(o.Key)
 	if o.Pointer {
 		lv := toLowerFirst(p[1]) + "Val"
-		d.w("%s{\n%s\tvar _tbl *cst.Node\n", ind, ind)
+		tblv := "_tbl" + keyPathSuffix(o.Key)
+		d.w("%s{\n%s\tvar %s *cst.Node\n", ind, ind, tblv)
 		d.w("%s\tfor _, _ch := range %s.Children {\n", ind, d.rootExpr)
-		d.w("%s\t\tif _ch.Kind == cst.NodeTable && cst.TableHeaderKey(_ch) == %s { _tbl = _ch; break }\n", ind, d.tm(o.Key))
-		d.w("%s\t}\n%s\tif _tbl != nil {\n", ind, ind)
+		d.w("%s\t\tif _ch.Kind == cst.NodeTable && cst.TableHeaderKey(_ch) == %s { %s = _ch; break }\n", ind, d.tm(o.Key), tblv)
+		d.w("%s\t}\n%s\tif %s != nil {\n", ind, ind, tblv)
 		d.mc(ind+"\t\t", o.Key)
 		d.w("%s\t\t%s := &%s{}\n", ind, lv, o.TypeName)
-		d.w("%s\t\tif err := %s.Decode%sInto(%s, %s, _tbl, %s, %s); err != nil {\n",
-			ind, p[0], p[1], lv, d.docVar, d.consumedExpr, d.consumedKeyExpr(o.Key+"."))
+		d.w("%s\t\tif err := %s.Decode%sInto(%s, %s, %s, %s, %s); err != nil {\n",
+			ind, p[0], p[1], lv, d.docVar, tblv, d.consumedExpr, d.consumedKeyExpr(o.Key+"."))
 		d.w("%s\t\t\t%sfmt.Errorf(\"%s: %%w\", err)\n", ind, d.returnErr, bk)
 		d.w("%s\t\t}\n%s\t\t%s = %s\n%s\t}\n%s}\n", ind, ind, o.Target, lv, ind, ind)
 	} else {
@@ -532,7 +535,7 @@ func (d *cstDecoder) dsCST(o DelegateStruct, ind string) {
 
 func (d *cstDecoder) dlsCST(o DelegateSlice, ind, fv string) {
 	p := strings.SplitN(o.TypeName, ".", 2)
-	nv := "_" + tomlKey(o.Key) + "Nodes"
+	nv := "_nodes" + keyPathSuffix(o.DottedKey)
 	d.w("%svar %s []*cst.Node\n", ind, nv)
 	if d.keyPrefixVar {
 		d.w("%s%s = %s.FindArrayTableNodes(%s)\n", ind, nv, d.docVar, d.consumedKeyExpr(o.DottedKey))

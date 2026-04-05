@@ -250,6 +250,29 @@ func (k TOMLKey) BareKey() string {
 	return ""
 }
 
+// VarSuffix returns a CamelCase suffix derived from the full key path, suitable
+// for making generated variable names unique across nesting levels.
+// "haustoria.caldav" -> "HaustoriaCaldav", "exec-command" -> "ExecCommand".
+// Dynamic key parts (KeyVar, KeyPrefix) are skipped since runtime variables
+// already provide uniqueness through iteration.
+func (k TOMLKey) VarSuffix() string {
+	var sb strings.Builder
+	for _, p := range k.Parts {
+		if p.Kind != KeyLit {
+			continue
+		}
+		for _, seg := range strings.FieldsFunc(p.Value, func(r rune) bool {
+			return r == '.' || r == '-' || r == '_'
+		}) {
+			seg = strings.TrimSpace(seg)
+			if seg != "" {
+				sb.WriteString(toUpperFirst(seg))
+			}
+		}
+	}
+	return sb.String()
+}
+
 // Jen returns a jennifer expression for this key.
 // Static keys become Lit("key"). Dynamic keys become concatenation expressions
 // like Lit("targets.").Op("+").Id("_mk").Op("+").Lit(".auth").

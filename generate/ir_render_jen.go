@@ -409,7 +409,7 @@ func jenIT(ctx jenCtx, o InTable) []jen.Code {
 
 func jenIPT(ctx jenCtx, o InPointerTable, cv *jen.Statement) []jen.Code {
 	lv := toLowerFirst(o.Tgt.Segs[len(o.Tgt.Segs)-1].Name) + "Val"
-	ftv := "_ft" + toUpperFirst(tomlKey(o.Key))
+	ftv := "_ft" + o.TKey.VarSuffix()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
@@ -434,7 +434,7 @@ func jenIPT(ctx jenCtx, o InPointerTable, cv *jen.Statement) []jen.Code {
 }
 
 func jenFAT(ctx jenCtx, o ForArrayTable, fv string) []jen.Code {
-	nv := "_" + tomlKey(o.Key) + "Nodes"
+	nv := "_nodes" + o.TDottedKey.VarSuffix()
 	var collect jen.Code
 	if o.TDottedKey.IsStatic() {
 		collect = jen.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
@@ -642,7 +642,7 @@ func jenPFAT(ctx jenCtx, o ForArrayTable, pk TOMLKey) []jen.Code {
 
 func jenPIPT(ctx jenCtx, o InPointerTable, pk TOMLKey) []jen.Code {
 	lv := toLowerFirst(o.Tgt.Segs[len(o.Tgt.Segs)-1].Name) + "Val"
-	ftv := "_ft" + toUpperFirst(tomlKey(o.Key))
+	ftv := "_ft" + o.TKey.VarSuffix()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.Id("_pi").Op(":=").Lit(0)
@@ -726,16 +726,17 @@ func jenDS(ctx jenCtx, o DelegateStruct) []jen.Code {
 
 	if o.Pointer {
 		lv := toLowerFirst(st) + "Val"
+		tblv := "_tbl" + o.TKey.VarSuffix()
 		return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-			g.Var().Id("_tbl").Op("*").Qual(cstPkg, "Node")
+			g.Var().Id(tblv).Op("*").Qual(cstPkg, "Node")
 			g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
-				jen.If(tableMatch(o.TKey)).Block(jen.Id("_tbl").Op("=").Id("_ch"), jen.Break()),
+				jen.If(tableMatch(o.TKey)).Block(jen.Id(tblv).Op("=").Id("_ch"), jen.Break()),
 			)
-			g.If(jen.Id("_tbl").Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
+			g.If(jen.Id(tblv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(o.TKey))
 				g.Id(lv).Op(":=").Op("&").Qual(o.ImportPath, st).Values()
 				g.If(jen.Err().Op(":=").Qual(o.ImportPath, decFn).Call(
-					jen.Id(lv), ctx.docVar.Clone(), jen.Id("_tbl"), ctx.consumed.Clone(), pk.Jen(),
+					jen.Id(lv), ctx.docVar.Clone(), jen.Id(tblv), ctx.consumed.Clone(), pk.Jen(),
 				), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+": %w", jen.Err()))
 				g.Add(o.Tgt.Jen().Clone()).Op("=").Id(lv)
 			})
@@ -754,7 +755,7 @@ func jenDS(ctx jenCtx, o DelegateStruct) []jen.Code {
 
 func jenDSl(ctx jenCtx, o DelegateSlice, fv string) []jen.Code {
 	_, st := delegateParts(o.TypeName)
-	nv := "_" + tomlKey(o.Key) + "Nodes"
+	nv := "_nodes" + o.TDottedKey.VarSuffix()
 	pk := o.TDottedKey.Lit(".")
 	decFn := "Decode" + st + "Into"
 
@@ -1228,7 +1229,7 @@ func jenForEncodeArrayTable(ctx encCtx, o ForEncodeArrayTable) []jen.Code {
 				}
 			})
 		} else {
-			existVar := bk + "Existing"
+			existVar := "_exist" + o.TDottedKey.VarSuffix()
 			g.Id(existVar).Op(":=").Qual(cstPkg, "FindArrayTableNodes").Call(ctx.rootVar.Clone(), o.TDottedKey.Jen())
 			g.For(jen.Id("i").Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
@@ -1325,7 +1326,7 @@ func jenEncDSl(ctx encCtx, o EncodeDelegateSlice) []jen.Code {
 	src := o.Tgt.Jen()
 
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		existVar := bk + "Existing"
+		existVar := "_exist" + o.TDottedKey.VarSuffix()
 		g.Id(existVar).Op(":=").Qual(cstPkg, "FindArrayTableNodes").Call(ctx.rootVar.Clone(), o.TDottedKey.Jen())
 		g.For(jen.Id("i").Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
 			g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
