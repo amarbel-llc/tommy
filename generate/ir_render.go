@@ -256,12 +256,14 @@ func (d *decoder) inTable(o InTable, containerVar, indent string) {
 func (d *decoder) inPointerTable(o InPointerTable, containerVar, indent string) {
 	bareKey := tomlKey(o.Key)
 	localVar := toLowerFirst(strings.TrimSuffix(o.Target[strings.LastIndex(o.Target, ".")+1:], "")) + "Val"
+	tableVar := bareKey + "Table"
 
-	d.w("%sif tableNode := %s.FindTableInContainer(%s, %q); tableNode != nil {\n",
-		indent, d.docVar, containerVar, bareKey)
+	d.w("%s%s := %s.FindTableInContainer(%s, %q)\n",
+		indent, tableVar, d.docVar, containerVar, bareKey)
+	d.w("%sif %s != nil {\n", indent, tableVar)
 	d.markConsumed(indent+"\t", o.Key)
 	d.w("%s\t%s := &%s{}\n", indent, localVar, o.TypeName)
-	d.renderOps(o.TableFields, "tableNode", indent+"\t", "")
+	d.renderOps(o.TableFields, tableVar, indent+"\t", "")
 	d.w("%s\t%s = %s\n", indent, o.Target, localVar)
 	d.w("%s} else {\n", indent)
 	d.w("%s\t%s := &%s{}\n", indent, localVar, o.TypeName)

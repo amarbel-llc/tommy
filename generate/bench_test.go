@@ -414,10 +414,10 @@ func TestBenchmarkBackends(t *testing.T) {
 		name string
 		env  string
 	}{
-		{"old", ""},
+		{"legacy", "legacy"},
 		{"api", "api"},
 		{"cst", "cst"},
-		{"jen", "jen"},
+		{"jen", ""},
 	}
 
 	results := make(map[string]string)
@@ -539,7 +539,7 @@ func extractBenchLines(output string) string {
 }
 
 // BenchmarkDecodeOnly runs decode benchmarks in-process for the current backend.
-// Use TOMMY_CODEGEN_IR=jen go test -bench=BenchmarkDecodeOnly -benchmem ./generate/
+// Use go test -bench=BenchmarkDecodeOnly -benchmem ./generate/
 func BenchmarkDecodeOnly(b *testing.B) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
 	if err != nil {

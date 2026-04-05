@@ -7535,9 +7535,6 @@ func nestingGoMod(t *testing.T, dir, repoRoot, mod string) {
 
 func nestingRun(t *testing.T, dir string) {
 	t.Helper()
-	// Nesting matrix tests require the jennifer IR backend which has
-	// correct positional scoping for nested containers.
-	t.Setenv("TOMMY_CODEGEN_IR", "jen")
 	if err := Generate(dir, "config.go"); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

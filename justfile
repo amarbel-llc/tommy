@@ -28,18 +28,18 @@ clean-go-modcache:
   go clean -modcache
 
 [group('debug')]
-debug-jen-integration pattern='TestIntegration':
-  TOMMY_CODEGEN_IR=jen go test -run '{{pattern}}' ./generate/ -v -count=1
+debug-integration pattern='TestIntegration':
+  go test -run '{{pattern}}' ./generate/ -v -count=1
 
 [group('debug')]
-debug-jen-nesting pattern='TestNesting':
-  TOMMY_CODEGEN_IR=jen go test -run '{{pattern}}' ./generate/ -v -count=1
+debug-nesting pattern='TestNesting':
+  go test -run '{{pattern}}' ./generate/ -v -count=1
 
 [group('debug')]
-debug-jen-summary:
+debug-summary:
   #!/usr/bin/env bash
   set -euo pipefail
-  out=$(TOMMY_CODEGEN_IR=jen go test -run 'TestIntegration' ./generate/ -v -count=1 2>&1 || true)
+  out=$(go test -run 'TestIntegration' ./generate/ -v -count=1 2>&1 || true)
   pass=$(echo "$out" | grep -c 'PASS: TestIntegration' || true)
   fail=$(echo "$out" | grep -c 'FAIL: TestIntegration' || true)
   echo "pass: $pass  fail: $fail"
@@ -54,24 +54,22 @@ debug-jen-summary:
   fi
 
 [group('debug')]
-debug-jen-test test_name:
-  TOMMY_CODEGEN_IR=jen go test -run '^{{test_name}}$' ./generate/ -v -count=1 || true
+debug-test test_name:
+  go test -run '^{{test_name}}$' ./generate/ -v -count=1 || true
 
 [group('debug')]
-debug-jen-nesting-gen test_name:
+debug-nesting-gen test_name:
   #!/usr/bin/env bash
   set -euo pipefail
   dir=$(mktemp -d)
   trap 'rm -rf "$dir"' EXIT
-  # Run the test with TOMMY_DEBUG_DIR to capture generated files
-  TOMMY_CODEGEN_IR=jen TOMMY_DEBUG_DIR="$dir" go test -run "^{{test_name}}$" ./generate/ -v -count=1 2>&1 | tail -5 || true
-  # Show generated tommy file if it exists
+  TOMMY_DEBUG_DIR="$dir" go test -run "^{{test_name}}$" ./generate/ -v -count=1 2>&1 | tail -5 || true
   for f in "$dir"/*_tommy.go; do
     [ -f "$f" ] && echo "=== $f ===" && cat "$f"
   done
 
 [group('debug')]
-debug-jen-gen:
+debug-gen:
   #!/usr/bin/env bash
   set -euo pipefail
   dir=$(mktemp -d)
@@ -98,20 +96,20 @@ debug-jen-gen:
   }
   GOEOF
   cd "$dir" && go mod tidy 2>/dev/null
-  cd "{{justfile_directory()}}" && TOMMY_CODEGEN_IR=jen go build -o "$dir/tommy" ./cmd/tommy
-  cd "$dir" && TOMMY_CODEGEN_IR=jen GOFILE=config.go ./tommy generate
+  cd "{{justfile_directory()}}" && go build -o "$dir/tommy" ./cmd/tommy
+  cd "$dir" && GOFILE=config.go ./tommy generate
   cat "$dir/config_tommy.go"
 
 [group('debug')]
 debug-all-backends pattern='TestIntegration':
-  @echo "=== old ==="
+  @echo "=== jen (default) ==="
   go test -run '{{pattern}}' ./generate/ -count=1
   @echo "=== api ==="
   TOMMY_CODEGEN_IR=api go test -run '{{pattern}}' ./generate/ -count=1
   @echo "=== cst ==="
   TOMMY_CODEGEN_IR=cst go test -run '{{pattern}}' ./generate/ -count=1
-  @echo "=== jen ==="
-  TOMMY_CODEGEN_IR=jen go test -run '{{pattern}}' ./generate/ -count=1
+  @echo "=== legacy ==="
+  TOMMY_CODEGEN_IR=legacy go test -run '{{pattern}}' ./generate/ -count=1
 
 [group('debug')]
 debug-bench:

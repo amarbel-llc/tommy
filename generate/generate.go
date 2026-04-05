@@ -25,12 +25,12 @@ func Generate(dir, filename string) error {
 	}
 
 	var buf bytes.Buffer
-	if os.Getenv("TOMMY_CODEGEN_IR") == "jen" {
-		if err := RenderFileJen(&buf, pkgName, infos); err != nil {
+	if os.Getenv("TOMMY_CODEGEN_IR") == "legacy" {
+		if err := RenderFile(&buf, pkgName, infos); err != nil {
 			return fmt.Errorf("render: %w", err)
 		}
 	} else {
-		if err := RenderFile(&buf, pkgName, infos); err != nil {
+		if err := RenderFileJen(&buf, pkgName, infos); err != nil {
 			return fmt.Errorf("render: %w", err)
 		}
 	}

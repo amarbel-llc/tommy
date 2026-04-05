@@ -883,3 +883,12 @@ func toLowerFirst(s string) string {
 	runes[0] = unicode.ToLower(runes[0])
 	return string(runes)
 }
+
+func toUpperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
+}

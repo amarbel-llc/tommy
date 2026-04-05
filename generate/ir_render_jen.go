@@ -409,15 +409,16 @@ func jenIT(ctx jenCtx, o InTable) []jen.Code {
 
 func jenIPT(ctx jenCtx, o InPointerTable, cv *jen.Statement) []jen.Code {
 	lv := toLowerFirst(o.Tgt.Segs[len(o.Tgt.Segs)-1].Name) + "Val"
+	ftv := "_ft" + toUpperFirst(tomlKey(o.Key))
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.Var().Id("_ft").Op("*").Qual(cstPkg, "Node")
+		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
-			jen.If(tableMatch(o.TKey)).Block(jen.Id("_ft").Op("=").Id("_ch"), jen.Break()),
+			jen.If(tableMatch(o.TKey)).Block(jen.Id(ftv).Op("=").Id("_ch"), jen.Break()),
 		)
-		g.If(jen.Id("_ft").Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
+		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 			g.Add(ctx.mc(o.TKey))
 			g.Id(lv).Op(":=").Op("&").Id(o.TypeName).Values()
-			for _, s := range jenDecodeOps(ctx, o.TableFields, jen.Id("_ft"), "") {
+			for _, s := range jenDecodeOps(ctx, o.TableFields, jen.Id(ftv), "") {
 				g.Add(s)
 			}
 			g.Add(o.Tgt.Jen().Clone()).Op("=").Id(lv)
@@ -641,19 +642,20 @@ func jenPFAT(ctx jenCtx, o ForArrayTable, pk TOMLKey) []jen.Code {
 
 func jenPIPT(ctx jenCtx, o InPointerTable, pk TOMLKey) []jen.Code {
 	lv := toLowerFirst(o.Tgt.Segs[len(o.Tgt.Segs)-1].Name) + "Val"
+	ftv := "_ft" + toUpperFirst(tomlKey(o.Key))
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.Var().Id("_ft").Op("*").Qual(cstPkg, "Node")
+		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.Id("_pi").Op(":=").Lit(0)
 		g.For(jen.List(jen.Id("_"), jen.Id("_rc")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
 			g.Add(posHeader(pk))
 			g.If(jen.Id("_pi").Op("==").Id("i").Op("+").Lit(1).Op("&&").Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Add(o.TKey.Jen())).Block(
-				jen.Id("_ft").Op("=").Id("_rc"), jen.Break(),
+				jen.Id(ftv).Op("=").Id("_rc"), jen.Break(),
 			)
 		})
-		g.If(jen.Id("_ft").Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
+		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 			g.Add(ctx.mc(o.TKey))
 			g.Id(lv).Op(":=").Op("&").Id(o.TypeName).Values()
-			for _, s := range jenDecodeOps(ctx, o.TableFields, jen.Id("_ft"), "") {
+			for _, s := range jenDecodeOps(ctx, o.TableFields, jen.Id(ftv), "") {
 				g.Add(s)
 			}
 			g.Add(o.Tgt.Jen().Clone()).Op("=").Id(lv)
