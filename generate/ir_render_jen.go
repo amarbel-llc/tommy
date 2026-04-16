@@ -1091,13 +1091,9 @@ func jenSetSlicePrimitive(ctx encCtx, o SetSlicePrimitive, cv *jen.Statement) []
 	bk := o.TKey.BareKey()
 	src := o.Tgt.Jen()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		if o.OmitEmpty {
-			g.If(jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(bk))).BlockFunc(func(g *jen.Group) {
-				g.Add(jenSlicePrimSet(ctx, o, cv, bk))
-			})
-		} else {
+		g.If(jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(bk))).BlockFunc(func(g *jen.Group) {
 			g.Add(jenSlicePrimSet(ctx, o, cv, bk))
-		}
+		})
 	})}
 }
 
@@ -1128,13 +1124,15 @@ func jenSetSliceTextMarshaler(ctx encCtx, o SetSliceTextMarshaler, cv *jen.State
 	bk := o.TKey.BareKey()
 	src := o.Tgt.Jen()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.Id("vals").Op(":=").Make(jen.Index().String(), jen.Len(src.Clone()))
-		g.For(jen.List(jen.Id("i"), jen.Id("item")).Op(":=").Range().Add(src.Clone())).Block(
-			jen.List(jen.Id("v"), jen.Err()).Op(":=").Id("item").Dot("MarshalText").Call(),
-			jen.If(jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("i"), jen.Err())),
-			jen.Id("vals").Index(jen.Id("i")).Op("=").String().Call(jen.Id("v")),
-		)
-		g.Add(jenSetCall(ctx, cv, StaticKey(bk), jen.Id("vals")))
+		g.If(jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(bk))).BlockFunc(func(g *jen.Group) {
+			g.Id("vals").Op(":=").Make(jen.Index().String(), jen.Len(src.Clone()))
+			g.For(jen.List(jen.Id("i"), jen.Id("item")).Op(":=").Range().Add(src.Clone())).Block(
+				jen.List(jen.Id("v"), jen.Err()).Op(":=").Id("item").Dot("MarshalText").Call(),
+				jen.If(jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("i"), jen.Err())),
+				jen.Id("vals").Index(jen.Id("i")).Op("=").String().Call(jen.Id("v")),
+			)
+			g.Add(jenSetCall(ctx, cv, StaticKey(bk), jen.Id("vals")))
+		})
 	})}
 }
 

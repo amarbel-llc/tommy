@@ -704,10 +704,8 @@ func emitEncodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSlicePrimitive:
-		if fi.OmitEmpty {
-			fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
-				source, docVar, containerExpr, fi.TomlKey)
-		}
+		fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
+			source, docVar, containerExpr, fi.TomlKey)
 		encodeSource := source
 		if fi.SlicePointer {
 			tmpVar := "tmp" + fi.GoName
@@ -725,9 +723,7 @@ func emitEncodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 			docVar, containerExpr, fi.TomlKey, encodeSource)
 		fmt.Fprintf(&buf, "\t\t%serr\n", ctx.returnErr)
 		fmt.Fprintf(&buf, "\t}\n")
-		if fi.OmitEmpty {
-			fmt.Fprintf(&buf, "\t}\n")
-		}
+		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldMapStringString:
 		fmt.Fprintf(&buf, "\tif len(%s) > 0 {\n", source)
@@ -801,7 +797,8 @@ func emitEncodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSliceTextMarshaler:
-		fmt.Fprintf(&buf, "\t{\n")
+		fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
+			source, docVar, containerExpr, fi.TomlKey)
 		fmt.Fprintf(&buf, "\t\tvals := make([]string, len(%s))\n", source)
 		fmt.Fprintf(&buf, "\t\tfor i, item := range %s {\n", source)
 		fmt.Fprintf(&buf, "\t\t\tv, err := item.MarshalText()\n")
