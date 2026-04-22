@@ -48,6 +48,21 @@
             modules = ./gomod2nix.toml;
             subPackages = [ "cmd/tommy" ];
 
+            nativeBuildInputs = [ pkgs.scdoc ];
+
+            postInstall = ''
+              for f in doc/*.1.scd; do
+                [ -e "$f" ] || continue
+                name=$(basename "$f" .scd)
+                install -Dm644 /dev/stdin "$out/share/man/man1/$name" < <(scdoc < "$f")
+              done
+              for f in doc/*.7.scd; do
+                [ -e "$f" ] || continue
+                name=$(basename "$f" .scd)
+                install -Dm644 /dev/stdin "$out/share/man/man7/$name" < <(scdoc < "$f")
+              done
+            '';
+
             meta = {
               description = "A TOML library for Go";
               homepage = "https://github.com/amarbel-llc/tommy";
