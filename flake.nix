@@ -32,6 +32,7 @@
           default = pkgs.buildGoApplication {
             pname = "tommy";
             version = "0.1.0";
+            commit = self.rev or self.shortRev or "unknown";
             src = ./.;
             modules = ./gomod2nix.toml;
             subPackages = [ "cmd/tommy" ];
