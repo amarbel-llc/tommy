@@ -5,8 +5,10 @@ import (
 	"os"
 )
 
-var version = "dev"
-var commit = "unknown"
+var (
+	version = "dev"
+	commit  = "unknown"
+)
 
 func main() {
 	if len(os.Args) < 2 {
