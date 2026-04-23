@@ -31,7 +31,7 @@
         packages = {
           default = pkgs.buildGoApplication {
             pname = "tommy";
-            version = "0.2.2";
+            version = "0.2.3";
             commit = self.rev or self.shortRev or "unknown";
             src = pkgs.lib.cleanSourceWith {
               src = ./.;
