@@ -44,7 +44,7 @@
                 || rel == "go.mod"
                 || rel == "go.sum"
                 || rel == "gomod2nix.toml"
-                || pkgs.lib.hasPrefix "doc/" rel
+                || pkgs.lib.hasPrefix "doc/" rel # scdoc man page sources for postInstall
                 || pkgs.lib.hasSuffix ".go" rel;
             };
             modules = ./gomod2nix.toml;
