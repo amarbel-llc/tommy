@@ -51,16 +51,20 @@
             nativeBuildInputs = [ pkgs.scdoc ];
 
             postInstall = ''
+              tmp=$(mktemp)
               for f in doc/*.1.scd; do
                 [ -e "$f" ] || continue
                 name=$(basename "$f" .scd)
-                install -Dm644 /dev/stdin "$out/share/man/man1/$name" < <(scdoc < "$f")
+                scdoc < "$f" > "$tmp"
+                install -Dm644 "$tmp" "$out/share/man/man1/$name"
               done
               for f in doc/*.7.scd; do
                 [ -e "$f" ] || continue
                 name=$(basename "$f" .scd)
-                install -Dm644 /dev/stdin "$out/share/man/man7/$name" < <(scdoc < "$f")
+                scdoc < "$f" > "$tmp"
+                install -Dm644 "$tmp" "$out/share/man/man7/$name"
               done
+              rm -f "$tmp"
             '';
 
             meta = {
