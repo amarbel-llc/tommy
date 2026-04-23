@@ -33,7 +33,20 @@
             pname = "tommy";
             version = "0.1.0";
             commit = self.rev or self.shortRev or "unknown";
-            src = ./.;
+            src = pkgs.lib.cleanSourceWith {
+              src = ./.;
+              filter =
+                path: type:
+                let
+                  rel = pkgs.lib.removePrefix (toString ./. + "/") path;
+                in
+                type == "directory"
+                || rel == "go.mod"
+                || rel == "go.sum"
+                || rel == "gomod2nix.toml"
+                || pkgs.lib.hasPrefix "doc/" rel
+                || pkgs.lib.hasSuffix ".go" rel;
+            };
             modules = ./gomod2nix.toml;
             subPackages = [ "cmd/tommy" ];
 
