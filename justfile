@@ -116,3 +116,47 @@ debug-bench:
   go test -run TestBenchmarkBackends ./generate/ -v -count=1
 
 clean-go: clean-go-cache clean-go-modcache
+
+# Bump the version in flake.nix
+bump-version new_version:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  current=$(grep 'version = "' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+  if [[ "$current" == "{{new_version}}" ]]; then
+    echo "already at {{new_version}}" >&2
+    exit 0
+  fi
+  sed -i.bak 's/version = "'"$current"'"/version = "{{new_version}}"/' flake.nix && rm flake.nix.bak
+  echo "$current → {{new_version}}"
+
+# Create a signed git tag for the current version and push it to origin
+tag:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  version=$(grep 'version = "' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+  tag="v${version}"
+  if git rev-parse "$tag" >/dev/null 2>&1; then
+    echo "tag $tag already exists" >&2
+    exit 1
+  fi
+  git tag -s "$tag" -m "Release $tag"
+  echo "created tag $tag"
+  git push origin "$tag"
+  echo "pushed tag $tag"
+
+# Bump version, commit, push master, signed tag + push. Must be run from master.
+release new_version:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  current_branch=$(git rev-parse --abbrev-ref HEAD)
+  if [[ "$current_branch" != "master" ]]; then
+    echo "just release must be run on master (currently on $current_branch)" >&2
+    exit 1
+  fi
+  just bump-version {{new_version}}
+  if ! git diff --quiet flake.nix; then
+    git add flake.nix
+    git commit -m "chore: release v{{new_version}}"
+  fi
+  git push origin master
+  just tag
