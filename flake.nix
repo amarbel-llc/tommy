@@ -5,8 +5,14 @@
     nixpkgs.url = "github:amarbel-llc/nixpkgs";
     nixpkgs-master.url = "github:NixOS/nixpkgs/e2dde111aea2c0699531dc616112a96cd55ab8b5";
     utils.url = "https://flakehub.com/f/numtide/flake-utils/0.1.102";
-    bob = {
-      url = "github:amarbel-llc/bob";
+    bats = {
+      url = "github:amarbel-llc/bats";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nixpkgs-master.follows = "nixpkgs-master";
+      inputs.utils.follows = "utils";
+    };
+    tap = {
+      url = "github:amarbel-llc/tap";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.nixpkgs-master.follows = "nixpkgs-master";
       inputs.utils.follows = "utils";
@@ -19,7 +25,8 @@
       nixpkgs,
       nixpkgs-master,
       utils,
-      bob,
+      bats,
+      tap,
     }:
     utils.lib.eachDefaultSystem (
       system:
@@ -86,8 +93,8 @@
             pkgs-master.delve
             pkgs-master.gofumpt
             pkgs.just
-            bob.packages.${system}.batman
-            bob.packages.${system}.tap-dancer
+            bats.packages.${system}.batman
+            tap.packages.${system}.tap-dancer
           ];
         };
       }
