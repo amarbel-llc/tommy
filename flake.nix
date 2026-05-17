@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:amarbel-llc/nixpkgs";
-    nixpkgs-master.url = "github:NixOS/nixpkgs/e2dde111aea2c0699531dc616112a96cd55ab8b5";
+    nixpkgs-master.url = "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb";
     utils.url = "https://flakehub.com/f/numtide/flake-utils/0.1.102";
     bats = {
       url = "github:amarbel-llc/bats";
