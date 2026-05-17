@@ -19,6 +19,14 @@ test-go:
 test-bats: build
   cd zz-tests_bats && TOMMY_BIN=../build/tommy BATS_TEST_TIMEOUT=30 bats --tap --jobs {{num_cpus()}} *.bats
 
+# Nix-native bats lane — authoritative, runs in the nix sandbox.
+test-bats-nix:
+  nix build .#bats-default --no-link --print-build-logs
+
+# Filter to a single tagged lane (e.g. `just test-bats-nix-tag fmt`).
+test-bats-nix-tag tag:
+  nix build .#bats-{{tag}} --no-link --print-build-logs
+
 clean: clean-go
 
 clean-go-cache:

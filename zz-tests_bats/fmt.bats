@@ -1,4 +1,5 @@
 #! /usr/bin/env bats
+# bats file_tags=fmt
 
 setup() {
   load "$(dirname "$BATS_TEST_FILE")/common.bash"
