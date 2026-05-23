@@ -136,6 +136,7 @@
       {
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
+          go-pkgs = tommySrc.outPath;
         };
 
         checks = {
