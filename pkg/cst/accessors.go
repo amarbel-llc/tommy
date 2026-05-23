@@ -492,7 +492,12 @@ func appendKeyValue(container *Node, key string, encoded []byte, kind NodeKind) 
 }
 
 // kvInsertIndex returns the index at which a new key-value should be inserted.
-// Key-values go before any sub-table or array-table children.
+// Key-values go before any sub-table or array-table children, AND before any
+// trailing newlines that were preserved from a previously-deleted KV. The
+// trailing-newline walkback is what makes `DeleteAllValues` + `SetAny`
+// preserve the blank-line separator between a subtable and its next sibling
+// — without it, the new KV lands after the trailing blank and the blank ends
+// up between the table header and the first KV instead.
 func kvInsertIndex(container *Node) int {
 	for i, child := range container.Children {
 		if child.Kind == NodeTable || child.Kind == NodeArrayTable {
@@ -502,7 +507,19 @@ func kvInsertIndex(container *Node) int {
 			return i
 		}
 	}
-	return len(container.Children)
+	// End-of-container case: walk back over trailing blank-line newlines so
+	// the new KV inserts BEFORE the blank that separates this table from
+	// its next sibling. Only consume a newline when the prior node is also
+	// a newline — i.e. there's a true blank line, not just the header's
+	// own line-terminator. Otherwise the new KV would land on the same
+	// line as the header.
+	i := len(container.Children)
+	for i >= 2 &&
+		container.Children[i-1].Kind == NodeNewline &&
+		container.Children[i-2].Kind == NodeNewline {
+		i--
+	}
+	return i
 }
 
 // --- Table creation with positional scoping ---
