@@ -16,6 +16,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.nixpkgs-master.follows = "nixpkgs-master";
       inputs.utils.follows = "utils";
+      inputs.bats.follows = "bats";
     };
   };
 
