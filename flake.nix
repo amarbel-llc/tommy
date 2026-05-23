@@ -76,7 +76,7 @@
 
         tommyBin = pkgs.buildGoApplication {
           pname = "tommy";
-          version = "0.2.4";
+          version = "0.2.5";
           commit = self.rev or self.shortRev or "unknown";
           src = tommySrc;
           modules = ./gomod2nix.toml;
