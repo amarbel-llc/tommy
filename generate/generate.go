@@ -3,10 +3,11 @@ package generate
 import (
 	"bytes"
 	"fmt"
-	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/tools/imports"
 )
 
 func Generate(dir, filename string) error {
@@ -35,13 +36,19 @@ func Generate(dir, filename string) error {
 		}
 	}
 
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("gofmt: %w\nraw output:\n%s", err, buf.String())
-	}
-
 	outName := strings.TrimSuffix(filename, ".go") + "_tommy.go"
 	outPath := filepath.Join(dir, outName)
+
+	formatted, err := imports.Process(outPath, buf.Bytes(), &imports.Options{
+		Comments:   true,
+		TabIndent:  true,
+		TabWidth:   8,
+		FormatOnly: true,
+	})
+	if err != nil {
+		return fmt.Errorf("goimports: %w\nraw output:\n%s", err, buf.String())
+	}
+
 	return os.WriteFile(outPath, formatted, 0o644)
 }
 
