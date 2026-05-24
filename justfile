@@ -1,4 +1,12 @@
-default: build test
+default: validate build test
+
+# Schema-validate the flake and build every `checks.${system}.*`
+# output. Catches regressions like flake outputs that aren't real
+# derivations (e.g. #78 — a path-typed `go-pkgs` passes
+# `nix build` but fails the flake-schema validator). Runs in the
+# pre-merge hook via `default`.
+validate:
+  nix flake check --keep-going
 
 build: build-go
 
