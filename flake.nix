@@ -137,7 +137,11 @@
       {
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
-          go-pkgs = tommySrc.outPath;
+          # flake-input-go_mod producer (amarbel-llc/nixpkgs RFC 0001).
+          # goSourceFilter returns a real derivation; a plain `self` or
+          # `tommySrc.outPath` passes `nix build` but fails the flake
+          # schema validator. See amarbel-llc/nixpkgs#44.
+          go-pkgs = pkgs.goSourceFilter { src = self; };
         };
 
         checks = {
