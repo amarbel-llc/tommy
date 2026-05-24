@@ -39,17 +39,23 @@ func Generate(dir, filename string) error {
 	outName := strings.TrimSuffix(filename, ".go") + "_tommy.go"
 	outPath := filepath.Join(dir, outName)
 
-	formatted, err := imports.Process(outPath, buf.Bytes(), &imports.Options{
-		Comments:   true,
-		TabIndent:  true,
-		TabWidth:   8,
-		FormatOnly: true,
-	})
+	formatted, err := imports.Process(outPath, buf.Bytes(), goimportsOpts)
 	if err != nil {
 		return fmt.Errorf("goimports: %w\nraw output:\n%s", err, buf.String())
 	}
 
 	return os.WriteFile(outPath, formatted, 0o644)
+}
+
+// goimportsOpts is the imports.Process configuration used for all
+// generated output. FormatOnly skips import resolution (we never add
+// or remove imports — the template already declares them); the pass
+// only sorts existing entries and splits stdlib from third-party.
+var goimportsOpts = &imports.Options{
+	Comments:   true,
+	TabIndent:  true,
+	TabWidth:   8,
+	FormatOnly: true,
 }
 
 func detectPackageName(dir, filename string) (string, error) {

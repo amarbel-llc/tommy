@@ -75,17 +75,14 @@
           pname = "tommy";
           version = "0.2.7";
           commit = self.rev or self.shortRev or "unknown";
-          # Self-consumption per RFC 0001: build from go-pkgs-test so
-          # the checkPhase below exercises the published artifact.
           src = go-pkgs-test;
           modules = ./gomod2nix.toml;
           subPackages = [ "cmd/tommy" ];
-          # Run the library packages' test suite against the filtered
-          # go-pkgs-test tree. Skips ./generate/... — those tests scaffold
-          # synthetic Go modules and invoke go/packages.Load, which needs
-          # network access or a pre-populated module cache that the nix
-          # sandbox doesn't have. The bats lane already covers the
-          # generator end-to-end against the installed binary.
+          # Skips ./generate/... — those tests scaffold synthetic Go
+          # modules and call go/packages.Load, which needs network or a
+          # pre-populated module cache that the nix sandbox doesn't have.
+          # The bats lane covers the generator end-to-end against the
+          # installed binary.
           doCheck = true;
           checkPhase = ''
             runHook preCheck
@@ -147,10 +144,6 @@
       {
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
-          # RFC 0001 dual-output convention: go-pkgs is the prod tree,
-          # go-pkgs-test the superset including *_test.go + testdata/**.
-          # Downstream consumers SHOULD bridge against go-pkgs unless
-          # they need to run tommy's tests, in which case go-pkgs-test.
           inherit go-pkgs go-pkgs-test;
         };
 
