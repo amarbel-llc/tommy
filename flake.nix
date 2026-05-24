@@ -35,28 +35,22 @@
         pkgs-master = import nixpkgs-master { inherit system; };
         pkgs = import nixpkgs { inherit system; };
 
-        # Shared source filter — used both by `tommyBin` (the production
-        # build) and `tommyTestFixture` (staged into the bats sandbox so
-        # generate.bats can `replace` tommy and build offline).
-        tommySrc = pkgs.lib.cleanSourceWith {
-          src = ./.;
-          filter =
-            path: type:
-            let
-              rel = pkgs.lib.removePrefix (toString ./. + "/") path;
-            in
-            type == "directory"
-            || rel == "go.mod"
-            || rel == "go.sum"
-            || rel == "gomod2nix.toml"
-            || pkgs.lib.hasPrefix "doc/" rel # scdoc man page sources for postInstall
-            || pkgs.lib.hasSuffix ".go" rel;
-        };
+        # Source filtering via RFC 0001's mkGoPkgs helper. `go-pkgs`
+        # excludes *_test.go and testdata/**; `go-pkgs-test` is the
+        # superset used for self-consumption (tommyBin builds from this
+        # so its checkPhase exercises the published artifact) and for
+        # downstream consumers that want to run tommy's tests. `extras`
+        # keeps doc/*.scd in both outputs so the man-page postInstall
+        # can find them. See amarbel-llc/nixpkgs#42, #46.
+        inherit (pkgs.mkGoPkgs {
+          src = self;
+          extras = [ "^doc/.*\\.scd$" ];
+        }) go-pkgs go-pkgs-test;
 
-        # Vendor tree assembled from gomod2nix.toml. tommy has no local
-        # `replace` directives in go.mod, so passing an empty replace
-        # map is correct (and avoids depending on gomod2nix's internal
-        # `parseGoMod`).
+        # Vendor tree assembled from gomod2nix.toml for the offline
+        # bats fixture below. tommy has no local `replace` directives
+        # in go.mod, so an empty replace map is correct (and avoids
+        # depending on gomod2nix's internal `parseGoMod`).
         tommyVendorEnv = pkgs.mkVendorEnv {
           go = pkgs-master.go;
           modulesStruct = builtins.fromTOML (builtins.readFile ./gomod2nix.toml);
@@ -68,9 +62,11 @@
         # references this via TOMMY_FIXTURE_DIR (set by bats.nix); the
         # synthetic downstream module `replace`s tommy here and copies
         # the vendor/ into its own project tree before `go build`.
+        # Uses go-pkgs (prod-shape) — the synthetic downstream module
+        # doesn't need to see tommy's own test files.
         tommyTestFixture = pkgs.runCommand "tommy-test-fixture" { } ''
           mkdir -p $out
-          cp -r ${tommySrc}/. $out/
+          cp -r ${go-pkgs}/. $out/
           chmod -R u+w $out
           cp -rL ${tommyVendorEnv} $out/vendor
         '';
@@ -79,9 +75,23 @@
           pname = "tommy";
           version = "0.2.7";
           commit = self.rev or self.shortRev or "unknown";
-          src = tommySrc;
+          # Self-consumption per RFC 0001: build from go-pkgs-test so
+          # the checkPhase below exercises the published artifact.
+          src = go-pkgs-test;
           modules = ./gomod2nix.toml;
           subPackages = [ "cmd/tommy" ];
+          # Run the library packages' test suite against the filtered
+          # go-pkgs-test tree. Skips ./generate/... — those tests scaffold
+          # synthetic Go modules and invoke go/packages.Load, which needs
+          # network access or a pre-populated module cache that the nix
+          # sandbox doesn't have. The bats lane already covers the
+          # generator end-to-end against the installed binary.
+          doCheck = true;
+          checkPhase = ''
+            runHook preCheck
+            go test -p $NIX_BUILD_CORES ./pkg/... ./internal/...
+            runHook postCheck
+          '';
 
           nativeBuildInputs = [ pkgs.scdoc ];
 
@@ -137,11 +147,11 @@
       {
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
-          # flake-input-go_mod producer (amarbel-llc/nixpkgs RFC 0001).
-          # goSourceFilter returns a real derivation; a plain `self` or
-          # `tommySrc.outPath` passes `nix build` but fails the flake
-          # schema validator. See amarbel-llc/nixpkgs#44.
-          go-pkgs = pkgs.goSourceFilter { src = self; };
+          # RFC 0001 dual-output convention: go-pkgs is the prod tree,
+          # go-pkgs-test the superset including *_test.go + testdata/**.
+          # Downstream consumers SHOULD bridge against go-pkgs unless
+          # they need to run tommy's tests, in which case go-pkgs-test.
+          inherit go-pkgs go-pkgs-test;
         };
 
         checks = {
