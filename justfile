@@ -6,7 +6,7 @@ default: validate build test
 # `nix build` but fails the flake-schema validator). Runs in the
 # pre-merge hook via `default`.
 validate:
-  nix flake check --keep-going
+  nix flake check --keep-going --show-trace --print-build-logs
 
 build: build-go
 
@@ -14,7 +14,7 @@ build-go:
   go build -o build/tommy ./cmd/tommy
 
 build-nix: gomod2nix
-  nix build --show-trace
+  nix build --show-trace --print-build-logs
 
 gomod2nix:
   gomod2nix
