@@ -1,47 +1,109 @@
 default: validate build test
 
-# Schema-validate the flake and build every `checks.${system}.*`
-# output. Catches regressions like flake outputs that aren't real
-# derivations (e.g. #78 — a path-typed `go-pkgs` passes
-# `nix build` but fails the flake-schema validator). Runs in the
-# pre-merge hook via `default`.
-validate:
+# === aggregates ===
+
+validate: validate-nix
+
+build: build-nix
+
+test: test-bats-nix
+
+clean: clean-go-cache clean-go-modcache
+
+# === pre-build ===
+
+# Schema-validate the flake and build every checks.${system}.* output.
+[group('pre-build')]
+validate-nix:
+  # Forces tommyBin to build (its checkPhase runs the Go library
+  # tests against the filtered go-pkgs-test artifact) and then builds
+  # the bats lane on top.
   nix flake check --keep-going --show-trace --print-build-logs
 
-build: build-go
+# === build ===
 
-build-go:
-  go build -o build/tommy ./cmd/tommy
-
-build-nix: gomod2nix
+[group('build')]
+build-nix:
   nix build --show-trace --print-build-logs
 
-gomod2nix:
-  gomod2nix
+# === post-build ===
 
-test: test-go test-bats
-
-test-go:
-  tap-dancer go-test --skip-empty ./...
-
-test-bats: build
-  cd zz-tests_bats && TOMMY_BIN=../build/tommy BATS_TEST_TIMEOUT=30 bats --tap --jobs {{num_cpus()}} *.bats
-
-# Nix-native bats lane — authoritative, runs in the nix sandbox.
+# Bats end-to-end tests in the nix sandbox.
+[group('post-build')]
 test-bats-nix:
+  # Generator coverage lives here exclusively — the Go-side
+  # ./generate/... tests scaffold synthetic modules and need
+  # go/packages.Load network the nix sandbox can't provide.
   nix build .#bats-default --no-link --print-build-logs
 
 # Filter to a single tagged lane (e.g. `just test-bats-nix-tag fmt`).
+[group('post-build')]
 test-bats-nix-tag tag:
   nix build .#bats-{{tag}} --no-link --print-build-logs
 
-clean: clean-go
+# === maintenance ===
 
+# Regenerate gomod2nix.toml. Run after changing go.mod.
+[group('maintenance')]
+update-gomod2nix:
+  gomod2nix
+
+[group('maintenance')]
 clean-go-cache:
   go clean -cache
 
+[group('maintenance')]
 clean-go-modcache:
   go clean -modcache
+
+# Bump the version in flake.nix
+[group('maintenance')]
+bump-version new_version:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  current=$(grep 'version = "' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+  if [[ "$current" == "{{new_version}}" ]]; then
+    echo "already at {{new_version}}" >&2
+    exit 0
+  fi
+  sed -i.bak 's/version = "'"$current"'"/version = "{{new_version}}"/' flake.nix && rm flake.nix.bak
+  echo "$current → {{new_version}}"
+
+# Create a signed git tag for the current version and push it to origin
+[group('maintenance')]
+deploy-tag:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  version=$(grep 'version = "' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+  tag="v${version}"
+  if git rev-parse "$tag" >/dev/null 2>&1; then
+    echo "tag $tag already exists" >&2
+    exit 1
+  fi
+  git tag -s "$tag" -m "Release $tag"
+  echo "created tag $tag"
+  git push origin "$tag"
+  echo "pushed tag $tag"
+
+# Bump version, commit, push master, signed tag + push. Must be run from master.
+[group('maintenance')]
+deploy-release new_version:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  current_branch=$(git rev-parse --abbrev-ref HEAD)
+  if [[ "$current_branch" != "master" ]]; then
+    echo "just deploy-release must be run on master (currently on $current_branch)" >&2
+    exit 1
+  fi
+  just bump-version {{new_version}}
+  if ! git diff --quiet flake.nix; then
+    git add flake.nix
+    git commit -m "chore: release v{{new_version}}"
+  fi
+  git push origin master
+  just deploy-tag
+
+# === debug ===
 
 [group('debug')]
 debug-integration pattern='TestIntegration':
@@ -130,49 +192,3 @@ debug-all-backends pattern='TestIntegration':
 [group('debug')]
 debug-bench:
   go test -run TestBenchmarkBackends ./generate/ -v -count=1
-
-clean-go: clean-go-cache clean-go-modcache
-
-# Bump the version in flake.nix
-bump-version new_version:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  current=$(grep 'version = "' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
-  if [[ "$current" == "{{new_version}}" ]]; then
-    echo "already at {{new_version}}" >&2
-    exit 0
-  fi
-  sed -i.bak 's/version = "'"$current"'"/version = "{{new_version}}"/' flake.nix && rm flake.nix.bak
-  echo "$current → {{new_version}}"
-
-# Create a signed git tag for the current version and push it to origin
-tag:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  version=$(grep 'version = "' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
-  tag="v${version}"
-  if git rev-parse "$tag" >/dev/null 2>&1; then
-    echo "tag $tag already exists" >&2
-    exit 1
-  fi
-  git tag -s "$tag" -m "Release $tag"
-  echo "created tag $tag"
-  git push origin "$tag"
-  echo "pushed tag $tag"
-
-# Bump version, commit, push master, signed tag + push. Must be run from master.
-release new_version:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  current_branch=$(git rev-parse --abbrev-ref HEAD)
-  if [[ "$current_branch" != "master" ]]; then
-    echo "just release must be run on master (currently on $current_branch)" >&2
-    exit 1
-  fi
-  just bump-version {{new_version}}
-  if ! git diff --quiet flake.nix; then
-    git add flake.nix
-    git commit -m "chore: release v{{new_version}}"
-  fi
-  git push origin master
-  just tag
