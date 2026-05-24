@@ -83,6 +83,14 @@ type Config struct {
 }
 ```
 
+Two things to get right:
+
+- **Directive placement.** Put `//go:generate tommy generate` immediately
+  above each struct you want codegen for. A package-level directive will
+  exit with `no structs with //go:generate tommy generate found`.
+- **Tag name.** Tommy reads the standard Go `toml:"..."` tag, not a `tommy:`
+  tag. Fields without a `toml` tag are silently skipped.
+
 This produces a `config_tommy.go` file with:
 
 ``` go
@@ -206,6 +214,37 @@ preserving their native TOML types (no string coercion).
 `toml:"key,multiline"`      // use """ multiline string syntax
 `toml:"-"`                  // skip this field
 ```
+
+### Unsupported Field Types
+
+The following will fail at `tommy generate` time:
+
+- `interface{}` / `any` --- no static type to dispatch on
+- `map[string]any`, `map[string]interface{}` --- same reason
+- Anonymous structs in field types --- name the struct and reference it
+- Channels, functions --- not representable in TOML
+
+For untyped or schema-free TOML, use the lower-level `pkg/document` or
+`pkg/marshal` APIs instead of codegen.
+
+### Common Errors
+
+- `no structs with //go:generate tommy generate found in <file>` ---
+  the directive is on the package or a file-level comment. Move it to
+  immediately above each struct.
+- `struct any not found in package` --- a field has type `any`/
+  `interface{}` (often via `map[string]any`). See *Unsupported Field
+  Types* above.
+- `field <Name>.<Field>: ...` --- codegen couldn't classify the field.
+  Check its Go type against *Supported Field Types*; the man page
+  `tommy-struct-tags(7)` enumerates every kind tommy recognizes.
+
+## See Also
+
+- `tommy(1)` --- top-level CLI
+- `tommy-fmt(1)` --- formatter subcommand
+- `tommy-generate(1)` --- codegen subcommand
+- `tommy-struct-tags(7)` --- complete struct-tag and field-kind reference
 
 ## CLI
 
