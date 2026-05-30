@@ -2,18 +2,18 @@
   description = "Tommy: a TOML library for Go";
 
   inputs = {
-    nixpkgs.url = "github:amarbel-llc/igloo";
+    igloo.url = "github:amarbel-llc/igloo";
     nixpkgs-master.url = "github:NixOS/nixpkgs/d233902339c02a9c334e7e593de68855ad26c4cb";
     utils.url = "https://flakehub.com/f/numtide/flake-utils/0.1.102";
     bats = {
       url = "github:amarbel-llc/bats";
-      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.igloo.follows = "igloo";
       inputs.nixpkgs-master.follows = "nixpkgs-master";
       inputs.utils.follows = "utils";
     };
     tap = {
       url = "github:amarbel-llc/tap";
-      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.igloo.follows = "igloo";
       inputs.nixpkgs-master.follows = "nixpkgs-master";
       inputs.utils.follows = "utils";
       inputs.bats.follows = "bats";
@@ -23,7 +23,7 @@
   outputs =
     {
       self,
-      nixpkgs,
+      igloo,
       nixpkgs-master,
       utils,
       bats,
@@ -33,7 +33,7 @@
       system:
       let
         pkgs-master = import nixpkgs-master { inherit system; };
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import igloo { inherit system; };
 
         # Source filtering via RFC 0001's mkGoPkgs helper. `go-pkgs`
         # excludes *_test.go and testdata/**; `go-pkgs-test` is the
