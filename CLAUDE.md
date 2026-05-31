@@ -24,7 +24,20 @@ go test -v -run TestName ./generate/
 
 # Run bats tests (requires build first)
 just build && cd zz-tests_bats && TOMMY_BIN=../build/tommy BATS_TEST_TIMEOUT=30 bats --tap generate.bats
+
+# After any encode/decode emission change: check all four codegen backends agree
+just test-backends
 ```
+
+**Codegen backends & wire-format coverage.** The generator has four backends
+(`jen` default, `api`, `cst`, `legacy`, selected via `TOMMY_CODEGEN_IR`); only
+`jen` runs in any automated lane, so the others can drift silently (this caused
+the #82 regression). The `./generate/` integration tests scaffold synthetic
+modules and run **locally only** --- the nix sandbox lacks the `go/packages`
+network they need, so the merge hook covers the generator via bats on the
+default backend, not these tests. After changing any encode/decode emission,
+run `just test-backends` to verify all four backends agree on wire-format
+output. See #83 for closing the CI gap.
 
 ## CLI Commands
 

@@ -178,8 +178,14 @@ debug-gen:
   cd "$dir" && GOFILE=config.go ./tommy generate
   cat "$dir/config_tommy.go"
 
-[group('debug')]
-debug-all-backends pattern='TestIntegration':
+# Run the Go generator suite across all four codegen backends
+# (jen/api/cst/legacy) to catch backend wire-format divergence — only the
+# default (jen) runs in any automated lane, so the others drift silently.
+# Local-only: scaffolds synthetic modules needing go/packages network the nix
+# sandbox lacks, so this is a pre-merge paved path for generator changes, not
+# part of the nix CI lane. See #83.
+[group('test')]
+test-backends pattern='TestIntegration':
   @echo "=== jen (default) ==="
   go test -run '{{pattern}}' ./generate/ -count=1
   @echo "=== api ==="
