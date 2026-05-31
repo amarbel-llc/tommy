@@ -1850,6 +1850,112 @@ func TestExplicitSliceOmitemptyPreserved(t *testing.T) {
 	}
 }
 
+// Regression test for #82: an empty slice field WITHOUT omitempty must encode as
+// the explicit-empty form `key = []`, not be omitted. A field without omitempty
+// always serializes; dropping it is a wire-format regression invisible to
+// round-trip tests (empty → omitted → decodes back to empty). Covers both the
+// primitive slice and TextMarshaler slice encode paths (madder's Encryption
+// []markl.Id is the latter).
+func TestIntegrationEmptySliceWithoutOmitempty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/emptyslice",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package emptyslice
+
+//go:generate tommy generate
+type Config struct {
+	Name  string `+"`"+`toml:"name"`+"`"+`
+	Tags  []string `+"`"+`toml:"tags"`+"`"+`
+	Marks []Mark   `+"`"+`toml:"marks"`+"`"+`
+}
+
+type Mark struct{ v string }
+
+func (m Mark) MarshalText() ([]byte, error)  { return []byte(m.v), nil }
+func (m *Mark) UnmarshalText(b []byte) error { m.v = string(b); return nil }
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "emptyslice_test.go", `package emptyslice
+
+import (
+	"strings"
+	"testing"
+)
+
+// Encoding from a document that never had the keys must still emit them as
+// "key = []" because neither field carries omitempty.
+func TestEmptyNonOmitemptySlicesEmitted(t *testing.T) {
+	doc, err := DecodeConfig([]byte("name = \"app\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "tags = []") {
+		t.Fatalf("expected primitive slice to emit \"tags = []\", got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "marks = []") {
+		t.Fatalf("expected text-marshaler slice to emit \"marks = []\", got:\n%s", out)
+	}
+}
+
+// Explicitly setting an empty (non-nil) slice must also emit "key = []".
+func TestExplicitEmptyNonOmitemptySlicesEmitted(t *testing.T) {
+	doc, err := DecodeConfig([]byte("name = \"app\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Data().Tags = []string{}
+	doc.Data().Marks = []Mark{}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "tags = []") {
+		t.Fatalf("expected \"tags = []\", got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "marks = []") {
+		t.Fatalf("expected \"marks = []\", got:\n%s", out)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 func TestIntegrationZeroValuePrimitiveSkip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

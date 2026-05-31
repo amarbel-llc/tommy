@@ -1089,6 +1089,13 @@ func jenSetTextMarshaler(ctx encCtx, o SetTextMarshaler, cv *jen.Statement) []je
 
 func jenSetSlicePrimitive(ctx encCtx, o SetSlicePrimitive, cv *jen.Statement) []jen.Code {
 	bk := o.TKey.BareKey()
+	// Without omitempty the field always serializes — an empty slice must emit
+	// the explicit "key = []" form, not be dropped. See #82.
+	if !o.OmitEmpty {
+		return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
+			g.Add(jenSlicePrimSet(ctx, o, cv, bk))
+		})}
+	}
 	src := o.Tgt.Jen()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.If(jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(bk))).BlockFunc(func(g *jen.Group) {
@@ -1123,16 +1130,22 @@ func jenSlicePrimSet(ctx encCtx, o SetSlicePrimitive, cv *jen.Statement, bk stri
 func jenSetSliceTextMarshaler(ctx encCtx, o SetSliceTextMarshaler, cv *jen.Statement) []jen.Code {
 	bk := o.TKey.BareKey()
 	src := o.Tgt.Jen()
+	emit := func(g *jen.Group) {
+		g.Id("vals").Op(":=").Make(jen.Index().String(), jen.Len(src.Clone()))
+		g.For(jen.List(jen.Id("i"), jen.Id("item")).Op(":=").Range().Add(src.Clone())).Block(
+			jen.List(jen.Id("v"), jen.Err()).Op(":=").Id("item").Dot("MarshalText").Call(),
+			jen.If(jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("i"), jen.Err())),
+			jen.Id("vals").Index(jen.Id("i")).Op("=").String().Call(jen.Id("v")),
+		)
+		g.Add(jenSetCall(ctx, cv, StaticKey(bk), jen.Id("vals")))
+	}
+	// Without omitempty the field always serializes — an empty slice must emit
+	// the explicit "key = []" form, not be dropped. See #82.
+	if !o.OmitEmpty {
+		return []jen.Code{jen.BlockFunc(emit)}
+	}
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.If(jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(bk))).BlockFunc(func(g *jen.Group) {
-			g.Id("vals").Op(":=").Make(jen.Index().String(), jen.Len(src.Clone()))
-			g.For(jen.List(jen.Id("i"), jen.Id("item")).Op(":=").Range().Add(src.Clone())).Block(
-				jen.List(jen.Id("v"), jen.Err()).Op(":=").Id("item").Dot("MarshalText").Call(),
-				jen.If(jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("i"), jen.Err())),
-				jen.Id("vals").Index(jen.Id("i")).Op("=").String().Call(jen.Id("v")),
-			)
-			g.Add(jenSetCall(ctx, cv, StaticKey(bk), jen.Id("vals")))
-		})
+		g.If(jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(bk))).BlockFunc(emit)
 	})}
 }
 

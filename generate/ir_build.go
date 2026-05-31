@@ -303,6 +303,7 @@ func buildEncodeOp(fi FieldInfo, tgt TargetPath, tkey TOMLKey, isRoot, emitHandl
 			TKey:       fieldKey,
 			TypeName:   fi.TypeName,
 			ImportPath: fi.ImportPath,
+			OmitEmpty:  fi.OmitEmpty,
 		}
 
 	case FieldMapStringString:

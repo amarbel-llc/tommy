@@ -260,6 +260,7 @@ type SetSliceTextMarshaler struct {
 	TKey       TOMLKey
 	TypeName   string
 	ImportPath string
+	OmitEmpty  bool
 }
 
 // SetMapStringString writes map[string]string via EnsureTable + DeleteAll + loop.

@@ -704,8 +704,14 @@ func emitEncodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSlicePrimitive:
-		fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
-			source, docVar, containerExpr, fi.TomlKey)
+		// Without omitempty the field always serializes — an empty slice must
+		// emit "key = []", not be dropped. The block still scopes locals. See #82.
+		if fi.OmitEmpty {
+			fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
+				source, docVar, containerExpr, fi.TomlKey)
+		} else {
+			fmt.Fprintf(&buf, "\t{\n")
+		}
 		encodeSource := source
 		if fi.SlicePointer {
 			tmpVar := "tmp" + fi.GoName
@@ -797,8 +803,14 @@ func emitEncodeField(ctx emitContext, fi FieldInfo, dataPath, docVar, containerE
 		fmt.Fprintf(&buf, "\t}\n")
 
 	case FieldSliceTextMarshaler:
-		fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
-			source, docVar, containerExpr, fi.TomlKey)
+		// Without omitempty the field always serializes — an empty slice must
+		// emit "key = []", not be dropped. The block still scopes `vals`. See #82.
+		if fi.OmitEmpty {
+			fmt.Fprintf(&buf, "\tif len(%s) > 0 || %s.HasInContainer(%s, %q) {\n",
+				source, docVar, containerExpr, fi.TomlKey)
+		} else {
+			fmt.Fprintf(&buf, "\t{\n")
+		}
 		fmt.Fprintf(&buf, "\t\tvals := make([]string, len(%s))\n", source)
 		fmt.Fprintf(&buf, "\t\tfor i, item := range %s {\n", source)
 		fmt.Fprintf(&buf, "\t\t\tv, err := item.MarshalText()\n")
