@@ -1071,7 +1071,21 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 		return fi, fmt.Errorf("unsupported map value type")
 
 	case *types.Alias:
-		return classifyFromType(pkg, goName, tomlKey, types.Unalias(t))
+		fi, err := classifyFromType(pkg, goName, tomlKey, types.Unalias(t))
+		if err != nil {
+			return fi, err
+		}
+		// When an alias re-exports a type from another package (e.g. a public
+		// facade over an internal/ package), the generated code must import the
+		// alias's declaring package — the package the source file references —
+		// not the underlying type's defining package. Resolving through the
+		// alias to the underlying *types.Named otherwise emits an import of the
+		// (often internal/) definition site, which Go rejects. See #81. jenType
+		// re-qualifies purely from ImportPath, so only the path needs fixing.
+		if aliasObj := t.Obj(); fi.ImportPath != "" && aliasObj.Pkg() != nil && aliasObj.Pkg() != pkg.Types {
+			fi.ImportPath = aliasObj.Pkg().Path()
+		}
+		return fi, nil
 
 	default:
 		return fi, fmt.Errorf("unsupported type %T", typ)

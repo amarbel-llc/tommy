@@ -696,6 +696,62 @@ type Config struct {
 	}
 }
 
+// Regression test for #81: when a field's type is an alias re-exported from a
+// public facade over an internal/ package, the generated code must import the
+// facade (the package the source file references), not the underlying type's
+// internal defining package. Resolving through the alias to the underlying
+// *types.Named would otherwise emit an illegal internal-package import.
+func TestAnalyzeAliasReExportImportPath(t *testing.T) {
+	dir := t.TempDir()
+
+	// Module with an internal package defining a named slice type, plus a
+	// public facade package that re-exports it via a type alias.
+	facadeDir := filepath.Join(dir, "facade")
+	writeFixture(t, facadeDir, "go.mod", "module example.com/facade\n\ngo 1.26\n")
+	writeFixture(t, filepath.Join(facadeDir, "internal/charlie/values"), "values.go", `package values
+
+type IntSlice []int
+`)
+	writeFixture(t, filepath.Join(facadeDir, "pkgs/values"), "main.go", `package values
+
+import internal "example.com/facade/internal/charlie/values"
+
+type IntSlice = internal.IntSlice
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/facade v0.0.0\n\nreplace example.com/facade => ../facade\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/facade/pkgs/values"
+
+//go:generate tommy generate
+type Config struct {
+	HashBuckets values.IntSlice `+"`"+`toml:"hash-buckets"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldSlicePrimitive {
+		t.Fatalf("expected FieldSlicePrimitive (%d), got %d", FieldSlicePrimitive, f.Kind)
+	}
+	const wantFacade = "example.com/facade/pkgs/values"
+	const internalPath = "example.com/facade/internal/charlie/values"
+	if f.ImportPath == internalPath {
+		t.Fatalf("field HashBuckets: ImportPath = internal package %q; generated code would emit an illegal internal-package import. want facade %q", internalPath, wantFacade)
+	}
+	if f.ImportPath != wantFacade {
+		t.Fatalf("field HashBuckets: ImportPath = %q, want %q", f.ImportPath, wantFacade)
+	}
+}
+
 // Regression test for #35: cross-package struct with unexported nested pointer
 // struct should be classified as FieldDelegatedStruct — delegation avoids
 // emitting code that references unexported types.

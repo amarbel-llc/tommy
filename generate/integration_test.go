@@ -3811,6 +3811,93 @@ type Defaults struct {
 	}
 }
 
+// Regression test for #81: a field whose type is an alias re-exported from a
+// public facade over an internal/ package must generate code importing the
+// facade, not the underlying internal package. The facade and internal package
+// live in their own module; the consumer is a separate module, so an import of
+// the internal package would violate Go's internal-package rule and fail to
+// compile. An analyze-level ImportPath assertion can't catch that — only an
+// end-to-end go build of the generated file does.
+func TestIntegrationAliasReExportOverInternalCompiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Facade module: an internal package defines a named slice type, and a
+	// public pkgs/values package re-exports it through a type alias.
+	facadeDir := filepath.Join(dir, "facade")
+	writeFixture(t, facadeDir, "go.mod", "module example.com/facade\n\ngo 1.26\n")
+	writeFixture(t, filepath.Join(facadeDir, "internal/charlie/values"), "values.go", `package values
+
+type IntSlice []int
+`)
+	writeFixture(t, filepath.Join(facadeDir, "pkgs/values"), "main.go", `package values
+
+import internal "example.com/facade/internal/charlie/values"
+
+type IntSlice = internal.IntSlice
+`)
+
+	// Consumer module (separate from the facade module) using the aliased type.
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", strings.Join([]string{
+		"module example.com/test",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require example.com/facade v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace example.com/facade => ../facade",
+		"",
+	}, "\n"))
+
+	configDir := filepath.Join(mainDir, "config")
+	writeFixture(t, configDir, "config.go", `package config
+
+import "example.com/facade/pkgs/values"
+
+//go:generate tommy generate
+type Config struct {
+	HashBuckets values.IntSlice `+"`"+`toml:"hash-buckets"`+"`"+`
+}
+`)
+
+	if err := Generate(configDir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	generated, err := os.ReadFile(filepath.Join(configDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("reading generated file: %v", err)
+	}
+	if strings.Contains(string(generated), `"example.com/facade/internal/charlie/values"`) {
+		t.Errorf("generated file imports the internal package (illegal from outside the facade module).\nGenerated:\n%s", string(generated))
+	}
+	if !strings.Contains(string(generated), `"example.com/facade/pkgs/values"`) {
+		t.Errorf("generated file missing import for the public facade.\nGenerated:\n%s", string(generated))
+	}
+
+	// The generated file must compile — this is the real downstream check: an
+	// internal-package import would be rejected here even though the consumer
+	// source itself type-checks fine.
+	cmdBuild := exec.Command("go", "build", ".")
+	cmdBuild.Dir = configDir
+	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	buildOutput, err := cmdBuild.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated file does not compile:\n%s", buildOutput)
+	}
+}
+
 // Sub-case 1: Cross-package named struct fields (#22)
 func TestIntegrationCrossPackageNamedStruct(t *testing.T) {
 	if testing.Short() {
