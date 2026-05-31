@@ -807,6 +807,107 @@ type Config struct {
 	}
 }
 
+// #81 follow-up (Class B): an exported struct re-exported via a type alias from
+// a facade over an internal/ package cannot be delegated to. tommy's delegation
+// calls Decode<T>Into in the type's defining package, which lives in the
+// internal/ package the consumer cannot import; the facade alias does not carry
+// those generated methods. Analyze must reject this with a clear error rather
+// than emit uncompilable code. Covered for scalar, slice, and map fields.
+func TestAnalyzeDelegatedStructOverInternalAliasErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+	}{
+		{"scalar", `Server values.Server ` + "`toml:\"server\"`"},
+		{"slice", `Servers []values.Server ` + "`toml:\"servers\"`"},
+		{"map", `Servers map[string]values.Server ` + "`toml:\"servers\"`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			facadeDir := filepath.Join(dir, "facade")
+			writeFixture(t, facadeDir, "go.mod", "module example.com/facade\n\ngo 1.26\n")
+			writeFixture(t, filepath.Join(facadeDir, "internal/charlie/values"), "values.go", `package values
+
+type Server struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+}
+`)
+			writeFixture(t, filepath.Join(facadeDir, "pkgs/values"), "main.go", `package values
+
+import internal "example.com/facade/internal/charlie/values"
+
+type Server = internal.Server
+`)
+			mainDir := filepath.Join(dir, "main")
+			writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/facade v0.0.0\n\nreplace example.com/facade => ../facade\n")
+			writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/facade/pkgs/values"
+
+//go:generate tommy generate
+type Config struct {
+	`+tc.field+`
+}
+`)
+
+			_, err := Analyze(mainDir, "config.go")
+			if err == nil {
+				t.Fatalf("expected error for delegated struct re-exported over an internal package, got nil")
+			}
+			if !strings.Contains(err.Error(), "internal") {
+				t.Fatalf("error should explain the internal-package problem, got: %v", err)
+			}
+		})
+	}
+}
+
+// #81 follow-up (Class B) regression guard: delegation through a type alias that
+// re-exports from a *public* (importable) package must keep importing the
+// defining package — where the generated Decode/Encode methods live — and must
+// NOT be rewritten to the facade package (which lacks those methods). This is
+// the boundary the Class B error must not overreach past.
+func TestAnalyzeDelegatedStructViaPublicAliasKeepsDefiningImport(t *testing.T) {
+	dir := t.TempDir()
+	libDir := filepath.Join(dir, "lib")
+	writeFixture(t, libDir, "go.mod", "module example.com/lib\n\ngo 1.26\n")
+	writeFixture(t, filepath.Join(libDir, "pub"), "pub.go", `package pub
+
+type Server struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+}
+`)
+	writeFixture(t, filepath.Join(libDir, "facade"), "facade.go", `package facade
+
+import "example.com/lib/pub"
+
+type Server = pub.Server
+`)
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/lib/facade"
+
+//go:generate tommy generate
+type Config struct {
+	Server facade.Server `+"`"+`toml:"server"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatalf("public re-export delegation should not error: %v", err)
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldDelegatedStruct {
+		t.Fatalf("expected FieldDelegatedStruct (%d), got %d", FieldDelegatedStruct, f.Kind)
+	}
+	const wantDefining = "example.com/lib/pub"
+	if f.ImportPath != wantDefining {
+		t.Fatalf("delegation must import the defining package %q (where Decode/Encode live), got %q", wantDefining, f.ImportPath)
+	}
+}
+
 // Regression test for #35: cross-package struct with unexported nested pointer
 // struct should be classified as FieldDelegatedStruct — delegation avoids
 // emitting code that references unexported types.

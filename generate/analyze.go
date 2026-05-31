@@ -185,6 +185,17 @@ func analyzeStruct(pkg *packages.Package, name string, st *ast.StructType) (Stru
 		si.Validatable = hasMethod(obj, "Validate")
 	}
 
+	// Reject delegated fields whose generated methods live in an internal/
+	// package the consumer cannot import. These are emitted directly in this
+	// struct's decode/encode (named fields and promoted embedded fields), so
+	// catching them here fails fast with a clear message instead of producing
+	// uncompilable output.
+	for _, fi := range si.Fields {
+		if err := checkDelegationImportable(pkg.PkgPath, fi); err != nil {
+			return si, fmt.Errorf("%s.%s: %w", name, fi.GoName, err)
+		}
+	}
+
 	return si, nil
 }
 
@@ -1086,7 +1097,13 @@ func classifyFromType(pkg *packages.Package, goName, tomlKey string, typ types.T
 		// alias to the underlying *types.Named otherwise emits an import of the
 		// (often internal/) definition site, which Go rejects. See #81. jenType
 		// re-qualifies purely from ImportPath, so only the path needs fixing.
-		if aliasObj := t.Obj(); fi.ImportPath != "" && aliasObj.Pkg() != nil && aliasObj.Pkg() != pkg.Types {
+		//
+		// Delegated kinds are excluded: delegation emits calls to the target's
+		// generated Decode<T>Into/EncodeFrom, which live in the type's *defining*
+		// package, not the alias's. Rewriting their import to the facade would
+		// reference methods that don't exist there. checkDelegationImportable
+		// instead rejects the unresolvable internal/ case outright. See #81.
+		if aliasObj := t.Obj(); fi.ImportPath != "" && aliasObj.Pkg() != nil && aliasObj.Pkg() != pkg.Types && !isDelegatedKind(fi.Kind) {
 			fi.ImportPath = aliasObj.Pkg().Path()
 		}
 		return fi, nil
@@ -1103,6 +1120,58 @@ func isMapStringString(m *types.Map) bool {
 	}
 	val, ok := m.Elem().(*types.Basic)
 	return ok && val.Kind() == types.String
+}
+
+// isDelegatedKind reports whether a field kind emits calls to the target
+// package's generated Decode<T>Into/EncodeFrom methods rather than inlining
+// field handling. Delegated kinds require importing the type's *defining*
+// package (where those methods are generated).
+func isDelegatedKind(k FieldKind) bool {
+	switch k {
+	case FieldDelegatedStruct, FieldPointerDelegatedStruct,
+		FieldSliceDelegatedStruct, FieldMapStringDelegatedStruct:
+		return true
+	default:
+		return false
+	}
+}
+
+// internalImportAllowed implements Go's internal-package visibility rule: a
+// package path containing an "internal" path element may be imported only by
+// code rooted at the directory enclosing that "internal" element. Returns true
+// when target has no internal element or when importer is within the allowed
+// subtree.
+func internalImportAllowed(target, importer string) bool {
+	var root string
+	switch {
+	case strings.Contains(target, "/internal/"):
+		root = target[:strings.Index(target, "/internal/")]
+	case strings.HasSuffix(target, "/internal"):
+		root = strings.TrimSuffix(target, "/internal")
+	case target == "internal" || strings.HasPrefix(target, "internal/"):
+		root = ""
+	default:
+		return true
+	}
+	return importer == root || strings.HasPrefix(importer, root+"/")
+}
+
+// checkDelegationImportable rejects a delegated field whose defining package is
+// an internal/ package the consumer (importerPath) may not import. Such a field
+// is typically a struct re-exported via a type alias from a facade over an
+// internal/ package: the generated Decode<T>Into/EncodeFrom live in the
+// internal package, and the public alias does not carry them, so no importable
+// package satisfies the delegation. See #81.
+func checkDelegationImportable(importerPath string, fi FieldInfo) error {
+	if !isDelegatedKind(fi.Kind) || fi.ImportPath == "" {
+		return nil
+	}
+	if internalImportAllowed(fi.ImportPath, importerPath) {
+		return nil
+	}
+	return fmt.Errorf(
+		"cannot delegate decoding of %s: its generated Decode/Encode methods live in internal package %q, which %q may not import (Go internal-package rule). This type is reached through a re-export alias over an internal package. Generate the facade in copy mode so the type is concrete in the public package, or mark the field `toml:\"-\"`",
+		fi.TypeName, fi.ImportPath, importerPath)
 }
 
 // resolvingTypes tracks which struct types are currently being resolved
