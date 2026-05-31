@@ -752,6 +752,61 @@ type Config struct {
 	}
 }
 
+// Regression test for #81 (follow-up, Class A): a map[string]NamedMap field
+// where NamedMap is a map[string]string alias re-exported from a facade over an
+// internal/ package must resolve ImportPath to the facade, not the underlying
+// internal definition. This is the AST map-value path (analyze.go ~473), which
+// resolved through the alias to the underlying *types.Named like the original
+// #81 scalar case did.
+func TestAnalyzeAliasReExportMapStringStringImportPath(t *testing.T) {
+	dir := t.TempDir()
+
+	facadeDir := filepath.Join(dir, "facade")
+	writeFixture(t, facadeDir, "go.mod", "module example.com/facade\n\ngo 1.26\n")
+	writeFixture(t, filepath.Join(facadeDir, "internal/charlie/values"), "values.go", `package values
+
+type Labels map[string]string
+`)
+	writeFixture(t, filepath.Join(facadeDir, "pkgs/values"), "main.go", `package values
+
+import internal "example.com/facade/internal/charlie/values"
+
+type Labels = internal.Labels
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", "module example.com/test\n\ngo 1.26\n\nrequire example.com/facade v0.0.0\n\nreplace example.com/facade => ../facade\n")
+	writeFixture(t, mainDir, "config.go", `package main
+
+import "example.com/facade/pkgs/values"
+
+//go:generate tommy generate
+type Config struct {
+	Groups map[string]values.Labels `+"`"+`toml:"groups"`+"`"+`
+}
+`)
+
+	infos, err := Analyze(mainDir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 struct, got %d", len(infos))
+	}
+	f := infos[0].Fields[0]
+	if f.Kind != FieldMapStringMapStringString {
+		t.Fatalf("expected FieldMapStringMapStringString (%d), got %d", FieldMapStringMapStringString, f.Kind)
+	}
+	const wantFacade = "example.com/facade/pkgs/values"
+	const internalPath = "example.com/facade/internal/charlie/values"
+	if f.ImportPath == internalPath {
+		t.Fatalf("field Groups: ImportPath = internal package %q; generated code would emit an illegal internal-package import. want facade %q", internalPath, wantFacade)
+	}
+	if f.ImportPath != wantFacade {
+		t.Fatalf("field Groups: ImportPath = %q, want %q", f.ImportPath, wantFacade)
+	}
+}
+
 // Regression test for #35: cross-package struct with unexported nested pointer
 // struct should be classified as FieldDelegatedStruct — delegation avoids
 // emitting code that references unexported types.

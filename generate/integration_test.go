@@ -3898,6 +3898,85 @@ type Config struct {
 	}
 }
 
+// Regression test for #81 (follow-up, Class A): a map[string]NamedMap field
+// whose value type is a map[string]string alias re-exported from a facade over
+// an internal/ package must generate code importing the facade, not the internal
+// definition. Same end-to-end guarantee as the scalar case, but exercising the
+// AST map-value path.
+func TestIntegrationAliasReExportMapOverInternalCompiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	facadeDir := filepath.Join(dir, "facade")
+	writeFixture(t, facadeDir, "go.mod", "module example.com/facade\n\ngo 1.26\n")
+	writeFixture(t, filepath.Join(facadeDir, "internal/charlie/values"), "values.go", `package values
+
+type Labels map[string]string
+`)
+	writeFixture(t, filepath.Join(facadeDir, "pkgs/values"), "main.go", `package values
+
+import internal "example.com/facade/internal/charlie/values"
+
+type Labels = internal.Labels
+`)
+
+	mainDir := filepath.Join(dir, "main")
+	writeFixture(t, mainDir, "go.mod", strings.Join([]string{
+		"module example.com/test",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require example.com/facade v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace example.com/facade => ../facade",
+		"",
+	}, "\n"))
+
+	configDir := filepath.Join(mainDir, "config")
+	writeFixture(t, configDir, "config.go", `package config
+
+import "example.com/facade/pkgs/values"
+
+//go:generate tommy generate
+type Config struct {
+	Groups map[string]values.Labels `+"`"+`toml:"groups"`+"`"+`
+}
+`)
+
+	if err := Generate(configDir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	generated, err := os.ReadFile(filepath.Join(configDir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("reading generated file: %v", err)
+	}
+	if strings.Contains(string(generated), `"example.com/facade/internal/charlie/values"`) {
+		t.Errorf("generated file imports the internal package (illegal from outside the facade module).\nGenerated:\n%s", string(generated))
+	}
+	if !strings.Contains(string(generated), `"example.com/facade/pkgs/values"`) {
+		t.Errorf("generated file missing import for the public facade.\nGenerated:\n%s", string(generated))
+	}
+
+	cmdBuild := exec.Command("go", "build", ".")
+	cmdBuild.Dir = configDir
+	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	buildOutput, err := cmdBuild.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated file does not compile:\n%s", buildOutput)
+	}
+}
+
 // Sub-case 1: Cross-package named struct fields (#22)
 func TestIntegrationCrossPackageNamedStruct(t *testing.T) {
 	if testing.Short() {

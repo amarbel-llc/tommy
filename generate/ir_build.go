@@ -93,11 +93,12 @@ func buildDecodeOp(fi FieldInfo, dataPath, keyPrefix string, tgt TargetPath, tke
 
 	case FieldMapStringMapStringString:
 		return GetMapStringMapStringString{
-			Target:   target,
-			Key:      keyPrefix + fi.TomlKey,
-			Tgt:      fieldTgt,
-			TKey:     fieldKey,
-			TypeName: fi.TypeName,
+			Target:     target,
+			Key:        keyPrefix + fi.TomlKey,
+			Tgt:        fieldTgt,
+			TKey:       fieldKey,
+			TypeName:   fi.TypeName,
+			ImportPath: fi.ImportPath,
 		}
 
 	case FieldStruct:

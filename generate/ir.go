@@ -72,11 +72,12 @@ type GetMapStringString struct {
 
 // GetMapStringMapStringString decodes map[string]map[string]string via FindSubTables.
 type GetMapStringMapStringString struct {
-	Target   string
-	Key      string
-	Tgt      TargetPath
-	TKey     TOMLKey
-	TypeName string // named type for inner map (empty for plain map[string]string)
+	Target     string
+	Key        string
+	Tgt        TargetPath
+	TKey       TOMLKey
+	TypeName   string // named type for inner map (empty for plain map[string]string)
+	ImportPath string // import path for TypeName if cross-package
 }
 
 // --- Container decode operations ---

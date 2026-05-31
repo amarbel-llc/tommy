@@ -365,7 +365,7 @@ func jenMSS2(ctx jenCtx, o GetMapStringMapStringString) []jen.Code {
 	pf := o.TKey.Lit(".")
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		if o.TypeName != "" {
-			g.Var().Id("_mr").Map(jen.String()).Id(o.TypeName)
+			g.Var().Id("_mr").Map(jen.String()).Add(jenType(o.TypeName, o.ImportPath))
 		} else {
 			g.Var().Id("_mr").Map(jen.String()).Map(jen.String()).String()
 		}
@@ -377,7 +377,7 @@ func jenMSS2(ctx jenCtx, o GetMapStringMapStringString) []jen.Code {
 			g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(o.TKey))
 				if o.TypeName != "" {
-					g.Id("_mr").Op("=").Make(jen.Map(jen.String()).Id(o.TypeName))
+					g.Id("_mr").Op("=").Make(jen.Map(jen.String()).Add(jenType(o.TypeName, o.ImportPath)))
 				} else {
 					g.Id("_mr").Op("=").Make(jen.Map(jen.String()).Map(jen.String()).String())
 				}
@@ -386,7 +386,7 @@ func jenMSS2(ctx jenCtx, o GetMapStringMapStringString) []jen.Code {
 			g.Id("_inner").Op(":=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_ch"))
 			g.For(jen.Id("_ik").Op(":=").Range().Id("_inner")).Block(ctx.mcExpr(o.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk").Op("+").Lit(".").Op("+").Id("_ik")))
 			if o.TypeName != "" {
-				g.Id("_mr").Index(jen.Id("_mk")).Op("=").Id(o.TypeName).Call(jen.Id("_inner"))
+				g.Id("_mr").Index(jen.Id("_mk")).Op("=").Add(jenType(o.TypeName, o.ImportPath)).Call(jen.Id("_inner"))
 			} else {
 				g.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("_inner")
 			}

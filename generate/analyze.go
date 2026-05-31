@@ -470,7 +470,11 @@ func classifyField(pkg *packages.Package, goName, tomlKey string, expr ast.Expr)
 					qualifiedName := val.X.(*ast.Ident).Name + "." + val.Sel.Name
 					fi.Kind = FieldMapStringMapStringString
 					fi.TypeName = qualifiedName
-					fi.ImportPath = named.Obj().Pkg().Path()
+					// Prefer the alias's declaring package (the re-export site
+					// the source references) over the underlying type's defining
+					// package, which may be internal/. obj is the selector's
+					// object — the alias TypeName when an alias is used. See #81.
+					fi.ImportPath = obj.Pkg().Path()
 					return fi, nil
 				}
 			}
