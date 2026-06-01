@@ -147,9 +147,12 @@
           inherit go-pkgs go-pkgs-test;
         };
 
-        checks = {
-          bats-default = batsLib.batsLaneOutputs.bats-default;
-        };
+        # Every bats lane is a check, so `nix flake check` (the merge-hook
+        # `just validate`) runs the full matrix: each file_tag lane plus the
+        # generate lane under all four codegen backends (jen/api/cst/legacy).
+        # Backend divergence (e.g. #82) now fails CI rather than slipping
+        # through on the default backend. See #83.
+        checks = batsLib.batsLaneOutputs;
 
         devShells.default = pkgs-master.mkShell {
           packages = [

@@ -13,31 +13,33 @@ Decode/Encode methods from struct annotations.
 ## Build & Test
 
 ``` sh
-just                    # build + all tests (default)
-just build              # go build -o build/tommy ./cmd/tommy
-just test               # run both test-go and test-bats
-just test-go            # go test -v ./...
-just test-bats          # build then run bats integration tests
+just                    # default: validate + build + test (the full nix lane)
+just validate           # nix flake check — builds every check, incl. the bats
+                        #   backend matrix (jen/api/cst/legacy) + library tests
+just build              # nix build (the tommy binary)
+just test               # nix bats lanes: bats-default + the backend matrix
+just test-bats-nix      # just the default (jen) bats lane (bats-default)
+just test-bats-backends # the api/cst/legacy `generate` lanes
+just test-bats-nix-tag fmt   # a single tagged lane
 
-# Run a single Go test
-go test -v -run TestName ./generate/
-
-# Run bats tests (requires build first)
-just build && cd zz-tests_bats && TOMMY_BIN=../build/tommy BATS_TEST_TIMEOUT=30 bats --tap generate.bats
-
-# After any encode/decode emission change: check all four codegen backends agree
-just test-backends
+# Local fast iteration on the Go test suite (needs network for go/packages):
+go test -v -run TestName ./generate/   # a single Go test
+just test-go-backends                  # the Go ./generate suite across all 4 backends
+just debug-test TestName               # one Go test, verbose
 ```
 
 **Codegen backends & wire-format coverage.** The generator has four backends
-(`jen` default, `api`, `cst`, `legacy`, selected via `TOMMY_CODEGEN_IR`); only
-`jen` runs in any automated lane, so the others can drift silently (this caused
-the #82 regression). The `./generate/` integration tests scaffold synthetic
-modules and run **locally only** --- the nix sandbox lacks the `go/packages`
-network they need, so the merge hook covers the generator via bats on the
-default backend, not these tests. After changing any encode/decode emission,
-run `just test-backends` to verify all four backends agree on wire-format
-output. See #83 for closing the CI gap.
+(`jen` default, `api`, `cst`, `legacy`, selected via `TOMMY_CODEGEN_IR`). The nix
+bats matrix runs the `generate` lane under **all four** as flake checks
+(`bats-default` = jen; `bats-generate-{api,cst,legacy}`), so a wire-format bug in
+one backend fails the merge hook --- this is exactly what was missing when #82
+(which hit jen+legacy but not api/cst) slipped through. The richer `./generate/`
+**Go** integration tests remain local-only (they scaffold synthetic modules
+needing `go/packages` network the nix sandbox lacks); run `just test-go-backends`
+after any encode/decode emission change. Closing that Go-tests-in-CI gap is
+tracked in #83. When adding an emission edge case, add a bats test under
+`zz-tests_bats/` tagged `generate` (see `encode_wire_format.bats`) so the matrix
+covers it across backends.
 
 ## CLI Commands
 

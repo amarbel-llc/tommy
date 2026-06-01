@@ -6,7 +6,7 @@ validate: validate-nix
 
 build: build-nix
 
-test: test-bats-nix
+test: test-bats-nix test-bats-backends
 
 clean: clean-go-cache clean-go-modcache
 
@@ -17,8 +17,12 @@ clean: clean-go-cache clean-go-modcache
 validate-nix:
   # Forces tommyBin to build (its checkPhase runs the Go library
   # tests against the filtered go-pkgs-test artifact) and then builds
-  # the bats lane on top.
-  nix flake check --keep-going --show-trace --print-build-logs
+  # the bats lanes on top. --max-jobs 1 serializes lane builds: the
+  # backend matrix's go-compiling bats tests (`go generate`/`go test`)
+  # contend for CPU when several lanes build at once and blow the
+  # per-test timeout. Sequential lanes each get full CPU and finish
+  # fast. Time-over-throughput is fine here. See #83.
+  nix flake check --keep-going --show-trace --print-build-logs --max-jobs 1
 
 # === build ===
 
@@ -40,6 +44,13 @@ test-bats-nix:
 [group('post-build')]
 test-bats-nix-tag tag:
   nix build .#bats-{{tag}} --no-link --print-build-logs
+
+# Run the generate bats lane under the non-default codegen backends
+# (api/cst/legacy) so backend wire-format divergence fails CI — the default
+# (jen) backend is covered by `test-bats-nix` (bats-default). See #83.
+[group('post-build')]
+test-bats-backends:
+  nix build .#bats-generate-api .#bats-generate-cst .#bats-generate-legacy --no-link --print-build-logs
 
 # === maintenance ===
 
@@ -178,14 +189,13 @@ debug-gen:
   cd "$dir" && GOFILE=config.go ./tommy generate
   cat "$dir/config_tommy.go"
 
-# Run the Go generator suite across all four codegen backends
-# (jen/api/cst/legacy) to catch backend wire-format divergence — only the
-# default (jen) runs in any automated lane, so the others drift silently.
-# Local-only: scaffolds synthetic modules needing go/packages network the nix
-# sandbox lacks, so this is a pre-merge paved path for generator changes, not
-# part of the nix CI lane. See #83.
+# Fast local iteration: run the richer Go generator integration suite across all
+# four codegen backends (jen/api/cst/legacy). Backend parity in CI is enforced by
+# the nix bats matrix (test-bats-backends); this runs the deeper Go ./generate
+# tests, which are local-only — they scaffold synthetic modules needing
+# go/packages network the nix sandbox lacks. See #83 (closing that gap).
 [group('test')]
-test-backends pattern='TestIntegration':
+test-go-backends pattern='TestIntegration':
   @echo "=== jen (default) ==="
   go test -run '{{pattern}}' ./generate/ -count=1
   @echo "=== api ==="

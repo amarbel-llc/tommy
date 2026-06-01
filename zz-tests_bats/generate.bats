@@ -5,32 +5,9 @@ setup() {
   load "$(dirname "$BATS_TEST_FILE")/common.bash"
   export output
 
-  # Point Go caches into the sandbox so batman doesn't block them.
-  export GOPATH="$BATS_TEST_TMPDIR/gopath"
-  export GOCACHE="$BATS_TEST_TMPDIR/gocache"
-  export GOMODCACHE="$BATS_TEST_TMPDIR/gomodcache"
-
-  # Scaffold a minimal Go package with a tommy-annotated struct.
-  mkdir -p "$BATS_TEST_TMPDIR/proj"
-
-  # In the nix sandbox, TOMMY_FIXTURE_DIR points at a staged tommy
-  # source tree with a populated vendor/ (set by bats.nix as an
-  # absolute /nix/store path). Locally, fall back to the live worktree.
-  if [[ -n ${TOMMY_FIXTURE_DIR:-} ]]; then
-    repo_root="$TOMMY_FIXTURE_DIR"
-  else
-    repo_root="$(cd "$(dirname "$BATS_TEST_FILE")/.." && pwd)"
-  fi
-
-  cat > "$BATS_TEST_TMPDIR/proj/go.mod" <<EOF
-module example.com/batstest
-
-go 1.26
-
-require github.com/amarbel-llc/tommy v0.0.0
-
-replace github.com/amarbel-llc/tommy => $repo_root
-EOF
+  # Scaffold the synthetic downstream module (+ offline vendor in the nix
+  # sandbox); shared with encode_wire_format.bats via common.bash.
+  setup_tommy_proj
 
   cat > "$BATS_TEST_TMPDIR/proj/config.go" <<'GOEOF'
 package batstest
@@ -42,32 +19,6 @@ type Config struct {
 	Enabled bool   `toml:"enabled"`
 }
 GOEOF
-
-  # Offline build path (nix sandbox): build the synthetic module's
-  # vendor/ from the staged tommy fixture so `go build`/`go test`
-  # resolve everything from disk under GOFLAGS=-mod=vendor (exported
-  # by bats.nix). Vendor mode demands tommy ITSELF live in vendor/
-  # under its import path — `replace` directives don't help once
-  # -mod=vendor is set. Harmless to skip locally — the synthetic
-  # module then falls back to network mode, which is what
-  # `just test-bats` already does.
-  if [[ -n ${TOMMY_FIXTURE_DIR:-} ]]; then
-    proj_vendor="$BATS_TEST_TMPDIR/proj/vendor"
-    cp -rL "$repo_root/vendor" "$proj_vendor"
-    # Store-path copies inherit read-only mode; restore write access
-    # so we can extend the tree below and so bats can clean up later.
-    chmod -R u+w "$proj_vendor"
-    # Copy tommy itself into vendor at its module path. `-mod=vendor`
-    # requires the literal package path to exist in vendor/ — `replace`
-    # directives don't apply once vendor mode is active.
-    tommy_vendor_path="$proj_vendor/github.com/amarbel-llc/tommy"
-    mkdir -p "$tommy_vendor_path"
-    cp -L "$repo_root/go.mod" "$repo_root/go.sum" "$tommy_vendor_path/"
-    for d in cmd generate internal pkg; do
-      [ -d "$repo_root/$d" ] && cp -rL "$repo_root/$d" "$tommy_vendor_path/$d"
-    done
-    chmod -R u+w "$tommy_vendor_path"
-  fi
 }
 
 function generate_creates_companion_file { # @test
