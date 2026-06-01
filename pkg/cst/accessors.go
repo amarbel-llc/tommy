@@ -756,7 +756,9 @@ func ChildScope(root, parent *Node) (int, int) {
 		}
 	}
 	if parentIdx < 0 {
-		return 0, len(root.Children)
+		// Parent not in root.Children: fail closed (empty scope) so the scoped
+		// finds return nothing rather than silently matching document-wide.
+		return 0, 0
 	}
 	prefix := TableHeaderKey(parent) + "."
 	end := len(root.Children)

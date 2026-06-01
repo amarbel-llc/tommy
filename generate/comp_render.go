@@ -214,7 +214,7 @@ func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
 }
 
 func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
-	lv := toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name) + "Val"
+	lv := n.LocalVar
 	ftv := "_ft" + n.TKey.VarSuffix()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
@@ -315,7 +315,7 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 		})
 
 	case cdNilGuard:
-		lv := toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name) + "Val"
+		lv := n.LocalVar
 		v := "_ct" + n.TKey.VarSuffix()
 		g.BlockFunc(func(b *jen.Group) {
 			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
@@ -397,7 +397,7 @@ func compScopedMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, scope *jen.Sta
 			b.Var().Id("_mr").Map(jen.String()).Id(n.TypeName)
 		}
 		b.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Qual(cstPkg, "FindChildSubTables").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(field))).BlockFunc(func(lb *jen.Group) {
-			lb.Id("_mk").Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), prefix.Clone())
+			lb.Id(n.MapVar).Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), prefix.Clone())
 			lb.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(ctx.mc(n.TKey))
 				if n.SlicePtr {
@@ -406,13 +406,13 @@ func compScopedMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, scope *jen.Sta
 					ib.Id("_mr").Op("=").Make(jen.Map(jen.String()).Id(n.TypeName))
 				}
 			})
-			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
+			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
 			lb.Var().Id("entry").Id(n.TypeName)
 			compScopedBody(ctx, lb, n.Children, jen.Id("_ch"), "")
 			if n.SlicePtr {
-				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Op("&").Id("entry")
+				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id("entry")
 			} else {
-				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("entry")
+				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id("entry")
 			}
 		})
 		b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
@@ -501,8 +501,8 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 			g.If(jen.Id("_ch").Dot("Kind").Op("!=").Qual(cstPkg, "NodeTable")).Block(jen.Continue())
 			g.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch"))
 			g.If(jen.Op("!").Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), pf.Jen())).Block(jen.Continue())
-			g.Id("_mk").Op(":=").Id("_hdr").Index(pf.JenLen().Op(":"))
-			g.If(jen.Qual("strings", "Contains").Call(jen.Id("_mk"), jen.Lit("."))).Block(jen.Continue())
+			g.Id(n.MapVar).Op(":=").Id("_hdr").Index(pf.JenLen().Op(":"))
+			g.If(jen.Qual("strings", "Contains").Call(jen.Id(n.MapVar), jen.Lit("."))).Block(jen.Continue())
 			g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(n.TKey))
 				if n.SlicePtr {
@@ -511,15 +511,15 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 					g.Id("_mr").Op("=").Make(jen.Map(jen.String()).Id(n.TypeName))
 				}
 			})
-			g.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
+			g.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
 			g.Var().Id("entry").Id(n.TypeName)
 			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id("_ch"), "") {
 				g.Add(s)
 			}
 			if n.SlicePtr {
-				g.Id("_mr").Index(jen.Id("_mk")).Op("=").Op("&").Id("entry")
+				g.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id("entry")
 			} else {
-				g.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("entry")
+				g.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id("entry")
 			}
 		})
 		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
@@ -1145,7 +1145,7 @@ func compEmitStruct(f *jen.File, si StructInfo) {
 
 func compEmitDecode(f *jen.File, si StructInfo, dt string) {
 	ctx := receiverJenCtx()
-	nodes := foldCompDecode(&si, compPos{tkey: StaticKey(""), tgt: ReceiverTarget("d", "data")}, true)
+	nodes := foldCompDecode(&si, compPos{tkey: StaticKey(""), tgt: ReceiverTarget("d", "data"), seq: new(int)}, true)
 	f.Func().Id("Decode"+si.Name).Params(jen.Id("input").Index().Byte()).Params(jen.Op("*").Id(dt), jen.Error()).BlockFunc(func(g *jen.Group) {
 		g.List(jen.Id("doc"), jen.Err()).Op(":=").Qual(docPkg, "Parse").Call(jen.Id("input"))
 		g.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
@@ -1185,7 +1185,7 @@ func compEmitEncode(f *jen.File, si StructInfo, dt string) {
 
 func compEmitDecodeInto(f *jen.File, si StructInfo) {
 	ctx := freeJenCtx()
-	nodes := foldCompDecode(&si, compPos{tkey: PrefixedKey(""), tgt: LocalTarget("data")}, false)
+	nodes := foldCompDecode(&si, compPos{tkey: PrefixedKey(""), tgt: LocalTarget("data"), seq: new(int)}, false)
 	f.Func().Id("Decode"+si.Name+"Into").Params(
 		jen.Id("data").Op("*").Id(si.Name),
 		jen.Id("doc").Op("*").Qual(docPkg, "Document"),

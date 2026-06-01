@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -23,10 +24,25 @@ type compPos struct {
 	tkey       TOMLKey
 	tgt        TargetPath
 	arrayDepth int
+	scoped     bool // inside an array-table or map entry: nested arrays' headers carry a runtime key segment, so encode must find/append within the parent container, not document-wide
+	seq        *int // monotonic counter for unique decode locals (nil on encode)
 }
 
 func (p compPos) child(tomlKey, goName string) compPos {
-	return compPos{tkey: p.tkey.Dot(tomlKey), tgt: p.tgt.Dot(goName), arrayDepth: p.arrayDepth}
+	return compPos{tkey: p.tkey.Dot(tomlKey), tgt: p.tgt.Dot(goName), arrayDepth: p.arrayDepth, scoped: p.scoped, seq: p.seq}
+}
+
+// nextLocal returns a process-unique local variable name within one generated
+// decode function. Used for nil-guard pointer-struct locals so nested structs
+// with same-named fields never collide (key-derived names fail under the #55
+// flat fallback, which strips the path).
+func (p compPos) nextLocal(prefix string) string {
+	if p.seq == nil {
+		return prefix + "Val"
+	}
+	id := *p.seq
+	*p.seq++
+	return fmt.Sprintf("%s%d", prefix, id)
 }
 
 func arrayIdxVar(depth int) string {
@@ -135,10 +151,13 @@ func compDecodeNilGuard(fi FieldInfo, c compPos) cdNode {
 	if fi.InnerInfo == nil {
 		return nil
 	}
-	localVar := toLowerFirst(fi.GoName) + "Val"
+	// A process-unique local (not key-derived): nested pointer-structs whose
+	// fields share a GoName must get distinct locals, and the #55 flat fallback
+	// strips the key path, so key-based names collide. See the fuzzer regression.
+	localVar := c.nextLocal(toLowerFirst(fi.GoName) + "Val")
 	localTgt := LocalTarget(localVar)
 	// Children: all inner fields decoded inside the explicit [table].
-	children := foldCompDecode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth}, false)
+	children := foldCompDecode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
 	// FlatChildren (#55): inner fields decoded at the parent container. Array-table
 	// sub-fields keep their dotted keys (matched from the document root); other
 	// fields use bare keys at the current container.
@@ -146,15 +165,15 @@ func compDecodeNilGuard(fi FieldInfo, c compPos) cdNode {
 	for _, inner := range fi.InnerInfo.Fields {
 		var n cdNode
 		if inner.Kind == FieldSliceStruct || inner.Kind == FieldSliceDelegatedStruct {
-			n = foldCompDecodeField(inner, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth}, false)
+			n = foldCompDecodeField(inner, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
 		} else {
-			n = foldCompDecodeField(inner, compPos{tkey: TOMLKey{}, tgt: localTgt, arrayDepth: c.arrayDepth}, false)
+			n = foldCompDecodeField(inner, compPos{tkey: TOMLKey{}, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
 		}
 		if n != nil {
 			flat = append(flat, n)
 		}
 	}
-	return cdNilGuard{Tgt: c.tgt, TypeName: fi.TypeName, TKey: c.tkey, Children: children, FlatChildren: flat}
+	return cdNilGuard{Tgt: c.tgt, TypeName: fi.TypeName, TKey: c.tkey, LocalVar: localVar, Children: children, FlatChildren: flat}
 }
 
 func compDecodeArrayTable(fi FieldInfo, c compPos, slicePtr, emitHandles bool) cdNode {
@@ -173,7 +192,7 @@ func compDecodeArrayTable(fi FieldInfo, c compPos, slicePtr, emitHandles bool) c
 		TrackHandles: emitHandles && !crossPkg,
 		IdxVar:       iv,
 		EntryVar:     arrayEntryVar(c.arrayDepth),
-		Children:     foldCompDecode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1}, false),
+		Children:     foldCompDecode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, seq: c.seq}, false),
 	}
 }
 
@@ -181,14 +200,18 @@ func compDecodeMapStruct(fi FieldInfo, c compPos, slicePtr bool) cdNode {
 	if fi.InnerInfo == nil {
 		return nil
 	}
-	// Seed inner positions with the runtime map key (_mk) spliced into the dotted
-	// path, so inner leaf consumed keys build "<field>.<_mk>.<inner>" directly.
-	entryPos := compPos{tkey: c.tkey.Lit(".").Var("_mk"), tgt: LocalTarget("entry"), arrayDepth: c.arrayDepth}
+	// Seed inner positions with the runtime map-key variable spliced into the
+	// dotted path, so inner leaf consumed keys build "<field>.<mapVar>.<inner>"
+	// directly. mapVar is unique per nesting level so a nested map-struct doesn't
+	// shadow the outer key its consumed marks still reference through TKey.
+	mapVar := c.nextLocal("_mk")
+	entryPos := compPos{tkey: c.tkey.Lit(".").Var(mapVar), tgt: LocalTarget("entry"), arrayDepth: c.arrayDepth, seq: c.seq}
 	return cdMapStruct{
 		Tgt:      c.tgt,
 		TKey:     c.tkey,
 		TypeName: fi.TypeName,
 		SlicePtr: slicePtr,
+		MapVar:   mapVar,
 		Children: foldCompDecode(fi.InnerInfo, entryPos, false),
 	}
 }
@@ -242,7 +265,7 @@ func foldCompEncodeField(fi FieldInfo, pos compPos, emitHandles bool) ceNode {
 		case spkStruct:
 			return compEncodeArrayTable(fi, c, false, emitHandles)
 		case spkDelegated:
-			return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: false, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.arrayDepth > 0}
+			return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: false, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.scoped}
 		case spkPtr:
 			switch elem.Elem.(type) {
 			case spkScalar:
@@ -251,7 +274,7 @@ func foldCompEncodeField(fi FieldInfo, pos compPos, emitHandles bool) ceNode {
 			case spkStruct:
 				return compEncodeArrayTable(fi, c, true, emitHandles)
 			case spkDelegated:
-				return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: true, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.arrayDepth > 0}
+				return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: true, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.scoped}
 			}
 		}
 
@@ -298,8 +321,8 @@ func compEncodeArrayTable(fi FieldInfo, c compPos, slicePtr, emitHandles bool) c
 		SlicePtr:     slicePtr,
 		TrackHandles: emitHandles && !crossPkg,
 		IdxVar:       iv,
-		Scoped:       c.arrayDepth > 0,
-		Children:     foldCompEncode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1}, false),
+		Scoped:       c.scoped,
+		Children:     foldCompEncode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, scoped: true}, false),
 	}
 }
 
@@ -316,6 +339,6 @@ func compEncodeMapStruct(fi FieldInfo, c compPos, slicePtr bool) ceNode {
 		TKey:     c.tkey,
 		TypeName: fi.TypeName,
 		SlicePtr: slicePtr,
-		Children: foldCompEncode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: entryTgt, arrayDepth: c.arrayDepth}, false),
+		Children: foldCompEncode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: entryTgt, arrayDepth: c.arrayDepth, scoped: true}, false),
 	}
 }

@@ -8293,6 +8293,133 @@ func TestDecode(t *testing.T) {
 	}
 }
 
+// []Struct whose element has a delegated []ext.T and a map[string]ext.T (#88):
+// both must be scoped to the i-th entry on decode and encode.
+func TestNestingSliceStructDelegatedSliceAndMap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	extDir := filepath.Join(dir, "srvext")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/srvext", "", "go 1.26", "",
+		"require github.com/amarbel-llc/tommy v0.0.0", "",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+	}, "\n"))
+	writeFixture(t, extDir, "ext.go", `package srvext
+//go:generate tommy generate
+type Backend struct {
+	URL string `+"`toml:\"url\"`"+`
+}
+
+//go:generate tommy generate
+type Meta struct {
+	Note string `+"`toml:\"note\"`"+`
+}
+`)
+	if err := Generate(extDir, "ext.go"); err != nil {
+		t.Fatalf("Generate srvext: %v", err)
+	}
+
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer", "", "go 1.26", "",
+		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/srvext v0.0.0", ")", "",
+		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/srvext => ../srvext", ")", "",
+	}, "\n"))
+	writeFixture(t, consumerDir, "app.go", `package consumer
+import "example.com/test/srvext"
+//go:generate tommy generate
+type Config struct {
+	Servers []Server `+"`toml:\"servers\"`"+`
+}
+type Server struct {
+	Name     string                     `+"`toml:\"name\"`"+`
+	Backends []srvext.Backend           `+"`toml:\"backends\"`"+`
+	Metas    map[string]srvext.Meta     `+"`toml:\"metas\"`"+`
+}
+`)
+	if err := Generate(consumerDir, "app.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "app_test.go", `package consumer
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"alpha\"\n\n[[servers.backends]]\nurl = \"u1\"\n\n[[servers.backends]]\nurl = \"u2\"\n\n[servers.metas.a]\nnote = \"na\"\n\n[[servers]]\nname = \"beta\"\n\n[[servers.backends]]\nurl = \"u3\"\n\n[servers.metas.x]\nnote = \"nx\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Servers) != 2 { t.Fatalf("servers=%d", len(d.Servers)) }
+	if len(d.Servers[0].Backends) != 2 { t.Fatalf("s0 backends=%d", len(d.Servers[0].Backends)) }
+	if d.Servers[0].Backends[0].URL != "u1" || d.Servers[0].Backends[1].URL != "u2" { t.Fatalf("s0 backends=%v", d.Servers[0].Backends) }
+	if len(d.Servers[1].Backends) != 1 || d.Servers[1].Backends[0].URL != "u3" { t.Fatalf("s1 backends=%v", d.Servers[1].Backends) }
+	if d.Servers[0].Metas["a"].Note != "na" { t.Fatalf("s0 metas=%v", d.Servers[0].Metas) }
+	if d.Servers[1].Metas["x"].Note != "nx" { t.Fatalf("s1 metas=%v", d.Servers[1].Metas) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	d2 := doc2.Data()
+	if len(d2.Servers[1].Backends) != 1 || d2.Servers[1].Backends[0].URL != "u3" { t.Fatalf("round-trip s1 backends=%v\n%s", d2.Servers[1].Backends, out) }
+	if d2.Servers[0].Metas["a"].Note != "na" { t.Fatalf("round-trip s0 metas=%v\n%s", d2.Servers[0].Metas, out) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("test failed:\n%s", out)
+	}
+}
+
+// Growing a nested inner slice and re-encoding must append the new entry within
+// the right outer (#88: scoped AppendChildArrayTableEntry reuse+append path).
+func TestNestingSliceStructSliceStructAppendGrow(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "ng")
+	writeFixture(t, dir, "config.go", `package ng
+//go:generate tommy generate
+type Config struct {
+	Outers []Outer `+"`toml:\"outers\"`"+`
+}
+type Outer struct {
+	Name   string  `+"`toml:\"name\"`"+`
+	Inners []Inner `+"`toml:\"inners\"`"+`
+}
+type Inner struct {
+	ID string `+"`toml:\"id\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package ng
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[outers]]\nname = \"o0\"\n\n[[outers.inners]]\nid = \"i00\"\n\n[[outers]]\nname = \"o1\"\n\n[[outers.inners]]\nid = \"i10\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Outers) != 2 { t.Fatalf("outers=%d", len(d.Outers)) }
+	// Grow outer 0's inner slice by one.
+	d.Outers[0].Inners = append(d.Outers[0].Inners, Inner{ID: "i01"})
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	d2 := doc2.Data()
+	if len(d2.Outers[0].Inners) != 2 { t.Fatalf("o0 inners=%d, want 2\n%s", len(d2.Outers[0].Inners), out) }
+	if d2.Outers[0].Inners[0].ID != "i00" || d2.Outers[0].Inners[1].ID != "i01" { t.Fatalf("o0 inners=%v\n%s", d2.Outers[0].Inners, out) }
+	if len(d2.Outers[1].Inners) != 1 || d2.Outers[1].Inners[0].ID != "i10" { t.Fatalf("o1 inners=%v (append leaked across outer)\n%s", d2.Outers[1].Inners, out) }
+}
+`)
+	nestingRun(t, dir)
+}
+
 // Regression test for #60: map[string]Struct with nested sub-tables should not
 // produce phantom map entries from grandchild tables.
 func TestIntegrationMapStringStructNestedSubTable(t *testing.T) {

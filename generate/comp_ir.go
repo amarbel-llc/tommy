@@ -53,10 +53,14 @@ type cdInTable struct {
 
 // cdNilGuard is Ptr(Struct): find [TKey], allocate *TypeName, decode Children;
 // else (#55) decode FlatChildren at the parent container with a found-guard.
+// LocalVar is the allocated *TypeName variable name; it carries the key's
+// VarSuffix so nested pointer-structs with same-named fields don't collide (the
+// children's targets reference it, so a shadowed name would corrupt the assign).
 type cdNilGuard struct {
 	Tgt          TargetPath
 	TypeName     string
 	TKey         TOMLKey
+	LocalVar     string
 	Children     []cdNode // decoded inside the explicit [table]
 	FlatChildren []cdNode // flat-key fallback at the parent container
 }
@@ -94,12 +98,16 @@ type cdMapMap struct {
 }
 
 // cdMapStruct is map[string]Struct / map[string]*Struct: iterate [TKey.<key>]
-// sub-tables. Children are folded with the runtime _mk spliced into their TKey.
+// sub-tables. Children are folded with the runtime map-key variable (MapVar)
+// spliced into their TKey. MapVar is unique per nesting level so a map-struct
+// inside a map-struct doesn't shadow the outer key the inner's consumed marks
+// still reference through TKey.
 type cdMapStruct struct {
 	Tgt      TargetPath
 	TKey     TOMLKey
 	TypeName string
 	SlicePtr bool
+	MapVar   string
 	Children []cdNode
 }
 

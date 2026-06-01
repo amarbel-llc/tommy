@@ -135,6 +135,40 @@ key = "m10"
 	}
 }
 
+func TestAppendChildArrayTableEntryScoped(t *testing.T) {
+	// Two outers; outer 0 already has one inner. Appending an inner to each outer
+	// must place it within that outer's scope, not at the document end.
+	root := mustParseRoot(t, `[[outers]]
+name = "o0"
+
+[[outers.inners]]
+id = "i00"
+
+[[outers]]
+name = "o1"
+`)
+	o0 := nthArrayTable(root, "outers", 0)
+	o1 := nthArrayTable(root, "outers", 1)
+
+	n0 := AppendChildArrayTableEntry(root, o0, "inners")
+	if got := TableHeaderKey(n0); got != "outers.inners" {
+		t.Fatalf("appended header = %q", got)
+	}
+	// o0 now has two inners, o1 still has none — i.e. the append landed inside o0.
+	if got := len(FindChildArrayTableNodes(root, o0, "inners")); got != 2 {
+		t.Fatalf("o0 inners after append = %d, want 2", got)
+	}
+	if got := len(FindChildArrayTableNodes(root, o1, "inners")); got != 0 {
+		t.Fatalf("o1 inners after append = %d, want 0 (append leaked across outer)", got)
+	}
+
+	// Appending to o1 (which had none) lands within o1's scope.
+	AppendChildArrayTableEntry(root, o1, "inners")
+	if got := len(FindChildArrayTableNodes(root, o1, "inners")); got != 1 {
+		t.Fatalf("o1 inners after second append = %d, want 1", got)
+	}
+}
+
 // findKV returns the NodeKeyValue with the given name under container.
 func findKV(container *Node, name string) *Node {
 	for _, c := range container.Children {

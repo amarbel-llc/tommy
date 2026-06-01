@@ -156,6 +156,21 @@ debug-offline-test test_name:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
     go test -run '^{{test_name}}$' ./generate/ -v -count=1
 
+# Sweep the round-trip fuzzer across N seeds (each a different random shape set)
+# to flush codegen bugs in untested type-shape combinations. CI runs seed 1 only;
+# this is for local widening.
+[group('debug')]
+debug-fuzz-sweep n='12':
+  #!/usr/bin/env bash
+  set -uo pipefail
+  fail=0
+  for s in $(seq 1 {{n}}); do
+    out=$(GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 TOMMY_FUZZ_SEED=$s \
+      go test -run '^TestRoundTripFuzz$' ./generate/ -count=1 2>&1)
+    if echo "$out" | grep -q '^ok'; then echo "seed $s: PASS"; else echo "seed $s: FAIL"; echo "$out" | grep -E 'mismatch|undecoded|cannot use|Generate \(' | head -4; fail=1; fi
+  done
+  exit $fail
+
 # Run the whole ./generate suite under the nix go-generate check's offline env
 # and surface only failures/build errors — fast triage for codegen regressions.
 [group('debug')]
