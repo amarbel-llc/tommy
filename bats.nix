@@ -37,7 +37,6 @@ let
     {
       filter ? "",
       base ? tommyBin,
-      backend ? "",
     }:
     batsLane {
       inherit base filter batsSrc;
@@ -66,13 +65,7 @@ let
         GOSUMDB = "off";
         GO_NO_VENDOR_CHECKS = "1";
         GOTOOLCHAIN = "local";
-      }
-      # Per-lane codegen backend: tommy's generator reads TOMMY_CODEGEN_IR
-      # to pick the jen (default, empty value) / api / cst / legacy
-      # renderer. The backend matrix runs the same generate.bats files
-      # under each so wire-format divergence between backends fails CI —
-      # #82's empty-slice bug hit jen+legacy but not api/cst. See #83.
-      // lib.optionalAttrs (backend != "") { TOMMY_CODEGEN_IR = backend; };
+      };
       # Go toolchain (matching buildGoApplication's go) so generate.bats
       # can invoke `go generate`, `go build`, `go test`.
       nativeBuildInputs = [ pkgs-master.go ];
@@ -96,33 +89,13 @@ let
 
   allFileTags = lib.unique (lib.concatMap extractFileTags batsFiles);
 
-  # Codegen backends other than the default (jen, selected by the empty
-  # env value, covered by bats-default and bats-generate). The generate
-  # lane runs under each so a wire-format bug in one backend fails CI.
-  codegenBackends = [
-    "api"
-    "cst"
-    "legacy"
-  ];
-
-  backendLanes = lib.listToAttrs (
-    map (
-      b:
-      lib.nameValuePair "bats-generate-${b}" (mkBatsLane {
-        filter = "generate";
-        backend = b;
-      })
-    ) codegenBackends
-  );
-
   batsLaneOutputs =
     lib.listToAttrs (
       map (tag: lib.nameValuePair "bats-${tag}" (mkBatsLane { filter = tag; })) allFileTags
     )
     // {
       bats-default = mkBatsLane { };
-    }
-    // backendLanes;
+    };
 in
 {
   inherit mkBatsLane batsLaneOutputs;

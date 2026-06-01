@@ -6,7 +6,7 @@ validate: validate-nix
 
 build: build-nix
 
-test: test-bats-nix test-bats-backends test-go-generate-nix
+test: test-bats-nix test-go-generate-nix
 
 clean: clean-go-cache clean-go-modcache
 
@@ -45,17 +45,10 @@ test-bats-nix:
 test-bats-nix-tag tag:
   nix build .#bats-{{tag}} --no-link --print-build-logs
 
-# Run the generate bats lane under the non-default codegen backends
-# (api/cst/legacy) so backend wire-format divergence fails CI — the default
-# (jen) backend is covered by `test-bats-nix` (bats-default). See #83.
-[group('post-build')]
-test-bats-backends:
-  nix build .#bats-generate-api .#bats-generate-cst .#bats-generate-legacy --no-link --print-build-logs
-
-# Run the rich Go ./generate integration suite offline in the nix sandbox
-# (default/jen backend). The synthetic modules resolve from a pinned module
-# cache with no network — the deep coverage the bats matrix's breadth can't
-# reach. Mirrors local `test-go-backends` but inside CI. See #83.
+# Run the Go ./generate integration suite offline in the nix sandbox. The
+# synthetic modules resolve from a pinned module cache with no network — the
+# deep Go-level generator coverage (the bats lanes cover the end-to-end CLI).
+# See #83.
 [group('post-build')]
 test-go-generate-nix:
   nix build .#go-generate --no-link --print-build-logs
@@ -205,22 +198,6 @@ debug-gen:
   cd "{{justfile_directory()}}" && go build -o "$dir/tommy" ./cmd/tommy
   cd "$dir" && GOFILE=config.go ./tommy generate
   cat "$dir/config_tommy.go"
-
-# Fast local iteration: run the richer Go generator integration suite across all
-# four codegen backends (jen/api/cst/legacy). Backend parity in CI is enforced by
-# the nix bats matrix (test-bats-backends); this runs the deeper Go ./generate
-# tests, which are local-only — they scaffold synthetic modules needing
-# go/packages network the nix sandbox lacks. See #83 (closing that gap).
-[group('test')]
-test-go-backends pattern='TestIntegration':
-  @echo "=== jen (default) ==="
-  go test -run '{{pattern}}' ./generate/ -count=1
-  @echo "=== api ==="
-  TOMMY_CODEGEN_IR=api go test -run '{{pattern}}' ./generate/ -count=1
-  @echo "=== cst ==="
-  TOMMY_CODEGEN_IR=cst go test -run '{{pattern}}' ./generate/ -count=1
-  @echo "=== legacy ==="
-  TOMMY_CODEGEN_IR=legacy go test -run '{{pattern}}' ./generate/ -count=1
 
 [group('debug')]
 debug-bench:

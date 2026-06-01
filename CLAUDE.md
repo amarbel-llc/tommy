@@ -14,35 +14,29 @@ Decode/Encode methods from struct annotations.
 
 ``` sh
 just                    # default: validate + build + test (the full nix lane)
-just validate           # nix flake check — builds every check, incl. the bats
-                        #   backend matrix (jen/api/cst/legacy) + library tests
+just validate           # nix flake check — builds every check (bats lanes +
+                        #   go-generate) + library unit tests
 just build              # nix build (the tommy binary)
-just test               # nix lanes: bats matrix + the offline Go ./generate suite
-just test-bats-nix      # just the default (jen) bats lane (bats-default)
-just test-bats-backends # the api/cst/legacy `generate` lanes
-just test-go-generate-nix    # the Go ./generate suite offline in nix (jen)
+just test               # nix lanes: bats (CLI e2e) + the offline Go ./generate suite
+just test-bats-nix      # the bats lane (bats-default)
+just test-go-generate-nix    # the Go ./generate suite offline in nix
 just test-bats-nix-tag fmt   # a single tagged lane
 
 # Local fast iteration on the Go test suite (needs network for go/packages):
 go test -v -run TestName ./generate/   # a single Go test
-just test-go-backends                  # the Go ./generate suite across all 4 backends
 just debug-test TestName               # one Go test, verbose
 ```
 
-**Codegen backends & wire-format coverage.** The generator has four backends
-(`jen` default, `api`, `cst`, `legacy`, selected via `TOMMY_CODEGEN_IR`). The nix
-bats matrix runs the `generate` lane under **all four** as flake checks
-(`bats-default` = jen; `bats-generate-{api,cst,legacy}`), so a wire-format bug in
-one backend fails the merge hook --- this is exactly what was missing when #82
-(which hit jen+legacy but not api/cst) slipped through. For **depth**, the rich
-`./generate/` **Go** integration suite (100+ cases) now also runs in CI on the
-default (jen) backend via the `go-generate` flake check: it scaffolds synthetic
-modules at runtime, so it resolves them offline against a pinned module cache
-(`goModCache` in `flake.nix`) with `TOMMY_TEST_OFFLINE=1`. Locally those tests
-use the network path; run `just test-go-backends` (all four backends) for fast
-iteration. When adding an emission edge case, add a bats test under
-`zz-tests_bats/` tagged `generate` (see `encode_wire_format.bats`) so the matrix
-covers it across backends, and a Go integration test for depth.
+**Codegen renderer & wire-format coverage.** The generator has a single renderer,
+`RenderFileJen` (jennifer-based, `generate/ir_render_jen.go`), over the IR built
+in `ir_build.go`. CI covers it two ways: the bats lane (`bats-default`) exercises
+`tommy generate` end-to-end against the installed binary, and the `go-generate`
+flake check runs the rich Go `./generate/...` integration suite (100+ cases,
+incl. the #81/#82 regression tests) offline against a pinned module cache
+(`goModCache` in `flake.nix`, `TOMMY_TEST_OFFLINE=1`; the synthetic modules can't
+hit the network in the sandbox). When adding an emission edge case, add both a
+bats test under `zz-tests_bats/` (tagged `generate`, e.g. `encode_wire_format.bats`)
+and a Go integration test for depth.
 
 ## CLI Commands
 

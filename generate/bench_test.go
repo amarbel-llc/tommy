@@ -408,7 +408,7 @@ func TestBenchmarkBackends(t *testing.T) {
 	// (BurntSushi, pelletier) and `go mod tidy`s them in — which needs
 	// network. The offline nix go-generate check (GOPROXY=off) can't fetch
 	// them, and a perf comparison isn't a CI correctness gate anyway. Run it
-	// locally via `just test-go-backends` (network) instead. See #83.
+	// locally via `just debug-bench` (network) instead. See #83.
 	if os.Getenv("TOMMY_TEST_OFFLINE") != "" {
 		t.Skip("skipping benchmark comparison offline (needs external TOML libs)")
 	}
@@ -418,69 +418,53 @@ func TestBenchmarkBackends(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backends := []struct {
-		name string
-		env  string
-	}{
-		{"legacy", "legacy"},
-		{"api", "api"},
-		{"cst", "cst"},
-		{"jen", ""},
-	}
-
 	results := make(map[string]string)
 
-	for _, backend := range backends {
-		t.Run(backend.name, func(t *testing.T) {
-			dir := t.TempDir()
+	// tommy is the sole codegen renderer; benchmark it against the external
+	// TOML libraries below.
+	t.Run("tommy", func(t *testing.T) {
+		dir := t.TempDir()
 
-			writeFixture(t, dir, "go.mod", strings.Join([]string{
-				"module example.com/bench", "", "go 1.26", "",
-				"require github.com/amarbel-llc/tommy v0.0.0", "",
-				"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
-			}, "\n"))
+		writeFixture(t, dir, "go.mod", strings.Join([]string{
+			"module example.com/bench", "", "go 1.26", "",
+			"require github.com/amarbel-llc/tommy v0.0.0", "",
+			"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		}, "\n"))
 
-			writeFixture(t, dir, "config.go", benchGoFile)
+		writeFixture(t, dir, "config.go", benchGoFile)
 
-			// go mod tidy before Generate so packages.Load works
-			tidy := exec.Command("go", "mod", "tidy")
-			tidy.Dir = dir
-			if out, err := tidy.CombinedOutput(); err != nil {
-				t.Fatalf("go mod tidy: %s\n%s", err, out)
-			}
+		// go mod tidy before Generate so packages.Load works
+		tidy := exec.Command("go", "mod", "tidy")
+		tidy.Dir = dir
+		if out, err := tidy.CombinedOutput(); err != nil {
+			t.Fatalf("go mod tidy: %s\n%s", err, out)
+		}
 
-			if backend.env != "" {
-				t.Setenv("TOMMY_CODEGEN_IR", backend.env)
-			} else {
-				t.Setenv("TOMMY_CODEGEN_IR", "")
-			}
+		if err := Generate(dir, "config.go"); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
 
-			if err := Generate(dir, "config.go"); err != nil {
-				t.Fatalf("Generate(%s): %v", backend.name, err)
-			}
+		// Write bench test AFTER Generate so DecodeConfig is declared
+		writeFixture(t, dir, "bench_test.go", benchTestFile)
 
-			// Write bench test AFTER Generate so DecodeConfig is declared
-			writeFixture(t, dir, "bench_test.go", benchTestFile)
+		// Re-tidy after Generate so generated imports are resolved
+		tidy2 := exec.Command("go", "mod", "tidy")
+		tidy2.Dir = dir
+		if out, err := tidy2.CombinedOutput(); err != nil {
+			t.Fatalf("go mod tidy (post-gen): %s\n%s", err, out)
+		}
 
-			// Re-tidy after Generate so generated imports are resolved
-			tidy2 := exec.Command("go", "mod", "tidy")
-			tidy2.Dir = dir
-			if out, err := tidy2.CombinedOutput(); err != nil {
-				t.Fatalf("go mod tidy (post-gen): %s\n%s", err, out)
-			}
+		cmd := exec.Command("go", "test", "-bench=.", "-benchmem", "-benchtime=500ms", "-count=1", "./...")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), testGoEnv()...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go test -bench failed for tommy:\n%s", out)
+		}
 
-			cmd := exec.Command("go", "test", "-bench=.", "-benchmem", "-benchtime=500ms", "-count=1", "./...")
-			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), testGoEnv()...)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("go test -bench failed for %s:\n%s", backend.name, out)
-			}
-
-			results[backend.name] = extractBenchLines(string(out))
-			t.Logf("=== %s ===\n%s", backend.name, results[backend.name])
-		})
-	}
+		results["tommy"] = extractBenchLines(string(out))
+		t.Logf("=== tommy ===\n%s", results["tommy"])
+	})
 
 	// External libraries
 	externals := []struct {

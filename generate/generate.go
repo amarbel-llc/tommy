@@ -26,14 +26,8 @@ func Generate(dir, filename string) error {
 	}
 
 	var buf bytes.Buffer
-	if os.Getenv("TOMMY_CODEGEN_IR") == "legacy" {
-		if err := RenderFile(&buf, pkgName, infos); err != nil {
-			return fmt.Errorf("render: %w", err)
-		}
-	} else {
-		if err := RenderFileJen(&buf, pkgName, infos); err != nil {
-			return fmt.Errorf("render: %w", err)
-		}
+	if err := RenderFileJen(&buf, pkgName, infos); err != nil {
+		return fmt.Errorf("render: %w", err)
 	}
 
 	outName := strings.TrimSuffix(filename, ".go") + "_tommy.go"
