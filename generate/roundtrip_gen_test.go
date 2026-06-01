@@ -216,7 +216,7 @@ func TestRoundTripFuzz(t *testing.T) {
 	}
 
 	seed := int64(fuzzEnvInt("TOMMY_FUZZ_SEED", 1))
-	cases := fuzzEnvInt("TOMMY_FUZZ_CASES", 48)
+	cases := fuzzEnvInt("TOMMY_FUZZ_CASES", 96)
 	const depth = 4
 	t.Logf("round-trip fuzz: seed=%d cases=%d depth=%d", seed, cases, depth)
 
