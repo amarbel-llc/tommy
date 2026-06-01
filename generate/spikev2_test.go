@@ -78,10 +78,35 @@ type v2ArrayTable struct {
 	Children []v2node // leaf-only in this spike
 }
 
+// v2MapScalar: map[string]string — find [Dotted] table, ExtractStringMap.
+type v2MapScalar struct {
+	Tgt    TargetPath
+	Dotted string
+}
+
+// v2MapMap: map[string]map[string]string — iterate [Dotted.*] tables.
+type v2MapMap struct {
+	Tgt    TargetPath
+	Dotted string
+}
+
+// v2MapStruct: map[string]Struct / map[string]*Struct — iterate [Dotted.<key>]
+// sub-tables; entry fields are leaf-only here.
+type v2MapStruct struct {
+	Tgt      TargetPath
+	Dotted   string
+	TypeName string
+	Ptr      bool
+	Children []v2node
+}
+
 func (v2Leaf) isV2()       {}
 func (v2Table) isV2()      {}
 func (v2NilGuard) isV2()   {}
 func (v2ArrayTable) isV2() {}
+func (v2MapScalar) isV2()  {}
+func (v2MapMap) isV2()     {}
+func (v2MapStruct) isV2()  {}
 
 // --- The decode fold (over the shared TypeExpr algebra) ---
 
@@ -140,10 +165,34 @@ func foldV2DecodeField(fi FieldInfo, pos v2pos) v2node {
 			}
 		}
 
+	case spkMap:
+		switch elem := te.Elem.(type) {
+		case spkScalar:
+			return v2MapScalar{Tgt: fieldTgt, Dotted: dotted}
+		case spkMap:
+			return v2MapMap{Tgt: fieldTgt, Dotted: dotted}
+		case spkStruct:
+			return v2MapStructNode(fi, fieldTgt, dotted, false)
+		case spkPtr:
+			if _, ok := elem.Elem.(spkStruct); ok {
+				return v2MapStructNode(fi, fieldTgt, dotted, true)
+			}
+		}
+
 	case spkStruct:
 		return v2Table{Dotted: dotted, Children: foldV2DecodeStruct(fi.InnerInfo, v2pos{dotted: dotted, tgt: fieldTgt})}
 	}
 	panic("v2 spike: field shape out of scope: " + spikeKindName(fi.Kind))
+}
+
+func v2MapStructNode(fi FieldInfo, fieldTgt TargetPath, dotted string, ptr bool) v2node {
+	children := foldV2DecodeStruct(fi.InnerInfo, v2pos{tgt: LocalTarget("entry")})
+	for _, c := range children {
+		if _, ok := c.(v2Leaf); !ok {
+			panic("v2 spike: nested container inside map[string]struct out of scope")
+		}
+	}
+	return v2MapStruct{Tgt: fieldTgt, Dotted: dotted, TypeName: fi.TypeName, Ptr: ptr, Children: children}
 }
 
 func v2ArrayTableNode(fi FieldInfo, fieldTgt TargetPath, dotted string, slicePtr bool) v2node {
@@ -270,6 +319,58 @@ func v2RenderBody(g *jen.Group, container *jen.Statement, children []v2node) {
 					}
 					v2RenderBody(eb, jen.Id("_node"), n.Children)
 				})
+			})
+
+		case v2MapScalar: // map[string]string: find [Dotted] table, ExtractStringMap
+			g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(v2RootChildren())).Block(
+				jen.If(v2TableMatch(n.Dotted)).Block(
+					n.Tgt.Jen().Clone().Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_ch")),
+					jen.Break(),
+				),
+			)
+
+		case v2MapMap: // map[string]map[string]string: iterate [Dotted.*] sub-tables
+			g.BlockFunc(func(b *jen.Group) {
+				b.Var().Id("_mr").Map(jen.String()).Map(jen.String()).String()
+				b.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(v2RootChildren())).BlockFunc(func(lb *jen.Group) {
+					lb.If(jen.Id("_ch").Dot("Kind").Op("!=").Qual(cstPkg, "NodeTable")).Block(jen.Continue())
+					lb.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch"))
+					lb.If(jen.Op("!").Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), jen.Lit(n.Dotted+"."))).Block(jen.Continue())
+					lb.Id("_mk").Op(":=").Id("_hdr").Index(jen.Lit(len(n.Dotted) + 1).Op(":"))
+					lb.If(jen.Id("_mr").Op("==").Nil()).Block(jen.Id("_mr").Op("=").Make(jen.Map(jen.String()).Map(jen.String()).String()))
+					lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_ch"))
+				})
+				b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
+			})
+
+		case v2MapStruct: // map[string]Struct / map[string]*Struct: iterate [Dotted.<key>] sub-tables
+			g.BlockFunc(func(b *jen.Group) {
+				mt := jen.Id(n.TypeName)
+				if n.Ptr {
+					b.Var().Id("_mr").Map(jen.String()).Op("*").Add(mt.Clone())
+				} else {
+					b.Var().Id("_mr").Map(jen.String()).Add(mt.Clone())
+				}
+				b.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(v2RootChildren())).BlockFunc(func(lb *jen.Group) {
+					lb.If(jen.Id("_ch").Dot("Kind").Op("!=").Qual(cstPkg, "NodeTable")).Block(jen.Continue())
+					lb.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch"))
+					lb.If(jen.Op("!").Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), jen.Lit(n.Dotted+"."))).Block(jen.Continue())
+					lb.Id("_mk").Op(":=").Id("_hdr").Index(jen.Lit(len(n.Dotted) + 1).Op(":"))
+					lb.If(jen.Qual("strings", "Contains").Call(jen.Id("_mk"), jen.Lit("."))).Block(jen.Continue())
+					if n.Ptr {
+						lb.If(jen.Id("_mr").Op("==").Nil()).Block(jen.Id("_mr").Op("=").Make(jen.Map(jen.String()).Op("*").Add(mt.Clone())))
+					} else {
+						lb.If(jen.Id("_mr").Op("==").Nil()).Block(jen.Id("_mr").Op("=").Make(jen.Map(jen.String()).Add(mt.Clone())))
+					}
+					lb.Var().Id("entry").Add(mt.Clone())
+					v2RenderBody(lb, jen.Id("_ch"), n.Children)
+					if n.Ptr {
+						lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Op("&").Id("entry")
+					} else {
+						lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("entry")
+					}
+				})
+				b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 			})
 		}
 	}
@@ -454,6 +555,193 @@ func TestV2Decode(t *testing.T) {
 	}
 }
 
+// TestSpikeV2Wide exercises the expanded coverage: extended scalar types,
+// *primitive, multiline + omitempty, 3-level struct nesting (explicit parent
+// tables — implicit-parent #55 is out of scope), all four map shapes, and
+// []*struct — through one compiled round-trip.
+func TestSpikeV2Wide(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile-and-run spike in short mode")
+	}
+
+	l2 := &StructInfo{Name: "L2", Fields: []FieldInfo{
+		{GoName: "Val", TomlKey: "val", Kind: FieldPrimitive, TypeName: "int"},
+	}}
+	l1 := &StructInfo{Name: "L1", Fields: []FieldInfo{
+		{GoName: "L2", TomlKey: "l2", Kind: FieldStruct, TypeName: "L2", InnerInfo: l2},
+	}}
+	svc := &StructInfo{Name: "Svc", Fields: []FieldInfo{
+		{GoName: "Image", TomlKey: "image", Kind: FieldPrimitive, TypeName: "string"},
+	}}
+	rt := &StructInfo{Name: "Rt", Fields: []FieldInfo{
+		{GoName: "Path", TomlKey: "path", Kind: FieldPrimitive, TypeName: "string"},
+	}}
+	wide := StructInfo{Name: "Wide", Fields: []FieldInfo{
+		{GoName: "Big", TomlKey: "big", Kind: FieldPrimitive, TypeName: "int64"},
+		{GoName: "Ratio", TomlKey: "ratio", Kind: FieldPrimitive, TypeName: "float64"},
+		{GoName: "Count", TomlKey: "count", Kind: FieldPrimitive, TypeName: "uint64"},
+		{GoName: "Ptr", TomlKey: "ptr", Kind: FieldPointerPrimitive, TypeName: "int"},
+		{GoName: "Desc", TomlKey: "desc", Kind: FieldPrimitive, TypeName: "string", Multiline: true},
+		{GoName: "Opt", TomlKey: "opt", Kind: FieldPrimitive, TypeName: "string", OmitEmpty: true},
+		{GoName: "Deep", TomlKey: "deep", Kind: FieldStruct, TypeName: "L1", InnerInfo: l1},
+		{GoName: "Env", TomlKey: "env", Kind: FieldMapStringString},
+		{GoName: "Svcs", TomlKey: "svcs", Kind: FieldMapStringStruct, TypeName: "Svc", InnerInfo: svc},
+		{GoName: "PSvcs", TomlKey: "psvcs", Kind: FieldMapStringStruct, TypeName: "Svc", InnerInfo: svc, SlicePointer: true},
+		{GoName: "Groups", TomlKey: "groups", Kind: FieldMapStringMapStringString},
+		{GoName: "PR", TomlKey: "pr", Kind: FieldSliceStruct, TypeName: "Rt", InnerInfo: rt, SlicePointer: true},
+	}}
+
+	dec := foldV2DecodeStruct(&wide, v2pos{tgt: ReceiverTarget("d", "data")})
+	enc := foldV2EncodeStruct(&wide, v2pos{tgt: ReceiverTarget("d", "data")})
+	generated, err := v2RenderFullFile("rt", "Wide", dec, enc)
+	if err != nil {
+		t.Fatalf("V2 render: %v", err)
+	}
+	t.Logf("generated wide decode+encode:\n%s", generated)
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/v2wide",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "wide.go", `package rt
+
+type Wide struct {
+	Big    int64                        `+"`"+`toml:"big"`+"`"+`
+	Ratio  float64                      `+"`"+`toml:"ratio"`+"`"+`
+	Count  uint64                       `+"`"+`toml:"count"`+"`"+`
+	Ptr    *int                         `+"`"+`toml:"ptr"`+"`"+`
+	Desc   string                       `+"`"+`toml:"desc,multiline"`+"`"+`
+	Opt    string                       `+"`"+`toml:"opt,omitempty"`+"`"+`
+	Deep   L1                           `+"`"+`toml:"deep"`+"`"+`
+	Env    map[string]string            `+"`"+`toml:"env"`+"`"+`
+	Svcs   map[string]Svc               `+"`"+`toml:"svcs"`+"`"+`
+	PSvcs  map[string]*Svc              `+"`"+`toml:"psvcs"`+"`"+`
+	Groups map[string]map[string]string `+"`"+`toml:"groups"`+"`"+`
+	PR     []*Rt                        `+"`"+`toml:"pr"`+"`"+`
+}
+
+type L1 struct {
+	L2 L2 `+"`"+`toml:"l2"`+"`"+`
+}
+type L2 struct {
+	Val int `+"`"+`toml:"val"`+"`"+`
+}
+type Svc struct {
+	Image string `+"`"+`toml:"image"`+"`"+`
+}
+type Rt struct {
+	Path string `+"`"+`toml:"path"`+"`"+`
+}
+`)
+
+	writeFixture(t, dir, "wide_tommy.go", generated)
+
+	writeFixture(t, dir, "roundtrip_test.go", `package rt
+
+import "testing"
+
+const in = `+"`"+`# wide comment
+big = 9000000000
+ratio = 2.5
+count = 42
+ptr = 7
+desc = "line one"
+opt = "present"
+
+[deep]
+
+[deep.l2]
+val = 11
+
+[env]
+a = "1"
+b = "2"
+
+[svcs.web]
+image = "nginx"
+
+[psvcs.db]
+image = "postgres"
+
+[groups.team]
+alice = "admin"
+
+[[pr]]
+path = "/x"
+
+[[pr]]
+path = "/y"
+`+"`"+`
+
+func TestV2Wide(t *testing.T) {
+	doc, err := DecodeWide([]byte(in))
+	if err != nil {
+		t.Fatalf("DecodeWide: %v", err)
+	}
+	doc.Data().Big = 12345
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	d, err := DecodeWide(out)
+	if err != nil {
+		t.Fatalf("re-DecodeWide: %v\n%s", err, out)
+	}
+	w := d.Data()
+
+	if w.Big != 12345 || w.Ratio != 2.5 || w.Count != 42 {
+		t.Fatalf("scalars wrong: %+v", w)
+	}
+	if w.Ptr == nil || *w.Ptr != 7 {
+		t.Fatalf("ptr wrong: %v", w.Ptr)
+	}
+	if w.Desc != "line one" || w.Opt != "present" {
+		t.Fatalf("multiline/omitempty wrong: desc=%q opt=%q", w.Desc, w.Opt)
+	}
+	if w.Deep.L2.Val != 11 {
+		t.Fatalf("3-level nesting wrong: %+v", w.Deep)
+	}
+	if w.Env["a"] != "1" || w.Env["b"] != "2" {
+		t.Fatalf("map[string]string wrong: %v", w.Env)
+	}
+	if w.Svcs["web"].Image != "nginx" {
+		t.Fatalf("map[string]struct wrong: %v", w.Svcs)
+	}
+	if w.PSvcs["db"] == nil || w.PSvcs["db"].Image != "postgres" {
+		t.Fatalf("map[string]*struct wrong: %v", w.PSvcs)
+	}
+	if w.Groups["team"]["alice"] != "admin" {
+		t.Fatalf("map[string]map[string]string wrong: %v", w.Groups)
+	}
+	if len(w.PR) != 2 || w.PR[0].Path != "/x" || w.PR[1].Path != "/y" {
+		t.Fatalf("[]*struct wrong: %+v", w.PR)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // =========================================================================
 // Encode (step #2, second half)
 //
@@ -467,11 +755,13 @@ func TestV2Decode(t *testing.T) {
 type e2node interface{ isE2() }
 
 type e2Leaf struct {
-	Tgt      TargetPath
-	Key      string
-	ZeroType string // jenZeroLit input; "" for slices
-	Slice    bool
-	Ptr      bool
+	Tgt       TargetPath
+	Key       string
+	ZeroType  string // jenZeroLit input; "" for slices
+	Slice     bool
+	Ptr       bool
+	OmitEmpty bool
+	Multiline bool
 }
 type e2Table struct {
 	Bk       string
@@ -488,11 +778,29 @@ type e2ArrayTable struct {
 	SlicePtr bool
 	Children []e2node // leaf-only
 }
+type e2MapScalar struct {
+	Tgt TargetPath
+	Bk  string
+}
+type e2MapMap struct {
+	Tgt TargetPath
+	Bk  string
+}
+type e2MapStruct struct {
+	Tgt      TargetPath
+	Bk       string
+	TypeName string
+	Ptr      bool
+	Children []e2node
+}
 
 func (e2Leaf) isE2()       {}
 func (e2Table) isE2()      {}
 func (e2NilGuard) isE2()   {}
 func (e2ArrayTable) isE2() {}
+func (e2MapScalar) isE2()  {}
+func (e2MapMap) isE2()     {}
+func (e2MapStruct) isE2()  {}
 
 func foldV2EncodeStruct(si *StructInfo, pos v2pos) []e2node {
 	var out []e2node
@@ -510,7 +818,7 @@ func foldV2EncodeField(fi FieldInfo, pos v2pos) e2node {
 		if te.Codec != codecPrim {
 			panic("v2 encode spike: non-primitive scalar codec out of scope")
 		}
-		return e2Leaf{Tgt: fieldTgt, Key: fi.TomlKey, ZeroType: fi.TypeName}
+		return e2Leaf{Tgt: fieldTgt, Key: fi.TomlKey, ZeroType: fi.TypeName, OmitEmpty: fi.OmitEmpty, Multiline: fi.Multiline}
 
 	case spkPtr:
 		switch te.Elem.(type) {
@@ -532,10 +840,38 @@ func foldV2EncodeField(fi FieldInfo, pos v2pos) e2node {
 			}
 		}
 
+	case spkMap:
+		switch elem := te.Elem.(type) {
+		case spkScalar:
+			return e2MapScalar{Tgt: fieldTgt, Bk: fi.TomlKey}
+		case spkMap:
+			return e2MapMap{Tgt: fieldTgt, Bk: fi.TomlKey}
+		case spkStruct:
+			return e2MapStructNode(fi, fieldTgt, false)
+		case spkPtr:
+			if _, ok := elem.Elem.(spkStruct); ok {
+				return e2MapStructNode(fi, fieldTgt, true)
+			}
+		}
+
 	case spkStruct:
 		return e2Table{Bk: fi.TomlKey, Children: foldV2EncodeStruct(fi.InnerInfo, v2pos{dotted: dotted, tgt: fieldTgt})}
 	}
 	panic("v2 encode spike: field shape out of scope: " + spikeKindName(fi.Kind))
+}
+
+func e2MapStructNode(fi FieldInfo, fieldTgt TargetPath, ptr bool) e2node {
+	base := "mapVal"
+	if ptr {
+		base = "(*mapVal)"
+	}
+	children := foldV2EncodeStruct(fi.InnerInfo, v2pos{tgt: LocalTarget(base)})
+	for _, c := range children {
+		if _, ok := c.(e2Leaf); !ok {
+			panic("v2 encode spike: nested container inside map[string]struct out of scope")
+		}
+	}
+	return e2MapStruct{Tgt: fieldTgt, Bk: fi.TomlKey, TypeName: fi.TypeName, Ptr: ptr, Children: children}
 }
 
 func e2ArrayEncode(fi FieldInfo, fieldTgt TargetPath, dotted string, slicePtr bool) e2node {
@@ -556,6 +892,16 @@ func v2SetAny(cv *jen.Statement, key string, val *jen.Statement) jen.Code {
 	)
 }
 
+func v2SetMultiline(cv *jen.Statement, key string, val *jen.Statement) jen.Code {
+	return jen.If(jen.Err().Op(":=").Qual(cstPkg, "SetMultilineString").Call(cv.Clone(), jen.Lit(key), val), jen.Err().Op("!=").Nil()).Block(
+		jen.Return(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("%w"), jen.Err())),
+	)
+}
+
+func v2DeleteValue(cv *jen.Statement, key string) jen.Code {
+	return jen.Qual(cstPkg, "DeleteValue").Call(cv.Clone(), jen.Lit(key))
+}
+
 func v2RenderEncodeBody(g *jen.Group, cv *jen.Statement, children []e2node) {
 	for _, c := range children {
 		switch n := c.(type) {
@@ -566,12 +912,29 @@ func v2RenderEncodeBody(g *jen.Group, cv *jen.Statement, children []e2node) {
 					v2SetAny(cv, n.Key, jen.Op("*").Add(n.Tgt.Jen().Clone())),
 				)
 			case n.Slice:
-				g.Add(v2SetAny(cv, n.Key, n.Tgt.Jen().Clone()))
+				if n.OmitEmpty {
+					g.If(jen.Len(n.Tgt.Jen().Clone()).Op(">").Lit(0).
+						Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(n.Key))).Block(
+						v2SetAny(cv, n.Key, n.Tgt.Jen().Clone()),
+					)
+				} else {
+					// Non-omitempty: SetAny emits the explicit "key = []" for an
+					// empty slice rather than dropping it. See #82.
+					g.Add(v2SetAny(cv, n.Key, n.Tgt.Jen().Clone()))
+				}
 			default:
-				g.If(n.Tgt.Jen().Clone().Op("!=").Add(jenZeroLit(n.ZeroType)).
-					Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(n.Key))).Block(
-					v2SetAny(cv, n.Key, n.Tgt.Jen().Clone()),
-				)
+				setStmt := v2SetAny(cv, n.Key, n.Tgt.Jen().Clone())
+				if n.Multiline && n.ZeroType == "string" {
+					setStmt = v2SetMultiline(cv, n.Key, n.Tgt.Jen().Clone())
+				}
+				if n.OmitEmpty {
+					g.If(n.Tgt.Jen().Clone().Op("!=").Add(jenZeroLit(n.ZeroType))).Block(setStmt).Else().Block(
+						v2DeleteValue(cv, n.Key),
+					)
+				} else {
+					g.If(n.Tgt.Jen().Clone().Op("!=").Add(jenZeroLit(n.ZeroType)).
+						Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(n.Key))).Block(setStmt)
+				}
 			}
 
 		case e2Table:
@@ -601,6 +964,41 @@ func v2RenderEncodeBody(g *jen.Group, cv *jen.Statement, children []e2node) {
 					}
 					v2RenderEncodeBody(lb, jen.Id("container"), n.Children)
 				})
+			})
+
+		case e2MapScalar: // map[string]string: EnsureChildTable + DeleteAllValues + loop
+			g.If(jen.Len(n.Tgt.Jen().Clone()).Op(">").Lit(0)).BlockFunc(func(b *jen.Group) {
+				b.Id("tableNode").Op(":=").Qual(cstPkg, "EnsureChildTable").Call(v2EncRoot(), cv.Clone(), jen.Lit(n.Bk))
+				b.Qual(cstPkg, "DeleteAllValues").Call(jen.Id("tableNode"))
+				b.For(jen.List(jen.Id("k"), jen.Id("v")).Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(
+					jen.If(jen.Err().Op(":=").Qual(cstPkg, "SetAny").Call(jen.Id("tableNode"), jen.Id("k"), jen.Id("v")), jen.Err().Op("!=").Nil()).Block(
+						jen.Return(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("%w"), jen.Err())),
+					),
+				)
+			})
+
+		case e2MapStruct: // map[string]Struct / map[string]*Struct: EnsureChildSubTable per key
+			g.If(jen.Len(n.Tgt.Jen().Clone()).Op(">").Lit(0)).BlockFunc(func(b *jen.Group) {
+				b.For(jen.List(jen.Id("mapKey"), jen.Id("mapVal")).Op(":=").Range().Add(n.Tgt.Jen().Clone())).BlockFunc(func(lb *jen.Group) {
+					lb.Id("subTable").Op(":=").Qual(cstPkg, "EnsureChildSubTable").Call(v2EncRoot(), cv.Clone(), jen.Lit(n.Bk), jen.Id("mapKey"))
+					if n.Ptr {
+						lb.If(jen.Id("mapVal").Op("==").Nil()).Block(jen.Continue())
+					}
+					v2RenderEncodeBody(lb, jen.Id("subTable"), n.Children)
+				})
+			})
+
+		case e2MapMap: // map[string]map[string]string: EnsureChildSubTable + DeleteAllValues + loop
+			g.If(jen.Len(n.Tgt.Jen().Clone()).Op(">").Lit(0)).BlockFunc(func(b *jen.Group) {
+				b.For(jen.List(jen.Id("mapKey"), jen.Id("mapVal")).Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(
+					jen.Id("subTable").Op(":=").Qual(cstPkg, "EnsureChildSubTable").Call(v2EncRoot(), v2EncRoot(), jen.Lit(n.Bk), jen.Id("mapKey")),
+					jen.Qual(cstPkg, "DeleteAllValues").Call(jen.Id("subTable")),
+					jen.For(jen.List(jen.Id("k"), jen.Id("v")).Op(":=").Range().Map(jen.String()).String().Call(jen.Id("mapVal"))).Block(
+						jen.If(jen.Err().Op(":=").Qual(cstPkg, "SetAny").Call(jen.Id("subTable"), jen.Id("k"), jen.Id("v")), jen.Err().Op("!=").Nil()).Block(
+							jen.Return(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("%w"), jen.Err())),
+						),
+					),
+				)
 			})
 		}
 	}
