@@ -379,6 +379,15 @@ func v2RenderBody(g *jen.Group, container *jen.Statement, children []v2node) {
 					ib.Id(n.LocalVar).Op(":=").Op("&").Id(n.TypeName).Values()
 					v2RenderBody(ib, jen.Id("_ft"), n.Children)
 					ib.Add(n.Tgt.Jen().Clone()).Op("=").Id(n.LocalVar)
+				}).Else().BlockFunc(func(eb *jen.Group) {
+					// #55 flat-key fallback: the explicit [table] is absent (e.g.
+					// implicit parent), so decode the struct's primitive leaf
+					// fields at the parent container with bare keys; allocate +
+					// assign the pointer only if at least one matched.
+					eb.Id(n.LocalVar).Op(":=").Op("&").Id(n.TypeName).Values()
+					eb.Id("_found").Op(":=").False()
+					v2FlatLeafScan(eb, container, n.Children, "_found")
+					eb.If(jen.Id("_found")).Block(n.Tgt.Jen().Clone().Op("=").Id(n.LocalVar))
 				})
 			})
 
@@ -541,6 +550,45 @@ func v2RenderBody(g *jen.Group, container *jen.Statement, children []v2node) {
 			})
 		}
 	}
+}
+
+// v2FlatLeafScan emits a leaf scan over `container` (the parent) for the
+// flat-key fallback, setting foundVar=true on any match. Spike scope: primitive
+// scalar leaves only (the #55 case); panics on ptr/slice/codec leaves.
+func v2FlatLeafScan(g *jen.Group, container *jen.Statement, children []v2node, foundVar string) {
+	var leaves []v2Leaf
+	for _, c := range children {
+		l, ok := c.(v2Leaf)
+		if !ok {
+			continue
+		}
+		if l.CodecKind != codecPrim || l.Slice || l.Ptr {
+			panic("v2 spike: flat-key fallback supports only primitive scalar fields")
+		}
+		leaves = append(leaves, l)
+	}
+	if len(leaves) == 0 {
+		return
+	}
+	g.For(jen.List(jen.Id("_"), jen.Id("_kv")).Op(":=").Range().Add(container.Clone()).Dot("Children")).Block(
+		jen.If(jen.Id("_kv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeKeyValue")).Block(jen.Continue()),
+		jen.Switch(jen.Qual(cstPkg, "KeyValueName").Call(jen.Id("_kv"))).BlockFunc(func(sw *jen.Group) {
+			for _, l := range leaves {
+				var assign *jen.Statement
+				if l.Codec.cast != "" {
+					assign = l.Tgt.Jen().Clone().Op("=").Id(l.Codec.cast).Call(jen.Id("v"))
+				} else {
+					assign = l.Tgt.Jen().Clone().Op("=").Id("v")
+				}
+				sw.Case(jen.Lit(l.Key)).Block(
+					jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, l.Codec.fn).Call(jen.Id("_kv")), jen.Id("ok")).Block(
+						assign,
+						jen.Id(foundVar).Op("=").True(),
+					),
+				)
+			}
+		}),
+	)
 }
 
 func v2RenderDecodeFile(pkg, structName string, body []v2node) (string, error) {
@@ -1801,6 +1849,110 @@ func TestV2Delegation(t *testing.T) {
 	if w.Solo.Mode != "a" || w.Opt == nil || w.Opt.Mode != "b" ||
 		len(w.Many) != 2 || w.Many[1].Level != 20 || w.Keyed["x"].Mode != "kx" {
 		t.Fatalf("re-decoded delegation wrong: %+v", w)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
+// TestSpikeV2FlatKey exercises the #55 flat-key fallback for a *struct: the
+// pointer struct decodes whether its fields appear under an explicit [opt]
+// table OR flat at the parent level, and stays nil when entirely absent.
+func TestSpikeV2FlatKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile-and-run spike in short mode")
+	}
+
+	inner := &StructInfo{Name: "Inner", Fields: []FieldInfo{
+		{GoName: "Host", TomlKey: "host", Kind: FieldPrimitive, TypeName: "string"},
+		{GoName: "Port", TomlKey: "port", Kind: FieldPrimitive, TypeName: "int"},
+	}}
+	m := StructInfo{Name: "Main2", Fields: []FieldInfo{
+		{GoName: "Name", TomlKey: "name", Kind: FieldPrimitive, TypeName: "string"},
+		{GoName: "Opt", TomlKey: "opt", Kind: FieldPointerStruct, TypeName: "Inner", InnerInfo: inner},
+	}}
+
+	dec := foldV2DecodeStruct(&m, v2pos{tgt: ReceiverTarget("d", "data")})
+	enc := foldV2EncodeStruct(&m, v2pos{tgt: ReceiverTarget("d", "data")})
+	generated, err := v2RenderFullFile("rt", "Main2", dec, enc)
+	if err != nil {
+		t.Fatalf("V2 render: %v", err)
+	}
+	t.Logf("generated flat-key decode+encode:\n%s", generated)
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/v2flat",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "main.go", `package rt
+
+type Main2 struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+	Opt  *Inner `+"`"+`toml:"opt"`+"`"+`
+}
+
+type Inner struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+`)
+
+	writeFixture(t, dir, "main_tommy.go", generated)
+
+	writeFixture(t, dir, "roundtrip_test.go", `package rt
+
+import "testing"
+
+func TestV2FlatKey(t *testing.T) {
+	// Flat form: no [opt] table; the pointer-struct's keys live at top level.
+	flat, err := DecodeMain2([]byte("name = \"x\"\nhost = \"h\"\nport = 9\n"))
+	if err != nil {
+		t.Fatalf("decode flat: %v", err)
+	}
+	fd := flat.Data()
+	if fd.Name != "x" {
+		t.Fatalf("flat name wrong: %q", fd.Name)
+	}
+	if fd.Opt == nil || fd.Opt.Host != "h" || fd.Opt.Port != 9 {
+		t.Fatalf("flat-key fallback failed: %+v", fd.Opt)
+	}
+
+	// Explicit form: [opt] table present.
+	exp, err := DecodeMain2([]byte("name = \"y\"\n\n[opt]\nhost = \"eh\"\nport = 8\n"))
+	if err != nil {
+		t.Fatalf("decode explicit: %v", err)
+	}
+	ed := exp.Data()
+	if ed.Opt == nil || ed.Opt.Host != "eh" || ed.Opt.Port != 8 {
+		t.Fatalf("explicit table decode failed: %+v", ed.Opt)
+	}
+
+	// Absent: neither table nor flat keys -> pointer stays nil.
+	abs, err := DecodeMain2([]byte("name = \"z\"\n"))
+	if err != nil {
+		t.Fatalf("decode absent: %v", err)
+	}
+	if abs.Data().Opt != nil {
+		t.Fatalf("expected nil Opt when absent, got %+v", abs.Data().Opt)
 	}
 }
 `)
