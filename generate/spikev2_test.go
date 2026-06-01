@@ -249,12 +249,9 @@ func v2MapStructNode(fi FieldInfo, fieldTgt TargetPath, dotted string, ptr bool)
 }
 
 func v2ArrayTableNode(fi FieldInfo, fieldTgt TargetPath, dotted string, slicePtr bool) v2node {
+	// Entry fields target elem[i]; leaves scan the entry node and nested
+	// containers are matched positionally (#10).
 	children := foldV2DecodeStruct(fi.InnerInfo, v2pos{dotted: dotted, tgt: fieldTgt.Index("i")})
-	for _, c := range children {
-		if _, ok := c.(v2Leaf); !ok {
-			panic("v2 spike: nested container inside []struct out of scope")
-		}
-	}
 	return v2ArrayTable{Tgt: fieldTgt, TypeName: fi.TypeName, Dotted: dotted, SlicePtr: slicePtr, Children: children}
 }
 
@@ -334,6 +331,21 @@ func v2LeafCase(l v2Leaf) jen.Code {
 	)
 }
 
+// v2LeafScan emits one switch over container.Children handling all leaf cases.
+func v2LeafScan(g *jen.Group, container *jen.Statement, leaves []v2Leaf) {
+	if len(leaves) == 0 {
+		return
+	}
+	g.For(jen.List(jen.Id("_"), jen.Id("_kv")).Op(":=").Range().Add(container.Clone()).Dot("Children")).Block(
+		jen.If(jen.Id("_kv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeKeyValue")).Block(jen.Continue()),
+		jen.Switch(jen.Qual(cstPkg, "KeyValueName").Call(jen.Id("_kv"))).BlockFunc(func(sw *jen.Group) {
+			for _, l := range leaves {
+				sw.Add(v2LeafCase(l))
+			}
+		}),
+	)
+}
+
 // v2RenderBody walks the IR. Leaves are batched into one scan over `container`;
 // each container node is its own block. This single walk replaces the per-op
 // jenContOp/jenLeafCase/jenIT/jenIPT/jenFAT dispatch in the current renderer.
@@ -348,16 +360,7 @@ func v2RenderBody(g *jen.Group, container *jen.Statement, children []v2node) {
 		}
 	}
 
-	if len(leaves) > 0 {
-		g.For(jen.List(jen.Id("_"), jen.Id("_kv")).Op(":=").Range().Add(container.Clone()).Dot("Children")).Block(
-			jen.If(jen.Id("_kv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeKeyValue")).Block(jen.Continue()),
-			jen.Switch(jen.Qual(cstPkg, "KeyValueName").Call(jen.Id("_kv"))).BlockFunc(func(sw *jen.Group) {
-				for _, l := range leaves {
-					sw.Add(v2LeafCase(l))
-				}
-			}),
-		)
-	}
+	v2LeafScan(g, container, leaves)
 
 	for _, c := range conts {
 		switch n := c.(type) {
@@ -410,7 +413,9 @@ func v2RenderBody(g *jen.Group, container *jen.Statement, children []v2node) {
 					if n.SlicePtr {
 						eb.Add(n.Tgt.Jen().Clone()).Index(jen.Id("i")).Op("=").Op("&").Add(jt.Clone()).Values()
 					}
-					v2RenderBody(eb, jen.Id("_node"), n.Children)
+					// Leaves scan the entry node; nested containers are matched
+					// positionally against the i-th [[Dotted]] entry (#10).
+					v2RenderArrayEntry(eb, jen.Id("_node"), n.Children, n.Dotted)
 				})
 			})
 
@@ -550,6 +555,55 @@ func v2RenderBody(g *jen.Group, container *jen.Statement, children []v2node) {
 			})
 		}
 	}
+}
+
+// v2RenderArrayEntry renders one array-of-tables entry: leaves scan the entry
+// node directly; nested container children are matched positionally against the
+// i-th [[pk]] entry (#10), since tommy represents [pk.child] as a root-level
+// sibling table attached to the preceding [[pk]] by document position.
+func v2RenderArrayEntry(g *jen.Group, node *jen.Statement, children []v2node, pk string) {
+	var leaves []v2Leaf
+	var conts []v2node
+	for _, c := range children {
+		if l, ok := c.(v2Leaf); ok {
+			leaves = append(leaves, l)
+		} else {
+			conts = append(conts, c)
+		}
+	}
+	v2LeafScan(g, node, leaves)
+	for _, c := range conts {
+		v2RenderPositional(g, c, pk)
+	}
+}
+
+// v2RenderPositional renders a nested container scoped to the i-th [[pk]] entry
+// by counting array-table headers (the jenPosOp pattern). Spike scope: a nested
+// struct (v2Table) whose own children are leaves.
+func v2RenderPositional(g *jen.Group, c v2node, pk string) {
+	t, ok := c.(v2Table)
+	if !ok {
+		panic("v2 spike: positional render supports only a nested struct in []struct entries")
+	}
+	g.BlockFunc(func(b *jen.Group) {
+		b.Id("_pi").Op(":=").Lit(0)
+		b.For(jen.List(jen.Id("_"), jen.Id("_rc")).Op(":=").Range().Add(v2RootChildren())).BlockFunc(func(lb *jen.Group) {
+			// Count outer [[pk]] entries; stop once past the i-th.
+			lb.If(jen.Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeArrayTable").
+				Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Lit(pk)).Block(
+				jen.If(jen.Id("_pi").Op(">").Id("i")).Block(jen.Break()),
+				jen.Id("_pi").Op("++"),
+				jen.Continue(),
+			)
+			// Within the i-th entry's scope, match the nested [t.Dotted] table.
+			lb.If(jen.Id("_pi").Op("==").Id("i").Op("+").Lit(1).
+				Op("&&").Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable").
+				Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Lit(t.Dotted)).BlockFunc(func(ib *jen.Group) {
+				v2RenderBody(ib, jen.Id("_rc"), t.Children)
+				ib.Break()
+			})
+		})
+	})
 }
 
 // v2FlatLeafScan emits a leaf scan over `container` (the parent) for the
@@ -1141,12 +1195,9 @@ func e2MapStructNode(fi FieldInfo, fieldTgt TargetPath, ptr bool) e2node {
 }
 
 func e2ArrayEncode(fi FieldInfo, fieldTgt TargetPath, dotted string, slicePtr bool) e2node {
+	// Nested containers are allowed: encode threads the entry container to
+	// EnsureChildTable, which places [dotted.child] under the right entry (#10).
 	children := foldV2EncodeStruct(fi.InnerInfo, v2pos{dotted: dotted, tgt: fieldTgt.Index("i")})
-	for _, c := range children {
-		if _, ok := c.(e2Leaf); !ok {
-			panic("v2 encode spike: nested container inside []struct out of scope")
-		}
-	}
 	return e2ArrayTable{Tgt: fieldTgt, Dotted: dotted, SlicePtr: slicePtr, Children: children}
 }
 
@@ -1954,6 +2005,129 @@ func TestV2FlatKey(t *testing.T) {
 	if abs.Data().Opt != nil {
 		t.Fatalf("expected nil Opt when absent, got %+v", abs.Data().Opt)
 	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
+// TestSpikeV2NestedInArray exercises #10: a []struct whose element contains a
+// nested struct, decoded via positional matching of [servers.auth] to the i-th
+// [[servers]] entry, and re-encoded via entry-relative EnsureChildTable.
+func TestSpikeV2NestedInArray(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile-and-run spike in short mode")
+	}
+
+	auth := &StructInfo{Name: "SAuth", Fields: []FieldInfo{
+		{GoName: "User", TomlKey: "user", Kind: FieldPrimitive, TypeName: "string"},
+		{GoName: "Token", TomlKey: "token", Kind: FieldPrimitive, TypeName: "string"},
+	}}
+	server := &StructInfo{Name: "Server", Fields: []FieldInfo{
+		{GoName: "Host", TomlKey: "host", Kind: FieldPrimitive, TypeName: "string"},
+		{GoName: "Auth", TomlKey: "auth", Kind: FieldStruct, TypeName: "SAuth", InnerInfo: auth},
+	}}
+	cluster := StructInfo{Name: "Cluster", Fields: []FieldInfo{
+		{GoName: "Servers", TomlKey: "servers", Kind: FieldSliceStruct, TypeName: "Server", InnerInfo: server},
+	}}
+
+	dec := foldV2DecodeStruct(&cluster, v2pos{tgt: ReceiverTarget("d", "data")})
+	enc := foldV2EncodeStruct(&cluster, v2pos{tgt: ReceiverTarget("d", "data")})
+	generated, err := v2RenderFullFile("rt", "Cluster", dec, enc)
+	if err != nil {
+		t.Fatalf("V2 render: %v", err)
+	}
+	t.Logf("generated nested-in-array decode+encode:\n%s", generated)
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/v2nest",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "cluster.go", `package rt
+
+type Cluster struct {
+	Servers []Server `+"`"+`toml:"servers"`+"`"+`
+}
+
+type Server struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Auth SAuth  `+"`"+`toml:"auth"`+"`"+`
+}
+
+type SAuth struct {
+	User  string `+"`"+`toml:"user"`+"`"+`
+	Token string `+"`"+`toml:"token"`+"`"+`
+}
+`)
+
+	writeFixture(t, dir, "cluster_tommy.go", generated)
+
+	writeFixture(t, dir, "roundtrip_test.go", `package rt
+
+import "testing"
+
+const in = `+"`"+`[[servers]]
+host = "h1"
+
+[servers.auth]
+user = "u1"
+token = "t1"
+
+[[servers]]
+host = "h2"
+
+[servers.auth]
+user = "u2"
+token = "t2"
+`+"`"+`
+
+func check(t *testing.T, c *Cluster) {
+	t.Helper()
+	if len(c.Servers) != 2 {
+		t.Fatalf("servers len = %d, want 2", len(c.Servers))
+	}
+	if c.Servers[0].Host != "h1" || c.Servers[0].Auth.User != "u1" || c.Servers[0].Auth.Token != "t1" {
+		t.Fatalf("server[0] wrong: %+v", c.Servers[0])
+	}
+	if c.Servers[1].Host != "h2" || c.Servers[1].Auth.User != "u2" || c.Servers[1].Auth.Token != "t2" {
+		t.Fatalf("server[1] wrong: %+v", c.Servers[1])
+	}
+}
+
+func TestV2NestedInArray(t *testing.T) {
+	doc, err := DecodeCluster([]byte(in))
+	if err != nil {
+		t.Fatalf("DecodeCluster: %v", err)
+	}
+	check(t, doc.Data())
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	doc2, err := DecodeCluster(out)
+	if err != nil {
+		t.Fatalf("re-DecodeCluster: %v\n%s", err, out)
+	}
+	check(t, doc2.Data())
 }
 `)
 
