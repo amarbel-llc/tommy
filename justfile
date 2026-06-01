@@ -156,15 +156,6 @@ debug-offline-test test_name:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
     go test -run '^{{test_name}}$' ./generate/ -v -count=1
 
-# Run the ./generate suite through the compositional renderer (#84) under the
-# same offline env the nix go-generate check imposes. The TOMMY_COMP_RENDERER
-# gate in RenderFile routes generation through comp_*.go. Parity-iteration loop
-# for the Phase-1 cutover; drop once the compositional path is the only one.
-[group('debug')]
-debug-comp-test test_name='Test':
-  GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 TOMMY_COMP_RENDERER=1 \
-    go test -run '{{test_name}}' ./generate/ -count=1
-
 [group('debug')]
 debug-nesting-gen test_name:
   #!/usr/bin/env bash
