@@ -404,6 +404,14 @@ func TestBenchmarkBackends(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping benchmark test in short mode")
 	}
+	// This benchmark compares tommy against third-party TOML libraries
+	// (BurntSushi, pelletier) and `go mod tidy`s them in — which needs
+	// network. The offline nix go-generate check (GOPROXY=off) can't fetch
+	// them, and a perf comparison isn't a CI correctness gate anyway. Run it
+	// locally via `just test-go-backends` (network) instead. See #83.
+	if os.Getenv("TOMMY_TEST_OFFLINE") != "" {
+		t.Skip("skipping benchmark comparison offline (needs external TOML libs)")
+	}
 
 	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
 	if err != nil {
@@ -463,7 +471,7 @@ func TestBenchmarkBackends(t *testing.T) {
 
 			cmd := exec.Command("go", "test", "-bench=.", "-benchmem", "-benchtime=500ms", "-count=1", "./...")
 			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "GOFLAGS=")
+			cmd.Env = append(os.Environ(), testGoEnv()...)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go test -bench failed for %s:\n%s", backend.name, out)
@@ -507,7 +515,7 @@ func TestBenchmarkBackends(t *testing.T) {
 
 			cmd := exec.Command("go", "test", "-bench=.", "-benchmem", "-benchtime=500ms", "-count=1", "./...")
 			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "GOFLAGS=")
+			cmd.Env = append(os.Environ(), testGoEnv()...)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go test -bench failed for %s:\n%s", ext.name, out)
@@ -558,7 +566,7 @@ func BenchmarkDecodeOnly(b *testing.B) {
 
 	cmd := exec.Command("go", "test", "-bench=.", "-benchmem", "-benchtime=1s", "-count=3", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		b.Fatalf("go test -bench failed:\n%s", out)

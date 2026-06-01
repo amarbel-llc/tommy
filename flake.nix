@@ -140,11 +140,65 @@
           inherit tommyBin;
           tommyFixture = tommyTestFixture;
         };
+
+        # Offline Go module cache for the go-generate check below. The
+        # ./generate integration tests scaffold synthetic Go modules at
+        # runtime and resolve tommy + its deps via go/packages.Load and
+        # `go build`/`go test`; with this cache + GOFLAGS=-mod=mod +
+        # GOPROXY=off they resolve without network (the bats lanes use vendor
+        # mode for the same reason). Fixed-output (network at build,
+        # hash-pinned); volatile lock/sumdb bits are stripped so the recursive
+        # output hash is stable. See #83.
+        goModCache = pkgs-master.stdenvNoCC.mkDerivation {
+          name = "tommy-go-modcache";
+          src = go-pkgs-test;
+          nativeBuildInputs = [ pkgs-master.go ];
+          buildPhase = ''
+            export HOME=$TMPDIR
+            export GOPATH=$TMPDIR/gopath
+            export GOMODCACHE=$out
+            export GOFLAGS=-mod=mod
+            export GOTOOLCHAIN=local
+            mkdir -p $out
+            go mod download all
+            rm -rf $out/cache/lock $out/cache/download/sumdb
+          '';
+          dontInstall = true;
+          dontFixup = true;
+          outputHashMode = "recursive";
+          outputHashAlgo = "sha256";
+          outputHash = "sha256-9MbbXy7F/Qy8NymMrtiLquhUDdVB2HY/8JrZNeRH18o=";
+        };
+
+        # Runs the rich Go ./generate integration suite (incl. the #81/#82
+        # regression tests) offline on the default (jen) backend — the depth
+        # the bats matrix's breadth doesn't reach. Builds from go-pkgs-test
+        # (the test-inclusive source) with TOMMY_TEST_OFFLINE so the synthetic
+        # modules resolve from goModCache without network. See #83.
+        goGenerateCheck = pkgs-master.runCommand "tommy-go-generate" {
+          nativeBuildInputs = [ pkgs-master.go ];
+        } ''
+          export HOME=$TMPDIR
+          export GOPATH=$TMPDIR/gopath
+          export GOCACHE=$TMPDIR/gocache
+          cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
+          export GOMODCACHE=$TMPDIR/modcache
+          export GOFLAGS=-mod=mod
+          export GOPROXY=off
+          export GOSUMDB=off
+          export GOTOOLCHAIN=local
+          export TOMMY_TEST_OFFLINE=1
+          cp -r --no-preserve=mode ${go-pkgs-test} ./src
+          cd ./src
+          go test ./generate/...
+          touch $out
+        '';
       in
       {
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
           inherit go-pkgs go-pkgs-test;
+          go-generate = goGenerateCheck;
         };
 
         # Every bats lane is a check, so `nix flake check` (the merge-hook
@@ -152,7 +206,9 @@
         # generate lane under all four codegen backends (jen/api/cst/legacy).
         # Backend divergence (e.g. #82) now fails CI rather than slipping
         # through on the default backend. See #83.
-        checks = batsLib.batsLaneOutputs;
+        checks = batsLib.batsLaneOutputs // {
+          go-generate = goGenerateCheck;
+        };
 
         devShells.default = pkgs-master.mkShell {
           packages = [

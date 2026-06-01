@@ -17,9 +17,10 @@ just                    # default: validate + build + test (the full nix lane)
 just validate           # nix flake check — builds every check, incl. the bats
                         #   backend matrix (jen/api/cst/legacy) + library tests
 just build              # nix build (the tommy binary)
-just test               # nix bats lanes: bats-default + the backend matrix
+just test               # nix lanes: bats matrix + the offline Go ./generate suite
 just test-bats-nix      # just the default (jen) bats lane (bats-default)
 just test-bats-backends # the api/cst/legacy `generate` lanes
+just test-go-generate-nix    # the Go ./generate suite offline in nix (jen)
 just test-bats-nix-tag fmt   # a single tagged lane
 
 # Local fast iteration on the Go test suite (needs network for go/packages):
@@ -33,13 +34,15 @@ just debug-test TestName               # one Go test, verbose
 bats matrix runs the `generate` lane under **all four** as flake checks
 (`bats-default` = jen; `bats-generate-{api,cst,legacy}`), so a wire-format bug in
 one backend fails the merge hook --- this is exactly what was missing when #82
-(which hit jen+legacy but not api/cst) slipped through. The richer `./generate/`
-**Go** integration tests remain local-only (they scaffold synthetic modules
-needing `go/packages` network the nix sandbox lacks); run `just test-go-backends`
-after any encode/decode emission change. Closing that Go-tests-in-CI gap is
-tracked in #83. When adding an emission edge case, add a bats test under
+(which hit jen+legacy but not api/cst) slipped through. For **depth**, the rich
+`./generate/` **Go** integration suite (100+ cases) now also runs in CI on the
+default (jen) backend via the `go-generate` flake check: it scaffolds synthetic
+modules at runtime, so it resolves them offline against a pinned module cache
+(`goModCache` in `flake.nix`) with `TOMMY_TEST_OFFLINE=1`. Locally those tests
+use the network path; run `just test-go-backends` (all four backends) for fast
+iteration. When adding an emission edge case, add a bats test under
 `zz-tests_bats/` tagged `generate` (see `encode_wire_format.bats`) so the matrix
-covers it across backends.
+covers it across backends, and a Go integration test for depth.
 
 ## CLI Commands
 
@@ -151,3 +154,9 @@ multiline string syntax
 Built with `gomod2nix`. After changing Go dependencies, run `gomod2nix` to
 regenerate `gomod2nix.toml`. The flake follows the stable-first nixpkgs
 convention (see parent `eng/CLAUDE.md`).
+
+Changing Go dependencies also invalidates `goModCache` (the pinned offline
+module cache the `go-generate` check resolves synthetic modules against). After
+`gomod2nix`, run `nix build .#go-generate` once — it fails with a hash mismatch
+showing the new `got:` hash; paste that into `goModCache.outputHash` in
+`flake.nix`.

@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// testGoEnv returns the GOFLAGS override for the synthetic-module `go`
+// subprocesses these integration tests spawn. Locally we clear GOFLAGS to force
+// network module resolution (the default dev path). Under TOMMY_TEST_OFFLINE
+// (set by the nix go-generate check) we return nothing, so the subprocess
+// inherits the derivation's offline env (GOFLAGS=-mod=mod, GOPROXY=off,
+// GOMODCACHE=<staged cache>) and resolves tommy + its deps without network.
+// Analyze's in-process packages.Load already inherits that env unchanged.
+func testGoEnv() []string {
+	if os.Getenv("TOMMY_TEST_OFFLINE") != "" {
+		return nil
+	}
+	return []string{"GOFLAGS="}
+}
+
 func TestIntegrationRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -126,7 +140,7 @@ func TestDecodeEncode(t *testing.T) {
 	// Run go test in the temp dir.
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
@@ -243,7 +257,7 @@ h = 3.14
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
@@ -336,7 +350,7 @@ ports = [8080, 9090]
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
@@ -437,7 +451,7 @@ port = 8080
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
@@ -555,7 +569,7 @@ binary = "rm"
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
@@ -673,7 +687,7 @@ binary = "sudo"
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
@@ -758,7 +772,7 @@ func TestAOTRoundTrip(t *testing.T) {
 	// Run go test in the temp dir.
 	cmd := exec.Command("go", "test", "-v", "-run", "TestAOTRoundTrip", ".")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated test failed:\n%s", output)
@@ -883,7 +897,7 @@ func TestCustomTypes(t *testing.T) {
 	// Run go test in the temp dir.
 	cmd := exec.Command("go", "test", "-v", "-run", "TestCustomTypes", ".")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -1151,7 +1165,7 @@ func TestDecodeNoAnnotationSubTable(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -1307,7 +1321,7 @@ func TestNoFlatKeysNoSubTable(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -1524,7 +1538,7 @@ func TestUndecodedMapKeysAllConsumed(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -1613,7 +1627,7 @@ func TestModifyPointerStructField(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -1695,7 +1709,7 @@ func TestDashFieldExcluded(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -1843,7 +1857,7 @@ func TestExplicitSliceOmitemptyPreserved(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -1949,7 +1963,7 @@ func TestExplicitEmptyNonOmitemptySlicesEmitted(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -2048,7 +2062,7 @@ func TestZeroValuePreservedWhenExplicit(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -2159,7 +2173,7 @@ func TestAppendPreservesExisting(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -2263,7 +2277,7 @@ func TestOmitemptyPrimitiveNonZeroPreserved(t *testing.T) {
 
 	cmd2 := exec.Command("go", "test", "-v", "./...")
 	cmd2.Dir = dir
-	cmd2.Env = append(os.Environ(), "GOFLAGS=")
+	cmd2.Env = append(os.Environ(), testGoEnv()...)
 	output2, err := cmd2.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output2)
@@ -2367,7 +2381,7 @@ func TestMultilineEncodeNewValue(t *testing.T) {
 
 	cmdML := exec.Command("go", "test", "-v", "./...")
 	cmdML.Dir = dir
-	cmdML.Env = append(os.Environ(), "GOFLAGS=")
+	cmdML.Env = append(os.Environ(), testGoEnv()...)
 	outputML, err := cmdML.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputML)
@@ -2489,7 +2503,7 @@ func TestTextMarshalerModify(t *testing.T) {
 
 	cmdTM := exec.Command("go", "test", "-v", "./...")
 	cmdTM.Dir = dir
-	cmdTM.Env = append(os.Environ(), "GOFLAGS=")
+	cmdTM.Env = append(os.Environ(), testGoEnv()...)
 	outputTM, err := cmdTM.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputTM)
@@ -2604,7 +2618,7 @@ func TestEmbeddedStructModify(t *testing.T) {
 
 	cmdEmb := exec.Command("go", "test", "-v", "./...")
 	cmdEmb.Dir = dir
-	cmdEmb.Env = append(os.Environ(), "GOFLAGS=")
+	cmdEmb.Env = append(os.Environ(), testGoEnv()...)
 	outputEmb, err := cmdEmb.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputEmb)
@@ -2721,7 +2735,7 @@ func TestMapStringStructModify(t *testing.T) {
 
 	cmdMS := exec.Command("go", "test", "-v", "./...")
 	cmdMS.Dir = dir
-	cmdMS.Env = append(os.Environ(), "GOFLAGS=")
+	cmdMS.Env = append(os.Environ(), testGoEnv()...)
 	outputMS, err := cmdMS.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputMS)
@@ -2853,7 +2867,7 @@ func TestNestedMapRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -2981,7 +2995,7 @@ func TestSliceTextMarshalerModify(t *testing.T) {
 
 	cmdST := exec.Command("go", "test", "-v", "./...")
 	cmdST.Dir = dir
-	cmdST.Env = append(os.Environ(), "GOFLAGS=")
+	cmdST.Env = append(os.Environ(), testGoEnv()...)
 	outputST, err := cmdST.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputST)
@@ -3087,7 +3101,7 @@ func TestUint64Modify(t *testing.T) {
 
 	cmdU := exec.Command("go", "test", "-v", "./...")
 	cmdU.Dir = dir
-	cmdU.Env = append(os.Environ(), "GOFLAGS=")
+	cmdU.Env = append(os.Environ(), testGoEnv()...)
 	outputU, err := cmdU.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputU)
@@ -3182,7 +3196,7 @@ func TestNestedArrayOfTablesInStructRoundTrip(t *testing.T) {
 
 	cmdN := exec.Command("go", "test", "-v", "./...")
 	cmdN.Dir = dir
-	cmdN.Env = append(os.Environ(), "GOFLAGS=")
+	cmdN.Env = append(os.Environ(), testGoEnv()...)
 	outputN, err := cmdN.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputN)
@@ -3298,7 +3312,7 @@ func TestNestedArrayOfTablesRoundTrip(t *testing.T) {
 
 	cmdN := exec.Command("go", "test", "-v", "./...")
 	cmdN.Dir = dir
-	cmdN.Env = append(os.Environ(), "GOFLAGS=")
+	cmdN.Env = append(os.Environ(), testGoEnv()...)
 	outputN, err := cmdN.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputN)
@@ -3394,7 +3408,7 @@ func TestCrossPackageEmbeddedRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -3495,7 +3509,7 @@ func TestDecodeIntWrapper(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -3567,7 +3581,7 @@ func TestBlankFieldRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -3672,7 +3686,7 @@ func TestSliceCrossPackageRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -3771,7 +3785,7 @@ func TestMixedCrossPackageRoundTrip(t *testing.T) {
 
 	cmdMixed := exec.Command("go", "test", "-v", "./...")
 	cmdMixed.Dir = dir
-	cmdMixed.Env = append(os.Environ(), "GOFLAGS=")
+	cmdMixed.Env = append(os.Environ(), testGoEnv()...)
 	outputMixed, err := cmdMixed.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", outputMixed)
@@ -3833,7 +3847,7 @@ type Config struct {
 	// Generated file must compile (no unused imports)
 	cmdBuild := exec.Command("go", "build", ".")
 	cmdBuild.Dir = configDir
-	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	cmdBuild.Env = append(os.Environ(), testGoEnv()...)
 	buildOutput, err := cmdBuild.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated file does not compile (unused import?):\n%s", buildOutput)
@@ -3910,7 +3924,7 @@ type Defaults struct {
 	// Must compile
 	cmdBuild := exec.Command("go", "build", ".")
 	cmdBuild.Dir = configDir
-	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	cmdBuild.Env = append(os.Environ(), testGoEnv()...)
 	buildOutput, err := cmdBuild.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated file does not compile:\n%s", buildOutput)
@@ -3997,7 +4011,7 @@ type Config struct {
 	// source itself type-checks fine.
 	cmdBuild := exec.Command("go", "build", ".")
 	cmdBuild.Dir = configDir
-	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	cmdBuild.Env = append(os.Environ(), testGoEnv()...)
 	buildOutput, err := cmdBuild.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated file does not compile:\n%s", buildOutput)
@@ -4076,7 +4090,7 @@ type Config struct {
 
 	cmdBuild := exec.Command("go", "build", ".")
 	cmdBuild.Dir = configDir
-	cmdBuild.Env = append(os.Environ(), "GOFLAGS=")
+	cmdBuild.Env = append(os.Environ(), testGoEnv()...)
 	buildOutput, err := cmdBuild.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated file does not compile:\n%s", buildOutput)
@@ -4200,7 +4214,7 @@ func TestCrossPackageNamedStructRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -4323,7 +4337,7 @@ func TestMapCrossPackageStructRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -4445,7 +4459,7 @@ func TestCrossPackageTypeAliasRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -4532,7 +4546,7 @@ func TestMapStringNamedMapTypeRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -4627,7 +4641,7 @@ func TestSlicePointerToStructRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -4724,7 +4738,7 @@ func TestCrossPackageSliceAliasRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -4824,7 +4838,7 @@ func TestEncodeInvalidState(t *testing.T) {
 
 	cmdVal := exec.Command("go", "test", "-v", "./...")
 	cmdVal.Dir = dir
-	cmdVal.Env = append(os.Environ(), "GOFLAGS=")
+	cmdVal.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmdVal.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
@@ -4918,7 +4932,7 @@ func TestDecodeIntoRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -5047,7 +5061,7 @@ func TestCrossPackageDelegationRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -5185,7 +5199,7 @@ func TestPointerDelegationNilOmitted(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -5286,7 +5300,7 @@ type Config struct {
 	// The generated file should compile without "imported and not used" errors
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build failed (likely unused import):\n%s", output)
@@ -5416,7 +5430,7 @@ type App struct {
 	tommyBin := filepath.Join(t.TempDir(), "tommy")
 	buildCmd := exec.Command("go", "build", "-o", tommyBin, "./cmd/tommy")
 	buildCmd.Dir = repoRoot
-	buildCmd.Env = append(os.Environ(), "GOFLAGS=")
+	buildCmd.Env = append(os.Environ(), testGoEnv()...)
 	if buildOut, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build tommy: %v\n%s", err, buildOut)
 	}
@@ -5424,7 +5438,7 @@ type App struct {
 	// Regenerate via go generate ./...
 	cmd := exec.Command("go", "generate", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=", "PATH="+filepath.Dir(tommyBin)+":"+os.Getenv("PATH"))
+	cmd.Env = append(append(os.Environ(), testGoEnv()...), "PATH="+filepath.Dir(tommyBin)+":"+os.Getenv("PATH"))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go generate ./... failed: %v\n%s", err, output)
@@ -5467,7 +5481,7 @@ func TestAppRoundTrip(t *testing.T) {
 
 	testCmd := exec.Command("go", "test", "./...")
 	testCmd.Dir = dir
-	testCmd.Env = append(os.Environ(), "GOFLAGS=")
+	testCmd.Env = append(os.Environ(), testGoEnv()...)
 	if testOut, err := testCmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed:\n%s", testOut)
 	}
@@ -5570,7 +5584,7 @@ func TestCommentGetSet(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go test failed:\n%s", out)
@@ -5749,7 +5763,7 @@ func TestEncodeFromEmptyDocumentPointerStruct(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromEmpty", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -5859,7 +5873,7 @@ func TestEncodePointerStructFromEmptyDocument(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodePointerStruct", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -5980,7 +5994,7 @@ func TestDelegatedStructFromEmptyDocument(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestDelegatedStruct", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6101,7 +6115,7 @@ func TestPointerDelegatedStructFromEmptyDocument(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestPointerDelegated", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6215,7 +6229,7 @@ func TestDeeplyNestedStructFromEmptyDocument(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestDeeplyNested", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6354,7 +6368,7 @@ func TestSliceCrossPackageUnexportedRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6475,7 +6489,7 @@ func TestSliceAliasRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = consumerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6655,7 +6669,7 @@ func TestMapCrossPackageUnexportedRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = pkgbDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6757,7 +6771,7 @@ func TestCrossPackageSliceAliasRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = pkgbDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6882,7 +6896,7 @@ func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = pkgbDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -6998,7 +7012,7 @@ func TestCrossPackageMapTypeAliasRoundTrip(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = pkgbDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7165,7 +7179,7 @@ func TestCrossPackageOmitemptyNonZeroValue(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = outerDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7291,7 +7305,7 @@ func TestOmitemptyTextMarshalerNonZeroValue(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7398,7 +7412,7 @@ func TestEncodeFromScratchPointerToStruct(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7491,7 +7505,7 @@ func TestEncodeFromScratchPrimitiveAfterStruct(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7577,7 +7591,7 @@ func TestEncodeFromScratchPrimitiveAfterSliceStruct(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7675,7 +7689,7 @@ func TestEncodeFromScratchMultipleStructsThenPrimitive(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7774,7 +7788,7 @@ func TestEncodeFromScratchNestedSubTableOrdering(t *testing.T) {
 
 	cmd := exec.Command("go", "test", "-v", "-run", "TestEncodeFromScratch", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("test failed:\n%s", output)
@@ -7812,7 +7826,7 @@ func nestingRun(t *testing.T, dir string) {
 	}
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, out)
 	}
@@ -8213,7 +8227,7 @@ COMPLETED = "archived"
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	out, errCmd := cmd.CombinedOutput()
 	if errCmd != nil {
 		t.Fatalf("test failed:\n%s", out)
@@ -8329,7 +8343,7 @@ transport = "sftp"
 
 	cmd := exec.Command("go", "test", "-v", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}

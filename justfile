@@ -6,7 +6,7 @@ validate: validate-nix
 
 build: build-nix
 
-test: test-bats-nix test-bats-backends
+test: test-bats-nix test-bats-backends test-go-generate-nix
 
 clean: clean-go-cache clean-go-modcache
 
@@ -51,6 +51,14 @@ test-bats-nix-tag tag:
 [group('post-build')]
 test-bats-backends:
   nix build .#bats-generate-api .#bats-generate-cst .#bats-generate-legacy --no-link --print-build-logs
+
+# Run the rich Go ./generate integration suite offline in the nix sandbox
+# (default/jen backend). The synthetic modules resolve from a pinned module
+# cache with no network — the deep coverage the bats matrix's breadth can't
+# reach. Mirrors local `test-go-backends` but inside CI. See #83.
+[group('post-build')]
+test-go-generate-nix:
+  nix build .#go-generate --no-link --print-build-logs
 
 # === maintenance ===
 
@@ -145,6 +153,15 @@ debug-summary:
 [group('debug')]
 debug-test test_name:
   go test -run '^{{test_name}}$' ./generate/ -v -count=1 || true
+
+# Run a ./generate test under the offline env the nix go-generate check
+# imposes (GOPROXY=off + TOMMY_TEST_OFFLINE against the already-populated local
+# module cache). Quick way to reproduce an offline-resolution failure without a
+# full `nix build .#go-generate`.
+[group('debug')]
+debug-offline-test test_name:
+  GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
+    go test -run '^{{test_name}}$' ./generate/ -v -count=1
 
 [group('debug')]
 debug-nesting-gen test_name:
