@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-01
-promotion-criteria: a decode-fold spike reproduces current renderer output on existing fixtures (byte-equivalent-or-compile-equivalent) for Scalar/Ptr/Slice/Struct
+promotion-criteria: met — see Validation results (the spike covers the full FieldKind surface plus the flat-key fallback and entry-relative nesting)
 supersedes: n/a
 ---
 
@@ -205,6 +205,45 @@ keeps most of the cost without the payoff.
 - Full cutover is confirmed when the entire `generate/` integration suite and
   the `encode_wire_format.bats` lane pass against the fold-based renderer with
   the legacy renderer removed.
+
+## Validation results
+
+The approach was validated by two spikes in `generate/` (test-only, committed),
+both running in the `go-generate` CI lane:
+
+1. **Equivalence harness** (`spike_compositional_test.go`) — a recursive
+   `TypeExpr` fold that reproduces the *current* decode AND encode op trees
+   for all 16 `FieldKind`s, asserted by `reflect.DeepEqual` + rendered-Go diff
+   over 8 hand fixtures and 500 random bounded-depth nested-type trees (every
+   kind exercised). Proves the compositional front-end is equivalent to the
+   enumerated builder across the whole representable type space.
+
+2. **Compositional-IR proof-of-concept** (`spikev2_test.go`) — a small (~4-node
+   per direction) compositional IR with new renderers, validated by compiling
+   and running generated decode/encode (comment-preserving round-trip is the
+   oracle, not byte-diff). Coverage:
+   - All 16 `FieldKind`s: scalars (+`int64`/`float64`/`uint64`), `*prim`,
+     omitempty, multiline, `[]scalar`, structs, `*struct`, `[]struct`,
+     `[]*struct`, all four map shapes, custom/text/`[]text` codecs, and all
+     four delegation shapes (against a real second package).
+   - **Both behaviors this ADR flagged as conscious keep/drop decisions:** the
+     flat-key fallback (#55) and entry-relative nesting inside `[]struct` (the
+     positional-matching path). Both are expressible compositionally and were
+     kept.
+
+Findings that refine the design:
+- The shrink is real and visible: `Ptr(Struct)` collapses to a single
+  `NilGuard` wrapping one table body, vs. the current `InPointerTable`'s
+  duplicated `TableFields`/`FlatFields`.
+- The complexity that *doesn't* disappear concentrates in two string seams
+  (type-name/import-path) and one genuine asymmetry: decode needs an explicit
+  positional mode for entry-relative nesting, while encode gets it for free by
+  threading the entry container to `EnsureChildTable`.
+
+What remains for the real cutover (not the spike): porting into production
+`analyze.go`/`ir*.go`, the dual-renderer equivalence scaffold, and deleting the
+enumerated path. The spikes de-risk the design; they are not the production
+implementation.
 
 ## More Information
 
