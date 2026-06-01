@@ -28,7 +28,7 @@ just debug-test TestName               # one Go test, verbose
 ```
 
 **Codegen renderer & wire-format coverage.** The generator has a single renderer,
-`RenderFileJen` (jennifer-based, `generate/ir_render_jen.go`), over the IR built
+`RenderFile` (jennifer-based, `generate/ir_render.go`), over the IR built
 in `ir_build.go`. CI covers it two ways: the bats lane (`bats-default`) exercises
 `tommy generate` end-to-end against the installed binary, and the `go-generate`
 flake check runs the rich Go `./generate/...` integration suite (100+ cases,

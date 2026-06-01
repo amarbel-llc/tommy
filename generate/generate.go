@@ -26,7 +26,7 @@ func Generate(dir, filename string) error {
 	}
 
 	var buf bytes.Buffer
-	if err := RenderFileJen(&buf, pkgName, infos); err != nil {
+	if err := RenderFile(&buf, pkgName, infos); err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
 
