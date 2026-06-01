@@ -28,8 +28,10 @@ just debug-test TestName               # one Go test, verbose
 ```
 
 **Codegen renderer & wire-format coverage.** The generator has a single renderer,
-`RenderFile` (jennifer-based, `generate/ir_render.go`), over the IR built
-in `ir_build.go`. CI covers it two ways: the bats lane (`bats-default`) exercises
+`RenderFile` (jennifer-based, `generate/comp_render.go`), walking the compositional
+IR (`comp_ir.go`) built by the folds in `comp_build.go` over the `TypeExpr` algebra
+(`typeexpr.go`); shared jennifer helpers live in `comp_support.go`. CI covers it two
+ways: the bats lane (`bats-default`) exercises
 `tommy generate` end-to-end against the installed binary, and the `go-generate`
 flake check runs the rich Go `./generate/...` integration suite (100+ cases,
 incl. the #81/#82 regression tests) offline against a pinned module cache
@@ -81,12 +83,14 @@ The library has four layers, each depending only on the one below it:
 `go/packages` + `go/ast` + `go/types` to inspect structs with
 `//go:generate tommy generate` directives - `classifyField` determines the
 `FieldKind` for each tagged field (primitive, struct, pointer, slice, map,
-custom marshaler, text marshaler, etc.) - `emit.go` generates decode/encode
-method bodies as Go source - `template.go` renders the final `*_tommy.go` file
-via `text/template` - Cross-package struct fields use delegation:
-`FieldDelegatedStruct` emits calls to the target package's
-`DecodeInto`/`EncodeFrom` instead of inlining field-by-field decoding, enabling
-structs that contain unexported types
+custom marshaler, text marshaler, etc.) - `fieldType` (`typeexpr.go`) maps each
+`FieldKind` to a compositional `TypeExpr` (Scalar/Ptr/Slice/Map/Struct/Delegated)
+- the `comp_build.go` folds recurse over that algebra to build the `comp_ir.go`
+node trees, threading the TOML position - `RenderFile` (`comp_render.go`) walks
+the nodes and emits decode/encode method bodies via jennifer - Cross-package
+struct fields use delegation: `FieldDelegatedStruct` emits calls to the target
+package's `DecodeInto`/`EncodeFrom` instead of inlining field-by-field decoding,
+enabling structs that contain unexported types
 
 **Ring Buffer** (`internal/ringbuf/`) --- Circular buffer backed by an
 `io.Reader`, ported from dodder's `catgut` package. Provides `Peek`,

@@ -99,12 +99,12 @@ type cdMapStruct struct {
 	Children []cdNode
 }
 
-// cdDelStruct delegates to ImportPath.Decode<TypeName>Into.
+// cdDelStruct delegates to ImportPath.Decode<short>Into.
 type cdDelStruct struct {
 	Tgt        TargetPath
 	TKey       TOMLKey
 	ImportPath string
-	TypeName   string // short type name (post-delegateParts)
+	TypeName   string // full "pkg.Type" (delegateParts splits it at render)
 	Ptr        bool
 }
 
@@ -114,7 +114,7 @@ type cdDelSlice struct {
 	TKey       TOMLKey // bare key (for error messages)
 	TDottedKey TOMLKey // full dotted key
 	ImportPath string
-	TypeName   string // short type name
+	TypeName   string // full "pkg.Type"
 	SlicePtr   bool
 }
 
@@ -123,7 +123,7 @@ type cdDelMap struct {
 	Tgt        TargetPath
 	TKey       TOMLKey
 	ImportPath string
-	ElemType   string // short type name
+	ElemType   string // full "pkg.Type"
 }
 
 func (cdLeaf) isCDNode()       {}
@@ -210,7 +210,7 @@ type ceDelStruct struct {
 	Tgt        TargetPath
 	TKey       TOMLKey
 	ImportPath string
-	TypeName   string // short type name
+	TypeName   string // full "pkg.Type" (delegateParts splits it at render)
 	Ptr        bool
 }
 
@@ -219,7 +219,7 @@ type ceDelSlice struct {
 	TKey       TOMLKey // bare key
 	TDottedKey TOMLKey // full dotted key
 	ImportPath string
-	TypeName   string // short type name
+	TypeName   string // full "pkg.Type"
 	SlicePtr   bool
 }
 
@@ -227,7 +227,7 @@ type ceDelMap struct {
 	Tgt        TargetPath
 	TKey       TOMLKey
 	ImportPath string
-	ElemType   string // short type name
+	ElemType   string // full "pkg.Type"
 }
 
 func (ceLeaf) isCENode()       {}
