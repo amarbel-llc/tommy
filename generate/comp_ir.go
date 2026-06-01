@@ -63,7 +63,9 @@ type cdNilGuard struct {
 
 // cdArrayTable iterates [[TDottedKey]] entries. In receiver context for a
 // same-package element, TrackHandles stores the *cst.Node per entry on the
-// Document for round-trip-stable encode.
+// Document for round-trip-stable encode. IdxVar/EntryVar are the loop index and
+// entry-node variable names; they are depth-distinct ("i"/"_node", "i1"/"_node1",
+// …) so a nested array never shadows its enclosing one's index.
 type cdArrayTable struct {
 	Tgt          TargetPath
 	TypeName     string
@@ -72,6 +74,8 @@ type cdArrayTable struct {
 	TDottedKey   TOMLKey // full dotted key
 	SlicePtr     bool
 	TrackHandles bool
+	IdxVar       string
+	EntryVar     string
 	Children     []cdNode
 }
 
@@ -116,6 +120,7 @@ type cdDelSlice struct {
 	ImportPath string
 	TypeName   string // full "pkg.Type"
 	SlicePtr   bool
+	IdxVar     string // depth-distinct loop index var
 }
 
 // cdDelMap delegates per [TKey.<key>] sub-table.
@@ -184,6 +189,8 @@ type ceArrayTable struct {
 	ImportPath   string
 	SlicePtr     bool
 	TrackHandles bool
+	IdxVar       string // depth-distinct loop index var
+	Scoped       bool   // nested inside an array entry: find/append within the parent
 	Children     []ceNode
 }
 
@@ -221,6 +228,8 @@ type ceDelSlice struct {
 	ImportPath string
 	TypeName   string // full "pkg.Type"
 	SlicePtr   bool
+	IdxVar     string // depth-distinct loop index var
+	Scoped     bool   // nested inside an array entry: find/append within the parent
 }
 
 type ceDelMap struct {

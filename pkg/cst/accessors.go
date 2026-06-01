@@ -736,3 +736,138 @@ func childInsertIndex(root *Node, parent *Node) int {
 	}
 	return idx
 }
+
+// ChildScope returns the range [start, end) in root.Children covering parent and
+// the nested tables/array-tables that belong to it — those whose header is
+// prefixed by parent's key + ".". Unlike parentScope (which stops at the next
+// entry with the *same* header and so over-extends across siblings for nested
+// entries), ChildScope stops at the first table/array-table whose header is not
+// so prefixed, bounding a single entry's descendants correctly at any depth.
+// If parent is root, returns the whole range.
+func ChildScope(root, parent *Node) (int, int) {
+	if parent == root {
+		return 0, len(root.Children)
+	}
+	parentIdx := -1
+	for i, child := range root.Children {
+		if child == parent {
+			parentIdx = i
+			break
+		}
+	}
+	if parentIdx < 0 {
+		return 0, len(root.Children)
+	}
+	prefix := TableHeaderKey(parent) + "."
+	end := len(root.Children)
+	for i := parentIdx + 1; i < len(root.Children); i++ {
+		child := root.Children[i]
+		if child.Kind == NodeTable || child.Kind == NodeArrayTable {
+			if !strings.HasPrefix(TableHeaderKey(child), prefix) {
+				end = i
+				break
+			}
+		}
+	}
+	return parentIdx, end
+}
+
+// FindChildTable returns the [parentKey.key] table scoped to parent, or nil.
+// Read-side dual of EnsureChildTable: it searches only within ChildScope(parent),
+// so the i-th array-table entry's nested table is found without matching a
+// sibling entry's identically-headed table.
+func FindChildTable(root, parent *Node, key string) *Node {
+	fullKey := qualifiedKey(parent, key)
+	start, end := ChildScope(root, parent)
+	for i := start; i < end; i++ {
+		child := root.Children[i]
+		if child.Kind == NodeTable && TableHeaderKey(child) == fullKey {
+			return child
+		}
+	}
+	return nil
+}
+
+// FindChildArrayTableNodes returns the [[parentKey.key]] entries scoped to parent,
+// in document order. Scoped variant of FindArrayTableNodes for nested arrays.
+func FindChildArrayTableNodes(root, parent *Node, key string) []*Node {
+	fullKey := qualifiedKey(parent, key)
+	start, end := ChildScope(root, parent)
+	var out []*Node
+	for i := start; i < end; i++ {
+		child := root.Children[i]
+		if child.Kind == NodeArrayTable && TableHeaderKey(child) == fullKey {
+			out = append(out, child)
+		}
+	}
+	return out
+}
+
+// FindChildSubTables returns the immediate [parentKey.field.<k>] sub-tables (one
+// segment under field) scoped to parent — the map[string]struct entries for a
+// map field nested inside an array-table entry.
+func FindChildSubTables(root, parent *Node, field string) []*Node {
+	prefix := qualifiedKey(parent, field) + "."
+	start, end := ChildScope(root, parent)
+	var out []*Node
+	for i := start; i < end; i++ {
+		child := root.Children[i]
+		if child.Kind != NodeTable {
+			continue
+		}
+		hdr := TableHeaderKey(child)
+		if !strings.HasPrefix(hdr, prefix) {
+			continue
+		}
+		if strings.Contains(hdr[len(prefix):], ".") {
+			continue
+		}
+		out = append(out, child)
+	}
+	return out
+}
+
+// AppendChildArrayTableEntry appends a new [[parentKey.key]] entry scoped to
+// parent: after parent's last existing [[parentKey.key]], else after parent's
+// other children. When parent is root it degrades to a root-level append,
+// matching AppendArrayTableEntryAfter.
+func AppendChildArrayTableEntry(root, parent *Node, key string) *Node {
+	fullKey := qualifiedKey(parent, key)
+	newNode := &Node{
+		Kind: NodeArrayTable,
+		Children: []*Node{
+			{Kind: NodeBracketOpen, Raw: []byte("[")},
+			{Kind: NodeBracketOpen, Raw: []byte("[")},
+			{Kind: NodeKey, Raw: []byte(fullKey)},
+			{Kind: NodeBracketClose, Raw: []byte("]")},
+			{Kind: NodeBracketClose, Raw: []byte("]")},
+			{Kind: NodeNewline, Raw: []byte("\n")},
+		},
+	}
+	blankLine := &Node{Kind: NodeNewline, Raw: []byte("\n")}
+
+	start, end := ChildScope(root, parent)
+	lastIdx := -1
+	for i := start; i < end; i++ {
+		if root.Children[i].Kind == NodeArrayTable && TableHeaderKey(root.Children[i]) == fullKey {
+			lastIdx = i
+		}
+	}
+
+	var insertIdx int
+	switch {
+	case lastIdx >= 0:
+		insertIdx = childInsertIndex(root, root.Children[lastIdx])
+	case parent == root:
+		insertIdx = len(root.Children)
+	default:
+		insertIdx = childInsertIndex(root, parent)
+	}
+
+	newChildren := make([]*Node, 0, len(root.Children)+2)
+	newChildren = append(newChildren, root.Children[:insertIdx]...)
+	newChildren = append(newChildren, blankLine, newNode)
+	newChildren = append(newChildren, root.Children[insertIdx:]...)
+	root.Children = newChildren
+	return newNode
+}

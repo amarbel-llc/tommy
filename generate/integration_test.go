@@ -8120,6 +8120,179 @@ func TestDecode(t *testing.T) {
 	nestingRun(t, dir)
 }
 
+// []Struct > []Struct > Struct (#87): container sub-fields inside a doubly-nested
+// array-table entry must decode, and the inner array index must not collide with
+// the outer one. Uses 2 outers with 2/1 inners to expose both the dropped-container
+// and index-collision bugs at once.
+func TestNestingSliceStructSliceStructStruct(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n8")
+	writeFixture(t, dir, "config.go", `package n8
+//go:generate tommy generate
+type Config struct {
+	Outers []Outer `+"`toml:\"outers\"`"+`
+}
+type Outer struct {
+	Name   string  `+"`toml:\"name\"`"+`
+	Inners []Inner `+"`toml:\"inners\"`"+`
+}
+type Inner struct {
+	ID   string `+"`toml:\"id\"`"+`
+	Meta Meta   `+"`toml:\"meta\"`"+`
+}
+type Meta struct {
+	Key string `+"`toml:\"key\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n8
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[outers]]\nname = \"o0\"\n\n[[outers.inners]]\nid = \"i00\"\n\n[outers.inners.meta]\nkey = \"m00\"\n\n[[outers.inners]]\nid = \"i01\"\n\n[outers.inners.meta]\nkey = \"m01\"\n\n[[outers]]\nname = \"o1\"\n\n[[outers.inners]]\nid = \"i10\"\n\n[outers.inners.meta]\nkey = \"m10\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Outers) != 2 { t.Fatalf("outers=%d", len(d.Outers)) }
+	if len(d.Outers[0].Inners) != 2 { t.Fatalf("o0 inners=%d", len(d.Outers[0].Inners)) }
+	if len(d.Outers[1].Inners) != 1 { t.Fatalf("o1 inners=%d", len(d.Outers[1].Inners)) }
+	if d.Outers[0].Inners[0].ID != "i00" { t.Fatalf("o0i0 id=%q", d.Outers[0].Inners[0].ID) }
+	if d.Outers[0].Inners[1].ID != "i01" { t.Fatalf("o0i1 id=%q", d.Outers[0].Inners[1].ID) }
+	if d.Outers[0].Inners[0].Meta.Key != "m00" { t.Fatalf("o0i0 meta=%q", d.Outers[0].Inners[0].Meta.Key) }
+	if d.Outers[0].Inners[1].Meta.Key != "m01" { t.Fatalf("o0i1 meta=%q", d.Outers[0].Inners[1].Meta.Key) }
+	if d.Outers[1].Inners[0].Meta.Key != "m10" { t.Fatalf("o1i0 meta=%q", d.Outers[1].Inners[0].Meta.Key) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	d2 := doc2.Data()
+	if d2.Outers[0].Inners[1].Meta.Key != "m01" { t.Fatalf("round-trip o0i1 meta=%q", d2.Outers[0].Inners[1].Meta.Key) }
+	if d2.Outers[1].Inners[0].ID != "i10" { t.Fatalf("round-trip o1i0 id=%q", d2.Outers[1].Inners[0].ID) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// []Struct > map[string]Struct: a map of structs nested inside an array-table
+// entry must scope its sub-tables to the entry (exercises the scoped map path).
+func TestNestingSliceStructMapStringStruct(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n9")
+	writeFixture(t, dir, "config.go", `package n9
+//go:generate tommy generate
+type Config struct {
+	Hosts []Host `+"`toml:\"hosts\"`"+`
+}
+type Host struct {
+	Name  string          `+"`toml:\"name\"`"+`
+	Disks map[string]Disk `+"`toml:\"disks\"`"+`
+}
+type Disk struct {
+	Size int `+"`toml:\"size\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n9
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[hosts]]\nname = \"h0\"\n\n[hosts.disks.sda]\nsize = 100\n\n[hosts.disks.sdb]\nsize = 200\n\n[[hosts]]\nname = \"h1\"\n\n[hosts.disks.sda]\nsize = 50\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Hosts) != 2 { t.Fatalf("hosts=%d", len(d.Hosts)) }
+	if d.Hosts[0].Disks["sda"].Size != 100 { t.Fatalf("h0 sda=%d", d.Hosts[0].Disks["sda"].Size) }
+	if d.Hosts[0].Disks["sdb"].Size != 200 { t.Fatalf("h0 sdb=%d", d.Hosts[0].Disks["sdb"].Size) }
+	if len(d.Hosts[1].Disks) != 1 { t.Fatalf("h1 disks=%d", len(d.Hosts[1].Disks)) }
+	if d.Hosts[1].Disks["sda"].Size != 50 { t.Fatalf("h1 sda=%d", d.Hosts[1].Disks["sda"].Size) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Hosts[0].Disks["sdb"].Size != 200 { t.Fatalf("rt h0 sdb=%d", doc2.Data().Hosts[0].Disks["sdb"].Size) }
+	if doc2.Data().Hosts[1].Disks["sda"].Size != 50 { t.Fatalf("rt h1 sda=%d", doc2.Data().Hosts[1].Disks["sda"].Size) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	nestingRun(t, dir)
+}
+
+// []Struct with a delegated (cross-package) sub-field (#86): the delegated table
+// for the i-th array entry must be located within that entry's scope, not via a
+// document-root scan that grabs the first match.
+func TestNestingSliceStructDelegatedField(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	extDir := filepath.Join(dir, "srvext")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/srvext", "", "go 1.26", "",
+		"require github.com/amarbel-llc/tommy v0.0.0", "",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+	}, "\n"))
+	writeFixture(t, extDir, "settings.go", `package srvext
+//go:generate tommy generate
+type Settings struct {
+	Timeout int    `+"`toml:\"timeout\"`"+`
+	Mode    string `+"`toml:\"mode\"`"+`
+}
+`)
+	if err := Generate(extDir, "settings.go"); err != nil {
+		t.Fatalf("Generate srvext: %v", err)
+	}
+
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer", "", "go 1.26", "",
+		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/srvext v0.0.0", ")", "",
+		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/srvext => ../srvext", ")", "",
+	}, "\n"))
+	writeFixture(t, consumerDir, "app.go", `package consumer
+import "example.com/test/srvext"
+//go:generate tommy generate
+type Config struct {
+	Servers []Server `+"`toml:\"servers\"`"+`
+}
+type Server struct {
+	Name     string          `+"`toml:\"name\"`"+`
+	Settings srvext.Settings `+"`toml:\"settings\"`"+`
+}
+`)
+	if err := Generate(consumerDir, "app.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+
+	writeFixture(t, consumerDir, "app_test.go", `package consumer
+import "testing"
+func TestDecode(t *testing.T) {
+	input := []byte("[[servers]]\nname = \"alpha\"\n\n[servers.settings]\ntimeout = 30\nmode = \"fast\"\n\n[[servers]]\nname = \"beta\"\n\n[servers.settings]\ntimeout = 60\nmode = \"slow\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Servers) != 2 { t.Fatalf("servers=%d", len(d.Servers)) }
+	if d.Servers[0].Settings.Timeout != 30 { t.Fatalf("s0 timeout=%d", d.Servers[0].Settings.Timeout) }
+	if d.Servers[0].Settings.Mode != "fast" { t.Fatalf("s0 mode=%q", d.Servers[0].Settings.Mode) }
+	if d.Servers[1].Settings.Timeout != 60 { t.Fatalf("s1 timeout=%d", d.Servers[1].Settings.Timeout) }
+	if d.Servers[1].Settings.Mode != "slow" { t.Fatalf("s1 mode=%q", d.Servers[1].Settings.Mode) }
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	doc2, err := DecodeConfig(out)
+	if err != nil { t.Fatal(err) }
+	if doc2.Data().Servers[1].Settings.Timeout != 60 { t.Fatalf("round-trip s1 timeout=%d", doc2.Data().Servers[1].Settings.Timeout) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("test failed:\n%s", out)
+	}
+}
+
 // Regression test for #60: map[string]Struct with nested sub-tables should not
 // produce phantom map entries from grandchild tables.
 func TestIntegrationMapStringStructNestedSubTable(t *testing.T) {

@@ -156,6 +156,13 @@ debug-offline-test test_name:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
     go test -run '^{{test_name}}$' ./generate/ -v -count=1
 
+# Run the whole ./generate suite under the nix go-generate check's offline env
+# and surface only failures/build errors — fast triage for codegen regressions.
+[group('debug')]
+debug-offline-fails:
+  GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
+    go test ./generate/ -count=1 2>&1 | grep -E 'FAIL|panic|--- FAIL|undefined|cannot use' || true
+
 [group('debug')]
 debug-nesting-gen test_name:
   #!/usr/bin/env bash

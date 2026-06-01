@@ -98,15 +98,6 @@ func tableMatch(key TOMLKey) *jen.Statement {
 	return jen.Id("_ch").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")).Op("==").Add(key.Jen())
 }
 
-// posHeader counts outer [[pk]] array-table entries during positional decode,
-// stopping once past the i-th entry's scope.
-func posHeader(pk TOMLKey) jen.Code {
-	return jen.If(jen.Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeArrayTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Add(pk.Jen())).Block(
-		jen.If(jen.Id("_pi").Op(">").Id("i")).Block(jen.Break()),
-		jen.Id("_pi").Op("++"), jen.Continue(),
-	)
-}
-
 func delegateParts(typeName string) (string, string) {
 	if i := strings.IndexByte(typeName, '.'); i >= 0 {
 		return typeName[:i], typeName[i+1:]

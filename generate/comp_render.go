@@ -268,21 +268,26 @@ func compArrayTable(ctx jenCtx, n cdArrayTable, fv string) []jen.Code {
 		stmts = append(stmts, n.Tgt.Jen().Clone().Op("=").Make(jen.Index().Add(jt.Clone()), jen.Len(jen.Id(nv))))
 	}
 	stmts = append(stmts, ctx.mc(n.TDottedKey))
-	stmts = append(stmts, jen.For(jen.List(jen.Id("i"), jen.Id("_node")).Op(":=").Range().Id(nv)).BlockFunc(func(g *jen.Group) {
+	stmts = append(stmts, jen.For(jen.List(jen.Id(n.IdxVar), jen.Id(n.EntryVar)).Op(":=").Range().Id(nv)).BlockFunc(func(g *jen.Group) {
 		if n.TrackHandles {
 			hn := toLowerFirst(n.TypeName) + "Handle"
 			fn := toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name)
-			g.Id("d").Dot(fn).Index(jen.Id("i")).Op("=").Id(hn).Values(jen.Dict{jen.Id("node"): jen.Id("_node")})
+			g.Id("d").Dot(fn).Index(jen.Id(n.IdxVar)).Op("=").Id(hn).Values(jen.Dict{jen.Id("node"): jen.Id(n.EntryVar)})
 		}
 		if n.SlicePtr {
-			g.Add(n.Tgt.Jen().Clone()).Index(jen.Id("i")).Op("=").Op("&").Add(jt.Clone()).Values()
+			g.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.IdxVar)).Op("=").Op("&").Add(jt.Clone()).Values()
 		}
-		compArrayEntry(ctx, g, n.Children, n.TDottedKey)
+		compScopedBody(ctx, g, n.Children, jen.Id(n.EntryVar), "")
 	}))
 	return stmts
 }
 
-func compArrayEntry(ctx jenCtx, g *jen.Group, children []cdNode, pk TOMLKey) {
+// compScopedBody renders decode for children scoped to an array-table entry (or
+// any nested table) node: leaves scan the node, container children are matched
+// within the node's child scope via cst.FindChild*, recursing so nesting is
+// correct by construction at any depth (#86/#87). This replaces the former
+// header-counting positional family.
+func compScopedBody(ctx jenCtx, g *jen.Group, children []cdNode, scope *jen.Statement, fv string) {
 	var leaves, conts []cdNode
 	for _, c := range children {
 		if _, ok := c.(cdLeaf); ok {
@@ -292,13 +297,196 @@ func compArrayEntry(ctx jenCtx, g *jen.Group, children []cdNode, pk TOMLKey) {
 		}
 	}
 	if len(leaves) > 0 {
-		g.Add(compLeafScan(ctx, leaves, jen.Id("_node"), ""))
+		g.Add(compLeafScan(ctx, leaves, scope, fv))
 	}
 	for _, c := range conts {
-		for _, s := range compPosOp(ctx, c, pk) {
-			g.Add(s)
-		}
+		compScopedContainer(ctx, g, c, scope, fv)
 	}
+}
+
+func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statement, fv string) {
+	rootNode := func() *jen.Statement { return ctx.docVar.Clone().Dot("Root").Call() }
+	switch n := c.(type) {
+	case cdInTable:
+		v := "_ct" + n.TKey.VarSuffix()
+		g.If(jen.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey())), jen.Id(v).Op("!=").Nil()).BlockFunc(func(b *jen.Group) {
+			b.Add(ctx.mc(n.TKey))
+			compScopedBody(ctx, b, n.Children, jen.Id(v), "")
+		})
+
+	case cdNilGuard:
+		lv := toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name) + "Val"
+		v := "_ct" + n.TKey.VarSuffix()
+		g.BlockFunc(func(b *jen.Group) {
+			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+				ib.Add(ctx.mc(n.TKey))
+				ib.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
+				compScopedBody(ctx, ib, n.Children, jen.Id(v), "")
+				ib.Add(n.Tgt.Jen().Clone()).Op("=").Id(lv)
+			}).Else().BlockFunc(func(eb *jen.Group) {
+				eb.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
+				eb.Id("_found").Op(":=").False()
+				compScopedBody(ctx, eb, n.FlatChildren, scope.Clone(), "_found")
+				eb.If(jen.Id("_found")).Block(n.Tgt.Jen().Clone().Op("=").Id(lv))
+			})
+		})
+
+	case cdArrayTable:
+		nv := "_nodes" + n.TDottedKey.VarSuffix()
+		jt := jenType(n.TypeName, n.ImportPath)
+		g.BlockFunc(func(b *jen.Group) {
+			b.Id(nv).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			if fv != "" {
+				b.If(jen.Len(jen.Id(nv)).Op(">").Lit(0)).Block(jen.Id(fv).Op("=").True())
+			}
+			if n.SlicePtr {
+				b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Index().Op("*").Add(jt.Clone()), jen.Len(jen.Id(nv)))
+			} else {
+				b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Index().Add(jt.Clone()), jen.Len(jen.Id(nv)))
+			}
+			b.Add(ctx.mc(n.TDottedKey))
+			b.For(jen.List(jen.Id(n.IdxVar), jen.Id(n.EntryVar)).Op(":=").Range().Id(nv)).BlockFunc(func(lb *jen.Group) {
+				if n.SlicePtr {
+					lb.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.IdxVar)).Op("=").Op("&").Add(jt.Clone()).Values()
+				}
+				compScopedBody(ctx, lb, n.Children, jen.Id(n.EntryVar), "")
+			})
+		})
+
+	case cdMapScalar:
+		v := "_ct" + n.TKey.VarSuffix()
+		g.BlockFunc(func(b *jen.Group) {
+			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+				ib.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id(v))
+				if fv != "" {
+					ib.Id(fv).Op("=").True()
+				}
+				ib.Add(ctx.mc(n.TKey))
+				ib.For(jen.Id("_ik").Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_ik")))
+			})
+		})
+
+	case cdMapStruct:
+		compScopedMapStruct(ctx, g, n, scope)
+
+	case cdDelStruct:
+		compScopedDelStruct(ctx, g, n, scope)
+
+	case cdDelSlice:
+		compScopedDelSlice(ctx, g, n, scope, fv)
+
+	case cdDelMap:
+		compScopedDelMap(ctx, g, n, scope)
+
+	case cdMapMap:
+		// map[string]map[string]string nested directly inside an array-table entry
+		// is a rare, untested shape; the prior renderer had no positional case for
+		// it either, so it is left unhandled here.
+	}
+}
+
+func compScopedMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, scope *jen.Statement) {
+	field := n.TKey.BareKey()
+	prefix := jen.Qual(cstPkg, "TableHeaderKey").Call(scope.Clone()).Op("+").Lit("." + field + ".")
+	g.BlockFunc(func(b *jen.Group) {
+		if n.SlicePtr {
+			b.Var().Id("_mr").Map(jen.String()).Op("*").Id(n.TypeName)
+		} else {
+			b.Var().Id("_mr").Map(jen.String()).Id(n.TypeName)
+		}
+		b.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Qual(cstPkg, "FindChildSubTables").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(field))).BlockFunc(func(lb *jen.Group) {
+			lb.Id("_mk").Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), prefix.Clone())
+			lb.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(ib *jen.Group) {
+				ib.Add(ctx.mc(n.TKey))
+				if n.SlicePtr {
+					ib.Id("_mr").Op("=").Make(jen.Map(jen.String()).Op("*").Id(n.TypeName))
+				} else {
+					ib.Id("_mr").Op("=").Make(jen.Map(jen.String()).Id(n.TypeName))
+				}
+			})
+			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
+			lb.Var().Id("entry").Id(n.TypeName)
+			compScopedBody(ctx, lb, n.Children, jen.Id("_ch"), "")
+			if n.SlicePtr {
+				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Op("&").Id("entry")
+			} else {
+				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("entry")
+			}
+		})
+		b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
+	})
+}
+
+func compScopedDelStruct(ctx jenCtx, g *jen.Group, n cdDelStruct, scope *jen.Statement) {
+	_, st := delegateParts(n.TypeName)
+	bk := n.TKey.BareKey()
+	pk := n.TKey.Lit(".")
+	decFn := "Decode" + st + "Into"
+	v := "_ct" + n.TKey.VarSuffix()
+	g.BlockFunc(func(b *jen.Group) {
+		b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(bk))
+		b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+			ib.Add(ctx.mc(n.TKey))
+			if n.Ptr {
+				lv := toLowerFirst(st) + "Val"
+				ib.Id(lv).Op(":=").Op("&").Qual(n.ImportPath, st).Values()
+				ib.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(jen.Id(lv), ctx.docVar.Clone(), jen.Id(v), ctx.consumed.Clone(), pk.Jen()), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+": %w", jen.Err()))
+				ib.Add(n.Tgt.Jen().Clone()).Op("=").Id(lv)
+			} else {
+				ib.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(jen.Op("&").Add(n.Tgt.Jen().Clone()), ctx.docVar.Clone(), jen.Id(v), ctx.consumed.Clone(), pk.Jen()), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+": %w", jen.Err()))
+			}
+		})
+	})
+}
+
+func compScopedDelSlice(ctx jenCtx, g *jen.Group, n cdDelSlice, scope *jen.Statement, fv string) {
+	_, st := delegateParts(n.TypeName)
+	bk := n.TKey.BareKey()
+	pk := n.TDottedKey.Lit(".")
+	decFn := "Decode" + st + "Into"
+	nv := "_nodes" + n.TDottedKey.VarSuffix()
+	g.BlockFunc(func(b *jen.Group) {
+		b.Id(nv).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(bk))
+		if fv != "" {
+			b.If(jen.Len(jen.Id(nv)).Op(">").Lit(0)).Block(jen.Id(fv).Op("=").True())
+		}
+		if n.SlicePtr {
+			b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Index().Op("*").Qual(n.ImportPath, st), jen.Len(jen.Id(nv)))
+		} else {
+			b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Index().Qual(n.ImportPath, st), jen.Len(jen.Id(nv)))
+		}
+		b.Add(ctx.mc(n.TDottedKey))
+		b.For(jen.List(jen.Id(n.IdxVar), jen.Id("_dn")).Op(":=").Range().Id(nv)).BlockFunc(func(lb *jen.Group) {
+			if n.SlicePtr {
+				lb.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.IdxVar)).Op("=").Op("&").Qual(n.ImportPath, st).Values()
+				lb.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(n.Tgt.Jen().Clone().Index(jen.Id(n.IdxVar)), ctx.docVar.Clone(), jen.Id("_dn"), ctx.consumed.Clone(), pk.Jen()), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id(n.IdxVar), jen.Err()))
+			} else {
+				lb.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(jen.Op("&").Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.IdxVar)), ctx.docVar.Clone(), jen.Id("_dn"), ctx.consumed.Clone(), pk.Jen()), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id(n.IdxVar), jen.Err()))
+			}
+		})
+	})
+}
+
+func compScopedDelMap(ctx jenCtx, g *jen.Group, n cdDelMap, scope *jen.Statement) {
+	_, st := delegateParts(n.ElemType)
+	field := n.TKey.BareKey()
+	bk := n.TKey.BareKey()
+	decFn := "Decode" + st + "Into"
+	prefix := jen.Qual(cstPkg, "TableHeaderKey").Call(scope.Clone()).Op("+").Lit("." + field + ".")
+	g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Qual(cstPkg, "FindChildSubTables").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(field))).BlockFunc(func(lb *jen.Group) {
+		lb.Id("_mk").Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), prefix.Clone())
+		lb.If(n.Tgt.Jen().Clone().Op("==").Nil()).BlockFunc(func(ib *jen.Group) {
+			ib.Add(ctx.mc(n.TKey))
+			ib.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Qual(n.ImportPath, st))
+		})
+		lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
+		lb.Var().Id("entry").Qual(n.ImportPath, st)
+		dke := n.TKey.Lit(".").Var("_mk").Lit(".")
+		lb.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(jen.Op("&").Id("entry"), ctx.docVar.Clone(), jen.Id("_ch"), ctx.consumed.Clone(), dke.Jen()), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+".%s: %w", jen.Id("_mk"), jen.Err()))
+		lb.Add(n.Tgt.Jen().Clone()).Index(jen.Id("_mk")).Op("=").Id("entry")
+	})
 }
 
 func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
@@ -400,16 +588,16 @@ func compDelSlice(ctx jenCtx, n cdDelSlice, fv string) []jen.Code {
 	}
 	stmts = append(stmts, ctx.mc(n.TDottedKey))
 	errKey := n.TKey.BareKey()
-	stmts = append(stmts, jen.For(jen.List(jen.Id("i"), jen.Id("_node")).Op(":=").Range().Id(nv)).BlockFunc(func(g *jen.Group) {
+	stmts = append(stmts, jen.For(jen.List(jen.Id(n.IdxVar), jen.Id("_node")).Op(":=").Range().Id(nv)).BlockFunc(func(g *jen.Group) {
 		if n.SlicePtr {
-			g.Add(n.Tgt.Jen().Clone()).Index(jen.Id("i")).Op("=").Op("&").Qual(n.ImportPath, st).Values()
+			g.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.IdxVar)).Op("=").Op("&").Qual(n.ImportPath, st).Values()
 			g.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(
-				n.Tgt.Jen().Clone().Index(jen.Id("i")), ctx.docVar.Clone(), jen.Id("_node"), ctx.consumed.Clone(), pk.Jen(),
-			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(errKey+"[%d]: %w", jen.Id("i"), jen.Err()))
+				n.Tgt.Jen().Clone().Index(jen.Id(n.IdxVar)), ctx.docVar.Clone(), jen.Id("_node"), ctx.consumed.Clone(), pk.Jen(),
+			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(errKey+"[%d]: %w", jen.Id(n.IdxVar), jen.Err()))
 		} else {
 			g.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(
-				jen.Op("&").Add(n.Tgt.Jen().Clone()).Index(jen.Id("i")), ctx.docVar.Clone(), jen.Id("_node"), ctx.consumed.Clone(), pk.Jen(),
-			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(errKey+"[%d]: %w", jen.Id("i"), jen.Err()))
+				jen.Op("&").Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.IdxVar)), ctx.docVar.Clone(), jen.Id("_node"), ctx.consumed.Clone(), pk.Jen(),
+			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(errKey+"[%d]: %w", jen.Id(n.IdxVar), jen.Err()))
 		}
 	}))
 	return stmts
@@ -443,177 +631,6 @@ func compDelMap(ctx jenCtx, n cdDelMap) []jen.Code {
 	})}
 }
 
-// --- Positional decode (#10): nested containers scoped to the i-th [[pk]] entry ---
-
-func compPosOp(ctx jenCtx, c cdNode, pk TOMLKey) []jen.Code {
-	switch n := c.(type) {
-	case cdInTable:
-		return compPIT(ctx, n, pk)
-	case cdMapScalar:
-		return compPMapScalar(ctx, n, pk)
-	case cdArrayTable:
-		return compPArrayTable(ctx, n, pk)
-	case cdNilGuard:
-		return compPNilGuard(ctx, n, pk)
-	case cdMapStruct:
-		return compPMapStruct(ctx, n, pk)
-	case cdDelStruct:
-		return compDelStruct(ctx, n)
-	case cdDelSlice:
-		return compDelSlice(ctx, n, "")
-	case cdDelMap:
-		return compDelMap(ctx, n)
-	}
-	return nil
-}
-
-func compPIT(ctx jenCtx, n cdInTable, pk TOMLKey) []jen.Code {
-	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.Id("_pi").Op(":=").Lit(0)
-		g.For(jen.List(jen.Id("_"), jen.Id("_rc")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
-			g.Add(posHeader(pk))
-			g.If(jen.Id("_pi").Op("==").Id("i").Op("+").Lit(1).Op("&&").Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Add(n.TKey.Jen())).BlockFunc(func(g *jen.Group) {
-				g.Add(ctx.mc(n.TKey))
-				for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id("_rc"), "") {
-					g.Add(s)
-				}
-				g.Break()
-			})
-		})
-	})}
-}
-
-func compPMapScalar(ctx jenCtx, n cdMapScalar, pk TOMLKey) []jen.Code {
-	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.Id("_pi").Op(":=").Lit(0)
-		g.For(jen.List(jen.Id("_"), jen.Id("_rc")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
-			g.Add(posHeader(pk))
-			g.If(jen.Id("_pi").Op("==").Id("i").Op("+").Lit(1).Op("&&").Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Add(n.TKey.Jen())).BlockFunc(func(g *jen.Group) {
-				g.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_rc"))
-				g.Add(ctx.mc(n.TKey))
-				g.For(jen.Id("_ik").Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_ik")))
-				g.Break()
-			})
-		})
-	})}
-}
-
-func compPArrayTable(ctx jenCtx, n cdArrayTable, pk TOMLKey) []jen.Code {
-	nv := "_" + n.TKey.BareKey() + "Nodes"
-	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.Var().Id(nv).Index().Op("*").Qual(cstPkg, "Node")
-		g.Id("_pi").Op(":=").Lit(0)
-		g.Id("_inScope").Op(":=").False()
-		g.For(jen.List(jen.Id("_"), jen.Id("_rc")).Op(":=").Range().Add(ctx.root())).Block(
-			jen.If(jen.Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeArrayTable")).BlockFunc(func(g *jen.Group) {
-				g.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc"))
-				g.If(jen.Id("_hdr").Op("==").Add(pk.Jen())).Block(
-					jen.If(jen.Id("_pi").Op("==").Id("i")).Block(jen.Id("_inScope").Op("=").True()).Else().If(jen.Id("_pi").Op(">").Id("i")).Block(jen.Break()),
-					jen.Id("_pi").Op("++"), jen.Continue(),
-				)
-				g.If(jen.Id("_inScope").Op("&&").Id("_hdr").Op("==").Add(n.TDottedKey.Jen())).Block(
-					jen.Id(nv).Op("=").Append(jen.Id(nv), jen.Id("_rc")),
-				)
-			}),
-		)
-		if n.SlicePtr {
-			g.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Index().Op("*").Id(n.TypeName), jen.Len(jen.Id(nv)))
-		} else {
-			g.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Index().Id(n.TypeName), jen.Len(jen.Id(nv)))
-		}
-		g.Add(ctx.mc(n.TDottedKey))
-		g.For(jen.List(jen.Id("_ii"), jen.Id("_nn")).Op(":=").Range().Id(nv)).BlockFunc(func(g *jen.Group) {
-			if n.SlicePtr {
-				g.Add(n.Tgt.Jen().Clone()).Index(jen.Id("_ii")).Op("=").Op("&").Id(n.TypeName).Values()
-			}
-			var leaves []cdNode
-			for _, f := range n.Children {
-				if _, ok := f.(cdLeaf); ok {
-					leaves = append(leaves, f)
-				}
-			}
-			if len(leaves) > 0 {
-				g.Add(compLeafScan(ctx, leaves, jen.Id("_nn"), ""))
-			}
-		})
-	})}
-}
-
-func compPNilGuard(ctx jenCtx, n cdNilGuard, pk TOMLKey) []jen.Code {
-	lv := toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name) + "Val"
-	ftv := "_ft" + n.TKey.VarSuffix()
-	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
-		g.Id("_pi").Op(":=").Lit(0)
-		g.For(jen.List(jen.Id("_"), jen.Id("_rc")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
-			g.Add(posHeader(pk))
-			g.If(jen.Id("_pi").Op("==").Id("i").Op("+").Lit(1).Op("&&").Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Add(n.TKey.Jen())).Block(
-				jen.Id(ftv).Op("=").Id("_rc"), jen.Break(),
-			)
-		})
-		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
-			g.Add(ctx.mc(n.TKey))
-			g.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
-			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id(ftv), "") {
-				g.Add(s)
-			}
-			g.Add(n.Tgt.Jen().Clone()).Op("=").Id(lv)
-		}).Else().BlockFunc(func(g *jen.Group) {
-			g.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
-			g.Id("_found").Op(":=").False()
-			for _, s := range compRenderDecodeBody(ctx, n.FlatChildren, jen.Id("_node"), "_found") {
-				g.Add(s)
-			}
-			g.If(jen.Id("_found")).Block(n.Tgt.Jen().Clone().Op("=").Id(lv))
-		})
-	})}
-}
-
-func compPMapStruct(ctx jenCtx, n cdMapStruct, pk TOMLKey) []jen.Code {
-	pf := n.TKey.Lit(".")
-	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		if n.SlicePtr {
-			g.Var().Id("_mr").Map(jen.String()).Op("*").Id(n.TypeName)
-		} else {
-			g.Var().Id("_mr").Map(jen.String()).Id(n.TypeName)
-		}
-		g.Id("_pi").Op(":=").Lit(0)
-		g.Id("_inScope").Op(":=").False()
-		g.For(jen.List(jen.Id("_"), jen.Id("_rc")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
-			g.If(jen.Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeArrayTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc")).Op("==").Add(pk.Jen())).Block(
-				jen.If(jen.Id("_pi").Op("==").Id("i")).Block(jen.Id("_inScope").Op("=").True()).Else().If(jen.Id("_pi").Op(">").Id("i")).Block(jen.Break()),
-				jen.Id("_pi").Op("++"), jen.Continue(),
-			)
-			g.If(jen.Id("_inScope").Op("&&").Id("_rc").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable")).BlockFunc(func(g *jen.Group) {
-				g.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_rc"))
-				g.If(jen.Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), pf.Jen())).BlockFunc(func(g *jen.Group) {
-					g.Id("_mk").Op(":=").Id("_hdr").Index(pf.JenLen().Op(":"))
-					g.If(jen.Qual("strings", "Contains").Call(jen.Id("_mk"), jen.Lit("."))).Block(jen.Continue())
-					g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(g *jen.Group) {
-						g.Add(ctx.mc(n.TKey))
-						if n.SlicePtr {
-							g.Id("_mr").Op("=").Make(jen.Map(jen.String()).Op("*").Id(n.TypeName))
-						} else {
-							g.Id("_mr").Op("=").Make(jen.Map(jen.String()).Id(n.TypeName))
-						}
-					})
-					g.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
-					g.Var().Id("entry").Id(n.TypeName)
-					for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id("_rc"), "") {
-						g.Add(s)
-					}
-					if n.SlicePtr {
-						g.Id("_mr").Index(jen.Id("_mk")).Op("=").Op("&").Id("entry")
-					} else {
-						g.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("entry")
-					}
-				})
-			})
-		})
-		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
-	})}
-}
-
 // ==========================================================================
 // Encode walk
 // ==========================================================================
@@ -626,11 +643,26 @@ func compRenderEncodeBody(ctx encCtx, children []ceNode, cv *jen.Statement) []je
 	return out
 }
 
+// compEncodeNeedsContainer reports whether the parent table/sub-table node will
+// be referenced by any child — i.e. whether to bind it to a variable rather than
+// `_`. Most child kinds write through the container, but those that operate on
+// the document root do not: ceMapMap always, and array-tables / delegated slices
+// when they are NOT scoped (top-level / struct-nested, found root-wide by their
+// unique dotted key). A scoped array-table/delegated-slice does use the container
+// (it finds/appends within the parent's child scope).
 func compEncodeNeedsContainer(children []ceNode) bool {
 	for _, c := range children {
-		switch c.(type) {
-		case ceArrayTable, ceDelSlice:
+		switch n := c.(type) {
+		case ceMapMap:
 			continue
+		case ceArrayTable:
+			if n.Scoped {
+				return true
+			}
+		case ceDelSlice:
+			if n.Scoped {
+				return true
+			}
 		default:
 			return true
 		}
@@ -651,13 +683,13 @@ func compEncodeNode(ctx encCtx, c ceNode, cv *jen.Statement) []jen.Code {
 	case ceNilGuard:
 		return compEncNilGuard(ctx, n, cv)
 	case ceArrayTable:
-		return compEncArrayTable(ctx, n)
+		return compEncArrayTable(ctx, n, cv)
 	case ceMapStruct:
 		return compEncMapStruct(ctx, n, cv)
 	case ceDelStruct:
 		return compEncDelStruct(ctx, n, cv)
 	case ceDelSlice:
-		return compEncDelSlice(ctx, n)
+		return compEncDelSlice(ctx, n, cv)
 	case ceDelMap:
 		return compEncDelMap(ctx, n, cv)
 	}
@@ -866,16 +898,18 @@ func compEncNilGuard(ctx encCtx, n ceNilGuard, cv *jen.Statement) []jen.Code {
 	}
 }
 
-func compEncArrayTable(ctx encCtx, n ceArrayTable) []jen.Code {
+func compEncArrayTable(ctx encCtx, n ceArrayTable, cv *jen.Statement) []jen.Code {
 	src := n.Tgt.Jen()
 	bk := n.TKey.BareKey()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		if n.TrackHandles {
+			// Top-level same-package []struct: reuse the decode-recorded entry
+			// handles; new entries append at the document root.
 			handleSlice := "d." + toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name)
-			g.For(jen.Id("i").Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
+			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
-				g.If(jen.Id("i").Op("<").Len(jen.Id(handleSlice))).Block(
-					jen.Id("container").Op("=").Id(handleSlice).Index(jen.Id("i")).Dot("node"),
+				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(handleSlice))).Block(
+					jen.Id("container").Op("=").Id(handleSlice).Index(jen.Id(n.IdxVar)).Dot("node"),
 				).Else().Block(
 					jen.Id("container").Op("=").Qual(cstPkg, "AppendArrayTableEntryAfter").Call(ctx.rootVar.Clone(), jen.Lit(bk)),
 				)
@@ -883,13 +917,36 @@ func compEncArrayTable(ctx encCtx, n ceArrayTable) []jen.Code {
 					g.Add(s)
 				}
 			})
+		} else if n.Scoped {
+			// Nested inside an array-table entry: header is ambiguous across sibling
+			// entries, so find + append within the parent container (cv) rather than
+			// document-wide. cv is captured into _ap before the loop's own
+			// `container` shadows it.
+			pv := "_ap" + n.TDottedKey.VarSuffix()
+			existVar := "_exist" + n.TDottedKey.VarSuffix()
+			g.Id(pv).Op(":=").Add(cv.Clone())
+			g.Id(existVar).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(ctx.rootVar.Clone(), jen.Id(pv), jen.Lit(bk))
+			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
+				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
+				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
+					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),
+				).Else().Block(
+					jen.Id("container").Op("=").Qual(cstPkg, "AppendChildArrayTableEntry").Call(ctx.rootVar.Clone(), jen.Id(pv), jen.Lit(bk)),
+				)
+				for _, s := range compRenderEncodeBody(ctx, n.Children, jen.Id("container")) {
+					g.Add(s)
+				}
+			})
 		} else {
+			// Top-level or struct-nested (unique dotted key): find/append document-
+			// wide by the full dotted key — robust even when the parent table is
+			// implicit and gets created at the document end on encode.
 			existVar := "_exist" + n.TDottedKey.VarSuffix()
 			g.Id(existVar).Op(":=").Qual(cstPkg, "FindArrayTableNodes").Call(ctx.rootVar.Clone(), n.TDottedKey.Jen())
-			g.For(jen.Id("i").Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
+			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
-				g.If(jen.Id("i").Op("<").Len(jen.Id(existVar))).Block(
-					jen.Id("container").Op("=").Id(existVar).Index(jen.Id("i")),
+				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
+					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),
 				).Else().Block(
 					jen.Id("container").Op("=").Qual(cstPkg, "AppendArrayTableEntryAfter").Call(ctx.rootVar.Clone(), n.TDottedKey.Jen()),
 				)
@@ -947,32 +1004,51 @@ func compEncDelStruct(ctx encCtx, n ceDelStruct, cv *jen.Statement) []jen.Code {
 	})}
 }
 
-func compEncDelSlice(ctx encCtx, n ceDelSlice) []jen.Code {
+func compEncDelSlice(ctx encCtx, n ceDelSlice, cv *jen.Statement) []jen.Code {
 	_, st := delegateParts(n.TypeName)
 	bk := n.TKey.BareKey()
 	encFn := "Encode" + st + "From"
 	src := n.Tgt.Jen()
+	existVar := "_exist" + n.TDottedKey.VarSuffix()
+	pv := "_ap" + n.TDottedKey.VarSuffix()
+
+	entry := func(g *jen.Group) {
+		if n.SlicePtr {
+			g.If(jen.Err().Op(":=").Qual(n.ImportPath, encFn).Call(
+				src.Clone().Index(jen.Id(n.IdxVar)), ctx.docVar.Clone(), jen.Id("container"),
+			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id(n.IdxVar), jen.Err()))
+		} else {
+			g.If(jen.Err().Op(":=").Qual(n.ImportPath, encFn).Call(
+				jen.Op("&").Add(src.Clone()).Index(jen.Id(n.IdxVar)), ctx.docVar.Clone(), jen.Id("container"),
+			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id(n.IdxVar), jen.Err()))
+		}
+	}
 
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-		existVar := "_exist" + n.TDottedKey.VarSuffix()
-		g.Id(existVar).Op(":=").Qual(cstPkg, "FindArrayTableNodes").Call(ctx.rootVar.Clone(), n.TDottedKey.Jen())
-		g.For(jen.Id("i").Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
-			g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
-			g.If(jen.Id("i").Op("<").Len(jen.Id(existVar))).Block(
-				jen.Id("container").Op("=").Id(existVar).Index(jen.Id("i")),
-			).Else().Block(
-				jen.Id("container").Op("=").Qual(cstPkg, "AppendArrayTableEntryAfter").Call(ctx.rootVar.Clone(), jen.Lit(bk)),
-			)
-			if n.SlicePtr {
-				g.If(jen.Err().Op(":=").Qual(n.ImportPath, encFn).Call(
-					src.Clone().Index(jen.Id("i")), ctx.docVar.Clone(), jen.Id("container"),
-				), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("i"), jen.Err()))
-			} else {
-				g.If(jen.Err().Op(":=").Qual(n.ImportPath, encFn).Call(
-					jen.Op("&").Add(src.Clone()).Index(jen.Id("i")), ctx.docVar.Clone(), jen.Id("container"),
-				), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("i"), jen.Err()))
-			}
-		})
+		if n.Scoped {
+			g.Id(pv).Op(":=").Add(cv.Clone())
+			g.Id(existVar).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(ctx.rootVar.Clone(), jen.Id(pv), jen.Lit(bk))
+			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
+				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
+				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
+					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),
+				).Else().Block(
+					jen.Id("container").Op("=").Qual(cstPkg, "AppendChildArrayTableEntry").Call(ctx.rootVar.Clone(), jen.Id(pv), jen.Lit(bk)),
+				)
+				entry(g)
+			})
+		} else {
+			g.Id(existVar).Op(":=").Qual(cstPkg, "FindArrayTableNodes").Call(ctx.rootVar.Clone(), n.TDottedKey.Jen())
+			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
+				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
+				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
+					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),
+				).Else().Block(
+					jen.Id("container").Op("=").Qual(cstPkg, "AppendArrayTableEntryAfter").Call(ctx.rootVar.Clone(), n.TDottedKey.Jen()),
+				)
+				entry(g)
+			})
+		}
 	})}
 }
 
