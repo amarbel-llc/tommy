@@ -42,14 +42,26 @@ func compLeafScan(ctx jenCtx, leaves []cdNode, cv *jen.Statement, fv string) jen
 	for _, l := range leaves {
 		cases = append(cases, compLeafCase(ctx, l.(cdLeaf), fv)...)
 	}
-	return jen.For(jen.List(jen.Id("_"), jen.Id("_kv")).Op(":=").Range().Add(cv.Clone()).Dot("Children")).Block(
-		jen.If(jen.Id("_kv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeKeyValue")).Block(jen.Continue()),
-		jen.Switch(jen.Qual(cstPkg, "KeyValueName").Call(jen.Id("_kv"))).Block(cases...),
-	)
+	// _seen tracks known keys seen in THIS table scan, for duplicate-key
+	// rejection (#90). It is block-local so each array-table/map entry's scan
+	// starts fresh — a key repeating across entries is not a duplicate.
+	return jen.BlockFunc(func(g *jen.Group) {
+		g.Id("_seen").Op(":=").Map(jen.String()).Bool().Values()
+		g.For(jen.List(jen.Id("_"), jen.Id("_kv")).Op(":=").Range().Add(cv.Clone()).Dot("Children")).Block(
+			jen.If(jen.Id("_kv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeKeyValue")).Block(jen.Continue()),
+			jen.Switch(jen.Qual(cstPkg, "KeyValueName").Call(jen.Id("_kv"))).Block(cases...),
+		)
+	})
 }
 
 func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 	bk := l.TKey.BareKey()
+	// Every leaf case is guarded against a repeated known key (#90): dupGuard
+	// checks/sets the per-scan _seen set before the extract, so a second
+	// occurrence within the same table errors instead of silently overwriting.
+	wrap := func(inner jen.Code) []jen.Code {
+		return []jen.Code{jen.Case(jen.Lit(bk)).Block(append(ctx.dupGuard(bk), inner)...)}
+	}
 	switch l.Kind {
 	case cdLeafPrim:
 		ei := cstExtract(l.TypeName)
@@ -76,9 +88,7 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 			body = append(body, jen.Id(fv).Op("=").True())
 		}
 		body = append(body, ctx.mc(l.TKey))
-		return []jen.Code{jen.Case(jen.Lit(bk)).Block(
-			jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, ei.fn).Call(jen.Id("_kv")), jen.Id("ok")).Block(body...),
-		)}
+		return wrap(jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, ei.fn).Call(jen.Id("_kv")), jen.Id("ok")).Block(body...))
 	case cdLeafCustom:
 		var body []jen.Code
 		body = append(body, jen.If(jen.Err().Op(":=").Add(l.Tgt.Jen().Clone()).Dot("UnmarshalTOML").Call(jen.Id("raw")), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+": %w", jen.Err())))
@@ -86,9 +96,7 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 			body = append(body, jen.Id(fv).Op("=").True())
 		}
 		body = append(body, ctx.mc(l.TKey))
-		return []jen.Code{jen.Case(jen.Lit(bk)).Block(
-			jen.If(jen.List(jen.Id("raw"), jen.Id("ok")).Op(":=").Qual(cstPkg, "ExtractRaw").Call(jen.Id("_kv")), jen.Id("ok")).Block(body...),
-		)}
+		return wrap(jen.If(jen.List(jen.Id("raw"), jen.Id("ok")).Op(":=").Qual(cstPkg, "ExtractRaw").Call(jen.Id("_kv")), jen.Id("ok")).Block(body...))
 	case cdLeafText:
 		var body []jen.Code
 		body = append(body, jen.If(jen.Err().Op(":=").Add(l.Tgt.Jen().Clone()).Dot("UnmarshalText").Call(jen.Index().Byte().Call(jen.Id("v"))), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+": %w", jen.Err())))
@@ -96,9 +104,7 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 			body = append(body, jen.Id(fv).Op("=").True())
 		}
 		body = append(body, ctx.mc(l.TKey))
-		return []jen.Code{jen.Case(jen.Lit(bk)).Block(
-			jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, "ExtractString").Call(jen.Id("_kv")), jen.Id("ok")).Block(body...),
-		)}
+		return wrap(jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, "ExtractString").Call(jen.Id("_kv")), jen.Id("ok")).Block(body...))
 	case cdLeafSlicePrim:
 		var body []jen.Code
 		if l.SlicePointer {
@@ -112,19 +118,15 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 			body = append(body, l.Tgt.Jen().Clone().Op("=").Id("v"))
 		}
 		body = append(body, ctx.mc(l.TKey))
-		return []jen.Code{jen.Case(jen.Lit(bk)).Block(
-			jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, cstSliceExtractFunc(l.ElemType)).Call(jen.Id("_kv")), jen.Id("ok")).Block(body...),
-		)}
+		return wrap(jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, cstSliceExtractFunc(l.ElemType)).Call(jen.Id("_kv")), jen.Id("ok")).Block(body...))
 	case cdLeafSliceText:
-		return []jen.Code{jen.Case(jen.Lit(bk)).Block(
-			jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, "ExtractStringSlice").Call(jen.Id("_kv")), jen.Id("ok")).Block(
-				l.Tgt.Jen().Clone().Op("=").Make(jen.Index().Add(jenType(l.TypeName, l.ImportPath)), jen.Len(jen.Id("v"))),
-				jen.For(jen.List(jen.Id("_si"), jen.Id("_s")).Op(":=").Range().Id("v")).Block(
-					jen.If(jen.Err().Op(":=").Add(l.Tgt.Jen().Clone()).Index(jen.Id("_si")).Dot("UnmarshalText").Call(jen.Index().Byte().Call(jen.Id("_s"))), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("_si"), jen.Err())),
-				),
-				ctx.mc(l.TKey),
+		return wrap(jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, "ExtractStringSlice").Call(jen.Id("_kv")), jen.Id("ok")).Block(
+			l.Tgt.Jen().Clone().Op("=").Make(jen.Index().Add(jenType(l.TypeName, l.ImportPath)), jen.Len(jen.Id("v"))),
+			jen.For(jen.List(jen.Id("_si"), jen.Id("_s")).Op(":=").Range().Id("v")).Block(
+				jen.If(jen.Err().Op(":=").Add(l.Tgt.Jen().Clone()).Index(jen.Id("_si")).Dot("UnmarshalText").Call(jen.Index().Byte().Call(jen.Id("_s"))), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+"[%d]: %w", jen.Id("_si"), jen.Err())),
 			),
-		)}
+			ctx.mc(l.TKey),
+		))
 	}
 	return nil
 }

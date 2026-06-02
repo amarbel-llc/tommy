@@ -57,6 +57,19 @@ func (c jenCtx) mcExpr(expr *jen.Statement) jen.Code {
 	return c.consumed.Clone().Index(expr).Op("=").True()
 }
 
+// dupGuard rejects a repeated known key within one table scan (#90, TOML
+// "Defining a key multiple times is invalid"). It checks/sets a per-scan local
+// `_seen` set (declared by compLeafScan), NOT the document-wide consumed map:
+// the same logical key path recurs legitimately across array-table and map
+// entries, each of which runs its own leaf scan with a fresh `_seen`. Emitted as
+// the first statements of each leaf case.
+func (c jenCtx) dupGuard(bareKey string) []jen.Code {
+	return []jen.Code{
+		jen.If(jen.Id("_seen").Index(jen.Lit(bareKey))).Block(c.retErr("duplicate key %q", jen.Lit(bareKey))),
+		jen.Id("_seen").Index(jen.Lit(bareKey)).Op("=").True(),
+	}
+}
+
 func (c jenCtx) root() *jen.Statement {
 	return c.docVar.Clone().Dot("Root").Call().Dot("Children")
 }

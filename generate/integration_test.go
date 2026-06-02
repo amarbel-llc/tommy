@@ -146,6 +146,92 @@ func TestDecodeEncode(t *testing.T) {
 	}
 }
 
+// Regression for #90: a generated decoder must reject a repeated key within a
+// table (per the TOML spec, "Defining a key multiple times is invalid") rather
+// than silently keeping the last occurrence. The same key name in distinct
+// scopes (separate array-table entries) must stay valid.
+func TestIntegrationDuplicateKeyErrors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/dupkey",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package dupkey
+
+//go:generate tommy generate
+type Config struct {
+	Name    string   `+"`"+`toml:"name"`+"`"+`
+	Servers []Server `+"`"+`toml:"servers"`+"`"+`
+}
+
+type Server struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "dup_test.go", `package dupkey
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestDuplicateKeyRejected(t *testing.T) {
+	// Duplicate top-level key must error, not silently keep the last value.
+	if _, err := DecodeConfig([]byte("name = \"a\"\nname = \"b\"\n")); err == nil {
+		t.Fatal("expected error for duplicate top-level key, got nil")
+	} else if !strings.Contains(err.Error(), "duplicate key") {
+		t.Fatalf("error should mention the duplicate key, got: %v", err)
+	}
+
+	// Duplicate key inside an array-table entry must error too.
+	dupEntry := "[[servers]]\nhost = \"x\"\nhost = \"y\"\n"
+	if _, err := DecodeConfig([]byte(dupEntry)); err == nil {
+		t.Fatal("expected error for duplicate key within an array-table entry, got nil")
+	}
+
+	// False-positive guard: the same key name in DISTINCT scopes (separate
+	// array-table entries) is valid and must decode cleanly.
+	valid := "name = \"app\"\n\n[[servers]]\nhost = \"x\"\n\n[[servers]]\nhost = \"y\"\n"
+	d, err := DecodeConfig([]byte(valid))
+	if err != nil {
+		t.Fatalf("valid doc with repeated key name across entries errored: %v", err)
+	}
+	got := d.Data()
+	if got.Name != "app" || len(got.Servers) != 2 || got.Servers[0].Host != "x" || got.Servers[1].Host != "y" {
+		t.Fatalf("valid doc decoded wrong: %#v", *got)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-run", "TestDuplicateKeyRejected", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #89: a struct whose fields are ALL array-of-tables must not
 // emit a bare parent [table] header — the array-table headers already imply the
 // parent. An empty inner slice yielded a content-less [section]; a non-empty one
