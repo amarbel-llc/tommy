@@ -227,6 +227,62 @@ func TestMM(t *testing.T) {
 	}
 }
 
+// Regression for #100: a nil *Struct field must stay nil when its [table] is
+// absent, even if one of the struct's inner fields shares a bare key with a
+// sibling field of the parent. The #55 flat-key fallback must not claim the
+// sibling-owned key and wrongly materialize the pointer.
+func TestIntegrationFlatFallbackSiblingKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/ff\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package ff
+
+type Inner struct {
+	F1 *int `+"`"+`toml:"f1"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Ptr *Inner `+"`"+`toml:"ptr"`+"`"+`
+	F1  int    `+"`"+`toml:"f1"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "ff_test.go", `package ff
+
+import "testing"
+
+func TestFF(t *testing.T) {
+	// No [ptr] table; the sibling f1 belongs to Config, not Inner.
+	d, err := DecodeConfig([]byte("f1 = -46445\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := d.Data()
+	if got.Ptr != nil {
+		t.Fatalf("Ptr should be nil (no [ptr] table), got %#v", got.Ptr)
+	}
+	if got.F1 != -46445 {
+		t.Fatalf("F1 = %d, want -46445", got.F1)
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestFF", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Regression for #92: a generated decoder must reject a table header defined
 // more than once (per the TOML spec, "Defining a table more than once is
 // invalid"), rather than silently using the first. Covers both the non-pointer

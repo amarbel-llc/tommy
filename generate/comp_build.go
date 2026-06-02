@@ -63,16 +63,23 @@ func arrayEntryVar(depth int) string {
 // --- Decode fold ---
 
 func foldCompDecode(si *StructInfo, pos compPos, emitHandles bool) []cdNode {
+	// siblingKeys are the TOML keys of this struct's own fields. A child's
+	// flat-key fallback (#55) must not claim a key owned by one of these
+	// siblings, or it would false-match and wrongly materialize the child (#100).
+	siblingKeys := make(map[string]bool, len(si.Fields))
+	for _, fi := range si.Fields {
+		siblingKeys[fi.TomlKey] = true
+	}
 	var out []cdNode
 	for _, fi := range si.Fields {
-		if n := foldCompDecodeField(fi, pos, emitHandles); n != nil {
+		if n := foldCompDecodeField(fi, pos, emitHandles, siblingKeys); n != nil {
 			out = append(out, n)
 		}
 	}
 	return out
 }
 
-func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
+func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool, siblingKeys map[string]bool) cdNode {
 	c := pos.child(fi.TomlKey, fi.GoName)
 
 	switch te := fi.Type.(type) {
@@ -91,7 +98,7 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
 		case spkScalar:
 			return cdLeaf{Kind: cdLeafPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: inner.TypeName, Pointer: true}
 		case spkStruct:
-			return compDecodeNilGuard(fi, inner, c)
+			return compDecodeNilGuard(fi, inner, c, siblingKeys)
 		case spkDelegated:
 			return cdDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: inner.ImportPath, TypeName: inner.TypeName, Ptr: true}
 		}
@@ -147,7 +154,7 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
 		return cdInTable{
 			TKey:         c.tkey,
 			Children:     foldCompDecode(te.InnerInfo, c, false),
-			FlatChildren: compDecodeFlatChildren(te.InnerInfo, c, c.tgt),
+			FlatChildren: compDecodeFlatChildren(te.InnerInfo, c, c.tgt, siblingKeys),
 		}
 
 	case spkDelegated:
@@ -162,14 +169,23 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
 // (matched document-root-relative), every other field uses a bare key at the
 // current container. tgt is where the decoded values land (a nil-guard local for
 // pointer structs, the field itself for value structs).
-func compDecodeFlatChildren(inner *StructInfo, c compPos, tgt TargetPath) []cdNode {
+//
+// siblingKeys are the TOML keys of the *parent* struct's fields. An inner field
+// whose bare key collides with one is omitted from the fallback: that key at the
+// parent belongs to the sibling (TOML can't have it twice), so a flat scan must
+// not claim it — doing so false-matches and wrongly materializes this struct
+// (#100). Such a field is only decodable via the explicit [table].
+func compDecodeFlatChildren(inner *StructInfo, c compPos, tgt TargetPath, siblingKeys map[string]bool) []cdNode {
 	var flat []cdNode
 	for _, f := range inner.Fields {
+		if !isSliceOfStruct(f.Type) && siblingKeys[f.TomlKey] {
+			continue
+		}
 		pos := compPos{tgt: tgt, arrayDepth: c.arrayDepth, seq: c.seq}
 		if isSliceOfStruct(f.Type) {
 			pos.tkey = c.tkey
 		}
-		if n := foldCompDecodeField(f, pos, false); n != nil {
+		if n := foldCompDecodeField(f, pos, false, nil); n != nil {
 			flat = append(flat, n)
 		}
 	}
@@ -196,7 +212,7 @@ func isSliceOfStruct(te spkType) bool {
 	return false
 }
 
-func compDecodeNilGuard(fi FieldInfo, st spkStruct, c compPos) cdNode {
+func compDecodeNilGuard(fi FieldInfo, st spkStruct, c compPos, siblingKeys map[string]bool) cdNode {
 	if st.InnerInfo == nil {
 		return nil
 	}
@@ -208,8 +224,8 @@ func compDecodeNilGuard(fi FieldInfo, st spkStruct, c compPos) cdNode {
 	// Children: all inner fields decoded inside the explicit [table].
 	children := foldCompDecode(st.InnerInfo, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
 	// FlatChildren (#55): inner fields decoded at the parent container when the
-	// [table] header is absent.
-	flat := compDecodeFlatChildren(st.InnerInfo, c, localTgt)
+	// [table] header is absent; sibling-owned keys are excluded (#100).
+	flat := compDecodeFlatChildren(st.InnerInfo, c, localTgt, siblingKeys)
 	return cdNilGuard{Tgt: c.tgt, TypeName: st.TypeName, TKey: c.tkey, LocalVar: localVar, Children: children, FlatChildren: flat}
 }
 

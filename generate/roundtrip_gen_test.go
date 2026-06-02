@@ -229,10 +229,10 @@ func (g *shapeGen) genValue(t *td) string {
 			fv := g.genValue(f.t)
 			// Emit a nil field ~1/4 of the time, but only where it round-trips
 			// cleanly: a nil *scalar / map / mapmap field is simply an absent key.
-			// Excluded: nil *struct fields (they hit the #55/#89 flat-fallback
-			// sibling-key false-match, tracked separately), nil slices (the
-			// nil/empty fidelity gap), and any nil collection element (TOML has no
-			// null).
+			// Excluded: nil *struct fields — #100's direct sibling-key false-match
+			// is fixed, but the flat-fallback still false-matches root/grandparent
+			// tables via inner table/map fields (deeper leak, tracked); nil slices
+			// (the nil/empty fidelity gap); and any nil collection element (no null).
 			nilable := false
 			switch f.t.kind {
 			case "map", "mapmap":
