@@ -296,10 +296,16 @@ func hasMarshalTOML(obj types.Object) bool {
 	return false
 }
 
-func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (FieldInfo, error) {
+// classifyNamedTypeExpr classifies a same-package named type into its TypeExpr:
+// a custom/text-marshaler scalar codec, or (the common case) a struct whose
+// fields are resolved by name. Non-struct same-package named types (slice/map/
+// primitive aliases used as a direct field) fall through to the struct path and
+// surface resolveStructByName's "not a struct" error — matching the historical
+// classifier, which never supported them as direct fields.
+func classifyNamedTypeExpr(pkg *packages.Package, typeName string) (spkType, error) {
 	obj := pkg.Types.Scope().Lookup(typeName)
 	if obj == nil {
-		return fi, fmt.Errorf("type %s not found", typeName)
+		return nil, fmt.Errorf("type %s not found", typeName)
 	}
 
 	// Check pointer receiver methods for UnmarshalTOML
@@ -308,11 +314,9 @@ func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (Fi
 	for i := range mset.Len() {
 		if mset.At(i).Obj().Name() == "UnmarshalTOML" {
 			if !hasMarshalTOML(obj) {
-				return fi, fmt.Errorf("type %s has UnmarshalTOML but no MarshalTOML — Encode() requires both", typeName)
+				return nil, fmt.Errorf("type %s has UnmarshalTOML but no MarshalTOML — Encode() requires both", typeName)
 			}
-			fi.Kind = FieldCustom
-			fi.TypeName = typeName
-			return fi, nil
+			return spkScalar{Codec: codecCustom, TypeName: typeName}, nil
 		}
 	}
 
@@ -321,41 +325,34 @@ func classifyNamedType(pkg *packages.Package, fi FieldInfo, typeName string) (Fi
 	for i := range vmset.Len() {
 		if vmset.At(i).Obj().Name() == "UnmarshalTOML" {
 			if !hasMarshalTOML(obj) {
-				return fi, fmt.Errorf("type %s has UnmarshalTOML but no MarshalTOML — Encode() requires both", typeName)
+				return nil, fmt.Errorf("type %s has UnmarshalTOML but no MarshalTOML — Encode() requires both", typeName)
 			}
-			fi.Kind = FieldCustom
-			fi.TypeName = typeName
-			return fi, nil
+			return spkScalar{Codec: codecCustom, TypeName: typeName}, nil
 		}
 	}
 
 	if hasMarshalTOML(obj) {
-		return fi, fmt.Errorf("type %s has MarshalTOML but no UnmarshalTOML — Decode() requires both", typeName)
+		return nil, fmt.Errorf("type %s has MarshalTOML but no UnmarshalTOML — Decode() requires both", typeName)
 	}
 
 	// Check for encoding.TextMarshaler/TextUnmarshaler
 	hasUnmarshalText := hasMethod(obj, "UnmarshalText")
 	hasMarshalText := hasMethod(obj, "MarshalText")
 	if hasUnmarshalText && hasMarshalText {
-		fi.Kind = FieldTextMarshaler
-		fi.TypeName = typeName
-		return fi, nil
+		return spkScalar{Codec: codecText, TypeName: typeName}, nil
 	}
 	if hasUnmarshalText && !hasMarshalText {
-		return fi, fmt.Errorf("type %s has UnmarshalText but no MarshalText — Encode() requires both", typeName)
+		return nil, fmt.Errorf("type %s has UnmarshalText but no MarshalText — Encode() requires both", typeName)
 	}
 	if hasMarshalText && !hasUnmarshalText {
-		return fi, fmt.Errorf("type %s has MarshalText but no UnmarshalText — Decode() requires both", typeName)
+		return nil, fmt.Errorf("type %s has MarshalText but no UnmarshalText — Decode() requires both", typeName)
 	}
 
-	fi.Kind = FieldStruct
-	fi.TypeName = typeName
 	innerInfo, err := resolveStructByName(pkg, typeName)
 	if err != nil {
-		return fi, err
+		return nil, err
 	}
-	fi.InnerInfo = &innerInfo
-	return fi, nil
+	return spkStruct{TypeName: typeName, InnerInfo: &innerInfo}, nil
 }
 
 func resolveEmbeddedFields(pkg *packages.Package, expr ast.Expr) ([]FieldInfo, error) {
@@ -516,145 +513,120 @@ func extractTomlTagFromString(tag string) (string, tagOpts) {
 	return name, opts
 }
 
-func classifyNamedMapType(fi FieldInfo, obj *types.TypeName, mapType *types.Map) (FieldInfo, error) {
+// classifyNamedMapTypeExpr classifies a named map type (type Foo map[string]V)
+// used as a direct field. The named-wrapper qualified name + import ride on the
+// Map node; the value determines the element: string → nested-map scalar leaf,
+// struct → delegated. Mirrors the historical FieldMapStringString /
+// FieldMapStringDelegatedStruct assignments.
+func classifyNamedMapTypeExpr(obj *types.TypeName, mapType *types.Map) (spkType, error) {
 	key, ok := mapType.Key().(*types.Basic)
 	if !ok || key.Kind() != types.String {
-		return fi, fmt.Errorf("unsupported map key type in %s.%s (only string keys supported)", obj.Pkg().Name(), obj.Name())
+		return nil, fmt.Errorf("unsupported map key type in %s.%s (only string keys supported)", obj.Pkg().Name(), obj.Name())
 	}
 
 	qualifiedName := obj.Pkg().Name() + "." + obj.Name()
-	fi.TypeName = qualifiedName
-	fi.ImportPath = obj.Pkg().Path()
+	importPath := obj.Pkg().Path()
 
 	valElem := mapType.Elem()
 	if basic, ok := valElem.(*types.Basic); ok && basic.Kind() == types.String {
-		fi.Kind = FieldMapStringString
-		return fi, nil
+		return spkMap{Elem: spkScalar{Codec: codecPrim}, TypeName: qualifiedName, ImportPath: importPath}, nil
 	}
 
 	valNamed, ok := valElem.(*types.Named)
 	if !ok {
-		return fi, fmt.Errorf("unsupported cross-package map alias %s.%s (value type %s)", obj.Pkg().Name(), obj.Name(), valElem)
+		return nil, fmt.Errorf("unsupported cross-package map alias %s.%s (value type %s)", obj.Pkg().Name(), obj.Name(), valElem)
 	}
 
 	if _, ok := valNamed.Underlying().(*types.Struct); ok {
-		fi.Kind = FieldMapStringDelegatedStruct
-		fi.ElemType = valNamed.Obj().Pkg().Name() + "." + valNamed.Obj().Name()
-		return fi, nil
+		valQual := valNamed.Obj().Pkg().Name() + "." + valNamed.Obj().Name()
+		return spkMap{Elem: spkDelegated{TypeName: valQual}, TypeName: qualifiedName, ImportPath: importPath}, nil
 	}
 
-	return fi, fmt.Errorf("unsupported cross-package map value type in %s.%s (value type %s)", obj.Pkg().Name(), obj.Name(), valElem)
+	return nil, fmt.Errorf("unsupported cross-package map value type in %s.%s (value type %s)", obj.Pkg().Name(), obj.Name(), valElem)
 }
 
+// classifyType classifies a struct field's type into the legacy FieldInfo the
+// folds consume. It is a thin wrapper over the single go/types classifier
+// classifyTypeExpr (which produces the compositional TypeExpr) plus
+// adaptToFieldInfo (which flattens it back). GoName/TomlKey are field metadata,
+// not type-derived, so they are stamped on here.
 func classifyType(pkg *packages.Package, goName, tomlKey string, typ types.Type) (FieldInfo, error) {
-	fi := FieldInfo{GoName: goName, TomlKey: tomlKey}
+	te, err := classifyTypeExpr(pkg, typ)
+	if err != nil {
+		return FieldInfo{GoName: goName, TomlKey: tomlKey}, err
+	}
+	return adaptToFieldInfo(te, goName, tomlKey), nil
+}
 
+// classifyTypeExpr is the single field-type classifier (#85 Phase 2b). It maps a
+// go/types type to its compositional TypeExpr, recursing on element/value types,
+// with the payload (names, imports, inner StructInfo, codec) carried on the node
+// that owns it. Every classification decision — same-pkg vs cross-pkg,
+// inline-via-unexported-alias vs delegate, the #81 facade-vs-defining import
+// rule — matches the historical flat classifier; the equivalence harness
+// (TestAnalyze*) is the oracle. It deliberately keeps the historical accept/
+// reject set (e.g. bare map[string]map[string]string still errors): broadening
+// it is a separate follow-up that also adds the matching fold/adapter arm.
+func classifyTypeExpr(pkg *packages.Package, typ types.Type) (spkType, error) {
 	switch t := typ.(type) {
 	case *types.Basic:
 		if primitiveTypes[t.Name()] {
-			fi.Kind = FieldPrimitive
-			fi.TypeName = t.Name()
-			return fi, nil
+			return spkScalar{Codec: codecPrim, TypeName: t.Name()}, nil
 		}
-		return fi, fmt.Errorf("unsupported basic type %s", t.Name())
+		return nil, fmt.Errorf("unsupported basic type %s", t.Name())
 
 	case *types.Named:
 		obj := t.Obj()
-
-		// Same package — delegate to AST-based classification
 		if obj.Pkg() == pkg.Types {
-			return classifyNamedType(pkg, fi, obj.Name())
+			return classifyNamedTypeExpr(pkg, obj.Name())
 		}
-
-		// Cross-package: check marshal interfaces
+		qual := obj.Pkg().Name() + "." + obj.Name()
 		if hasMethod(obj, "UnmarshalTOML") && hasMarshalTOML(obj) {
-			fi.Kind = FieldCustom
-			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
-			return fi, nil
+			return spkScalar{Codec: codecCustom, TypeName: qual}, nil
 		}
-
 		if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
-			fi.Kind = FieldTextMarshaler
-			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
-			return fi, nil
+			return spkScalar{Codec: codecText, TypeName: qual}, nil
 		}
-
-		// Check underlying type for primitive wrapper
-		if basic, ok := t.Underlying().(*types.Basic); ok {
-			if primitiveTypes[basic.Name()] {
-				fi.Kind = FieldPrimitive
-				fi.TypeName = basic.Name()
-				fi.ElemType = obj.Pkg().Name() + "." + obj.Name()
-				fi.ImportPath = obj.Pkg().Path()
-				return fi, nil
-			}
+		if basic, ok := t.Underlying().(*types.Basic); ok && primitiveTypes[basic.Name()] {
+			return spkScalar{Codec: codecPrim, TypeName: basic.Name(), ElemType: qual, ImportPath: obj.Pkg().Path()}, nil
 		}
-
-		// Check if underlying is struct — delegate to cross-package DecodeInto/EncodeFrom
 		if structType, ok := t.Underlying().(*types.Struct); ok {
-			fi.Kind = FieldDelegatedStruct
-			fi.TypeName = obj.Pkg().Name() + "." + obj.Name()
-			fi.ImportPath = obj.Pkg().Path()
 			innerInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
 			if err != nil {
-				return fi, err
+				return nil, err
 			}
-			fi.InnerInfo = &innerInfo
-			return fi, nil
+			return spkDelegated{TypeName: qual, ImportPath: obj.Pkg().Path(), InnerInfo: &innerInfo}, nil
 		}
-
-		// Check if underlying is a slice (e.g., type IntSlice []int)
 		if sliceType, ok := t.Underlying().(*types.Slice); ok {
-			qualifiedName := obj.Pkg().Name() + "." + obj.Name()
 			elem := sliceType.Elem()
 			if basic, ok := elem.(*types.Basic); ok && primitiveTypes[basic.Name()] {
-				fi.Kind = FieldSlicePrimitive
-				fi.ElemType = basic.Name()
-				fi.TypeName = qualifiedName
-				fi.ImportPath = obj.Pkg().Path()
-				return fi, nil
+				return spkSlice{Elem: spkScalar{Codec: codecPrim, TypeName: basic.Name()}, TypeName: qual, ImportPath: obj.Pkg().Path()}, nil
 			}
-			return fi, fmt.Errorf("unsupported cross-package slice alias %s (element type %s)", qualifiedName, elem)
+			return nil, fmt.Errorf("unsupported cross-package slice alias %s (element type %s)", qual, elem)
 		}
-
 		if mapType, ok := t.Underlying().(*types.Map); ok {
-			return classifyNamedMapType(fi, obj, mapType)
+			return classifyNamedMapTypeExpr(obj, mapType)
 		}
-
-		return fi, fmt.Errorf("unsupported cross-package type %s.%s", obj.Pkg().Name(), obj.Name())
+		return nil, fmt.Errorf("unsupported cross-package type %s.%s", obj.Pkg().Name(), obj.Name())
 
 	case *types.Pointer:
 		elem := t.Elem()
-		if basic, ok := elem.(*types.Basic); ok {
-			if primitiveTypes[basic.Name()] {
-				fi.Kind = FieldPointerPrimitive
-				fi.TypeName = basic.Name()
-				return fi, nil
-			}
+		if basic, ok := elem.(*types.Basic); ok && primitiveTypes[basic.Name()] {
+			return spkPtr{Elem: spkScalar{Codec: codecPrim, TypeName: basic.Name()}}, nil
 		}
 		if named, ok := elem.(*types.Named); ok {
-			innerFi, err := classifyType(pkg, goName, tomlKey, named)
+			inner, err := classifyTypeExpr(pkg, named)
 			if err != nil {
-				return fi, err
+				return nil, err
 			}
-			// Upgrade to pointer variant where applicable
-			if innerFi.Kind == FieldStruct {
-				innerFi.Kind = FieldPointerStruct
-			} else if innerFi.Kind == FieldDelegatedStruct {
-				innerFi.Kind = FieldPointerDelegatedStruct
-			}
-			return innerFi, nil
+			return spkPtr{Elem: inner}, nil
 		}
-		return fi, fmt.Errorf("unsupported pointer type")
+		return nil, fmt.Errorf("unsupported pointer type")
 
 	case *types.Slice:
 		elem := t.Elem()
-		if basic, ok := elem.(*types.Basic); ok {
-			if primitiveTypes[basic.Name()] {
-				fi.Kind = FieldSlicePrimitive
-				fi.ElemType = basic.Name()
-				return fi, nil
-			}
+		if basic, ok := elem.(*types.Basic); ok && primitiveTypes[basic.Name()] {
+			return spkSlice{Elem: spkScalar{Codec: codecPrim, TypeName: basic.Name()}}, nil
 		}
 		if named, ok := elem.(*types.Named); ok {
 			obj := named.Obj()
@@ -662,53 +634,39 @@ func classifyType(pkg *packages.Package, goName, tomlKey string, typ types.Type)
 			if obj.Pkg() == pkg.Types {
 				qualifiedName = obj.Name()
 			}
-
 			if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
-				fi.Kind = FieldSliceTextMarshaler
-				fi.TypeName = qualifiedName
-				fi.ElemType = qualifiedName
+				sc := spkScalar{Codec: codecText, TypeName: qualifiedName}
 				if obj.Pkg() != pkg.Types {
-					fi.ImportPath = obj.Pkg().Path()
+					sc.ImportPath = obj.Pkg().Path()
 				}
-				return fi, nil
+				return spkSlice{Elem: sc}, nil
 			}
-
 			if _, ok := named.Underlying().(*types.Struct); ok {
 				if obj.Pkg() == pkg.Types {
-					fi.Kind = FieldSliceStruct
-					fi.TypeName = qualifiedName
 					innerInfo, err := resolveStructByName(pkg, obj.Name())
 					if err != nil {
-						return fi, err
+						return nil, err
 					}
-					fi.InnerInfo = &innerInfo
-				} else {
-					fi.Kind = FieldSliceDelegatedStruct
-					fi.TypeName = qualifiedName
-					fi.ImportPath = obj.Pkg().Path()
+					return spkSlice{Elem: spkStruct{TypeName: qualifiedName, InnerInfo: &innerInfo}}, nil
 				}
-				return fi, nil
+				return spkSlice{Elem: spkDelegated{TypeName: qualifiedName, ImportPath: obj.Pkg().Path()}}, nil
 			}
 		}
 		if ptr, ok := elem.(*types.Pointer); ok {
 			pelem := ptr.Elem()
 			if basic, ok := pelem.(*types.Basic); ok && primitiveTypes[basic.Name()] {
-				fi.Kind = FieldSlicePrimitive
-				fi.ElemType = basic.Name()
-				fi.SlicePointer = true
-				return fi, nil
+				return spkSlice{Elem: spkPtr{Elem: spkScalar{Codec: codecPrim, TypeName: basic.Name()}}}, nil
 			}
 			// []*pkg.AliasType: unwrap the alias to its underlying named struct,
 			// naming via the alias (mirrors the []pkg.AliasType case below).
 			if alias, ok := pelem.(*types.Alias); ok {
 				if named, ok := types.Unalias(alias).(*types.Named); ok {
 					if structType, ok := named.Underlying().(*types.Struct); ok {
-						fi.TypeName = aliasQualifiedName(pkg, alias)
-						fi.SlicePointer = true
-						if err := classifySliceAliasStruct(pkg, &fi, alias, named, structType); err != nil {
-							return fi, err
+						inner, err := classifyAliasStruct(pkg, alias, named, structType)
+						if err != nil {
+							return nil, err
 						}
-						return fi, nil
+						return spkSlice{Elem: spkPtr{Elem: inner}}, nil
 					}
 				}
 			}
@@ -718,22 +676,15 @@ func classifyType(pkg *packages.Package, goName, tomlKey string, typ types.Type)
 				if obj.Pkg() == pkg.Types {
 					qualifiedName = obj.Name()
 				}
-
 				if _, ok := named.Underlying().(*types.Struct); ok {
-					fi.TypeName = qualifiedName
-					fi.SlicePointer = true
 					if obj.Pkg() == pkg.Types {
-						fi.Kind = FieldSliceStruct
 						innerInfo, err := resolveStructByName(pkg, obj.Name())
 						if err != nil {
-							return fi, err
+							return nil, err
 						}
-						fi.InnerInfo = &innerInfo
-					} else {
-						fi.Kind = FieldSliceDelegatedStruct
-						fi.ImportPath = obj.Pkg().Path()
+						return spkSlice{Elem: spkPtr{Elem: spkStruct{TypeName: qualifiedName, InnerInfo: &innerInfo}}}, nil
 					}
-					return fi, nil
+					return spkSlice{Elem: spkPtr{Elem: spkDelegated{TypeName: qualifiedName, ImportPath: obj.Pkg().Path()}}}, nil
 				}
 			}
 		}
@@ -742,42 +693,35 @@ func classifyType(pkg *packages.Package, goName, tomlKey string, typ types.Type)
 			underlying := types.Unalias(alias)
 			named, ok := underlying.(*types.Named)
 			if !ok {
-				return classifyType(pkg, goName, tomlKey, types.NewSlice(underlying))
+				return classifyTypeExpr(pkg, types.NewSlice(underlying))
 			}
 			obj := named.Obj()
-			// Use the alias name (exported) rather than the underlying name (possibly unexported)
-			qualifiedName := alias.Obj().Pkg().Name() + "." + alias.Obj().Name()
-			if alias.Obj().Pkg() == pkg.Types {
-				qualifiedName = alias.Obj().Name()
-			}
+			qualifiedName := aliasQualifiedName(pkg, alias)
 			if hasMethod(obj, "MarshalText") && hasMethod(obj, "UnmarshalText") {
-				fi.Kind = FieldSliceTextMarshaler
-				fi.TypeName = qualifiedName
-				fi.ElemType = qualifiedName
+				sc := spkScalar{Codec: codecText, TypeName: qualifiedName}
 				if alias.Obj().Pkg() != pkg.Types {
-					fi.ImportPath = alias.Obj().Pkg().Path()
+					sc.ImportPath = alias.Obj().Pkg().Path()
 				}
-				return fi, nil
+				return spkSlice{Elem: sc}, nil
 			}
 			if structType, ok := named.Underlying().(*types.Struct); ok {
-				fi.TypeName = qualifiedName
-				if err := classifySliceAliasStruct(pkg, &fi, alias, named, structType); err != nil {
-					return fi, err
+				inner, err := classifyAliasStruct(pkg, alias, named, structType)
+				if err != nil {
+					return nil, err
 				}
-				return fi, nil
+				return spkSlice{Elem: inner}, nil
 			}
-			return classifyType(pkg, goName, tomlKey, types.NewSlice(underlying))
+			return classifyTypeExpr(pkg, types.NewSlice(underlying))
 		}
-		return fi, fmt.Errorf("unsupported slice element type")
+		return nil, fmt.Errorf("unsupported slice element type")
 
 	case *types.Map:
 		key, ok := t.Key().(*types.Basic)
 		if !ok || key.Kind() != types.String {
-			return fi, fmt.Errorf("unsupported map key type (only string keys supported)")
+			return nil, fmt.Errorf("unsupported map key type (only string keys supported)")
 		}
 		if val, ok := t.Elem().(*types.Basic); ok && val.Kind() == types.String {
-			fi.Kind = FieldMapStringString
-			return fi, nil
+			return spkMap{Elem: spkScalar{Codec: codecPrim}}, nil
 		}
 		// map[string]*Struct: pointer values are supported for same-package
 		// structs (FieldMapStringStruct honors SlicePointer); cross-package
@@ -786,60 +730,48 @@ func classifyType(pkg *packages.Package, goName, tomlKey string, typ types.Type)
 		if ptr, ok := t.Elem().(*types.Pointer); ok {
 			named, ok := ptr.Elem().(*types.Named)
 			if !ok {
-				return fi, fmt.Errorf("unsupported map value type")
+				return nil, fmt.Errorf("unsupported map value type")
 			}
 			if _, ok := named.Underlying().(*types.Struct); !ok {
-				return fi, fmt.Errorf("unsupported map value type")
+				return nil, fmt.Errorf("unsupported map value type")
 			}
 			obj := named.Obj()
 			if obj.Pkg() != pkg.Types {
-				return fi, fmt.Errorf("map[string]*%s.%s: pointer values are only supported for same-package structs", obj.Pkg().Name(), obj.Name())
+				return nil, fmt.Errorf("map[string]*%s.%s: pointer values are only supported for same-package structs", obj.Pkg().Name(), obj.Name())
 			}
-			fi.Kind = FieldMapStringStruct
-			fi.TypeName = obj.Name()
-			fi.SlicePointer = true
 			innerInfo, err := resolveStructByName(pkg, obj.Name())
 			if err != nil {
-				return fi, err
+				return nil, err
 			}
-			fi.InnerInfo = &innerInfo
-			return fi, nil
+			return spkMap{Elem: spkPtr{Elem: spkStruct{TypeName: obj.Name(), InnerInfo: &innerInfo}}}, nil
 		}
 		if named, ok := t.Elem().(*types.Named); ok {
 			if mapType, ok := named.Underlying().(*types.Map); ok && isMapStringString(mapType) {
 				obj := named.Obj()
-				qualifiedName := obj.Pkg().Name() + "." + obj.Name()
+				m := spkMap{Elem: spkMap{Elem: spkScalar{Codec: codecPrim}}}
 				if obj.Pkg() == pkg.Types {
-					qualifiedName = obj.Name()
+					m.TypeName = obj.Name()
+				} else {
+					m.TypeName = obj.Pkg().Name() + "." + obj.Name()
+					m.ImportPath = obj.Pkg().Path()
 				}
-				fi.Kind = FieldMapStringMapStringString
-				fi.TypeName = qualifiedName
-				if obj.Pkg() != pkg.Types {
-					fi.ImportPath = obj.Pkg().Path()
-				}
-				return fi, nil
+				return m, nil
 			}
 		}
 		if _, ok := t.Elem().Underlying().(*types.Interface); ok {
-			return fi, fmt.Errorf("map value type is an interface, which cannot be statically decoded; use `toml:\"-\"` to skip this field, or define a concrete struct that mirrors the TOML shape and convert to the interface after decoding")
+			return nil, fmt.Errorf("map value type is an interface, which cannot be statically decoded; use `toml:\"-\"` to skip this field, or define a concrete struct that mirrors the TOML shape and convert to the interface after decoding")
 		}
 		if named, ok := t.Elem().(*types.Named); ok {
 			if _, ok := named.Underlying().(*types.Struct); ok {
 				obj := named.Obj()
 				if obj.Pkg() == pkg.Types {
-					fi.Kind = FieldMapStringStruct
-					fi.TypeName = obj.Name()
 					innerInfo, err := resolveStructByName(pkg, obj.Name())
 					if err != nil {
-						return fi, err
+						return nil, err
 					}
-					fi.InnerInfo = &innerInfo
-				} else {
-					fi.Kind = FieldMapStringDelegatedStruct
-					fi.ElemType = obj.Pkg().Name() + "." + obj.Name()
-					fi.ImportPath = obj.Pkg().Path()
+					return spkMap{Elem: spkStruct{TypeName: obj.Name(), InnerInfo: &innerInfo}}, nil
 				}
-				return fi, nil
+				return spkMap{Elem: spkDelegated{TypeName: obj.Pkg().Name() + "." + obj.Name(), ImportPath: obj.Pkg().Path()}}, nil
 			}
 		}
 		// map[string]pkg.AliasType: an alias value re-exporting a named map
@@ -851,62 +783,227 @@ func classifyType(pkg *packages.Package, goName, tomlKey string, typ types.Type)
 		if alias, ok := t.Elem().(*types.Alias); ok {
 			if named, ok := types.Unalias(alias).(*types.Named); ok {
 				if mapType, ok := named.Underlying().(*types.Map); ok && isMapStringString(mapType) {
-					fi.Kind = FieldMapStringMapStringString
-					fi.TypeName = aliasQualifiedName(pkg, alias)
+					m := spkMap{Elem: spkMap{Elem: spkScalar{Codec: codecPrim}}, TypeName: aliasQualifiedName(pkg, alias)}
 					if alias.Obj().Pkg() != pkg.Types {
-						fi.ImportPath = alias.Obj().Pkg().Path()
+						m.ImportPath = alias.Obj().Pkg().Path()
 					}
-					return fi, nil
+					return m, nil
 				}
 				if structType, ok := named.Underlying().(*types.Struct); ok {
-					obj := named.Obj()
-					qualifiedName := aliasQualifiedName(pkg, alias)
-					fi.TypeName = qualifiedName
-					if obj.Exported() {
-						fi.Kind = FieldMapStringDelegatedStruct
-						fi.ElemType = qualifiedName
-						fi.ImportPath = obj.Pkg().Path()
-					} else {
-						fi.Kind = FieldMapStringStruct
-						fi.ImportPath = alias.Obj().Pkg().Path()
-						resolvedInfo, err := resolveStructFromTypes(pkg, obj.Name(), structType)
-						if err != nil {
-							return fi, err
-						}
-						fi.InnerInfo = &resolvedInfo
+					inner, err := classifyAliasStruct(pkg, alias, named, structType)
+					if err != nil {
+						return nil, err
 					}
-					return fi, nil
+					m := spkMap{Elem: inner}
+					// The historical map-alias-value classifier set FieldInfo.TypeName
+					// to the alias's qualified name for the delegated case too (it is
+					// unused by the fold but asserted for parity); surface it via the
+					// Map node, which adaptToFieldInfo lifts to TypeName.
+					if _, isDelegated := inner.(spkDelegated); isDelegated {
+						m.TypeName = aliasQualifiedName(pkg, alias)
+					}
+					return m, nil
 				}
 			}
 		}
-		return fi, fmt.Errorf("unsupported map value type")
+		return nil, fmt.Errorf("unsupported map value type")
 
 	case *types.Alias:
-		fi, err := classifyType(pkg, goName, tomlKey, types.Unalias(t))
+		inner, err := classifyTypeExpr(pkg, types.Unalias(t))
 		if err != nil {
-			return fi, err
+			return nil, err
 		}
-		// When an alias re-exports a type from another package (e.g. a public
-		// facade over an internal/ package), the generated code must import the
-		// alias's declaring package — the package the source file references —
-		// not the underlying type's defining package. Resolving through the
-		// alias to the underlying *types.Named otherwise emits an import of the
-		// (often internal/) definition site, which Go rejects. See #81. jenType
-		// re-qualifies purely from ImportPath, so only the path needs fixing.
-		//
-		// Delegated kinds are excluded: delegation emits calls to the target's
-		// generated Decode<T>Into/EncodeFrom, which live in the type's *defining*
-		// package, not the alias's. Rewriting their import to the facade would
-		// reference methods that don't exist there. checkDelegationImportable
-		// instead rejects the unresolvable internal/ case outright. See #81.
-		if aliasObj := t.Obj(); fi.ImportPath != "" && aliasObj.Pkg() != nil && aliasObj.Pkg() != pkg.Types && !isDelegatedKind(fi.Kind) {
-			fi.ImportPath = aliasObj.Pkg().Path()
+		// #81: a re-export alias's import must point at the alias's declaring
+		// (facade) package — the one the source references — not the underlying
+		// definition site (often internal/), which Go rejects. Delegated kinds
+		// are excluded: delegation emits calls to the target's generated
+		// Decode<T>Into/EncodeFrom, which live in the *defining* package;
+		// checkDelegationImportable rejects the unreachable internal/ case.
+		if aliasObj := t.Obj(); aliasObj.Pkg() != nil && aliasObj.Pkg() != pkg.Types {
+			inner = overrideAliasImport(inner, aliasObj.Pkg().Path())
 		}
-		return fi, nil
+		return inner, nil
 
 	default:
-		return fi, fmt.Errorf("unsupported type %T", typ)
+		return nil, fmt.Errorf("unsupported type %T", typ)
 	}
+}
+
+// classifyAliasStruct classifies a struct reached through a type alias (a slice
+// or map element `[]Alias`/`[]*Alias`/`map[string]Alias`). An exported underlying
+// delegates to its defining package — where the generated Decode/Encode methods
+// live, which checkDelegationImportable then rejects if that package is an
+// unreachable internal/ one. An unexported underlying is inlined under the
+// alias's exported name, importing the alias's (facade) package. See #81.
+func classifyAliasStruct(pkg *packages.Package, alias *types.Alias, named *types.Named, structType *types.Struct) (spkType, error) {
+	qual := aliasQualifiedName(pkg, alias)
+	if named.Obj().Exported() {
+		return spkDelegated{TypeName: qual, ImportPath: named.Obj().Pkg().Path()}, nil
+	}
+	innerInfo, err := resolveStructFromTypes(pkg, named.Obj().Name(), structType)
+	if err != nil {
+		return nil, err
+	}
+	return spkStruct{TypeName: qual, ImportPath: alias.Obj().Pkg().Path(), InnerInfo: &innerInfo}, nil
+}
+
+// overrideAliasImport rewrites the top node's import to the facade path for the
+// #81 alias rule. Delegated nodes are left untouched (they need the defining
+// package); a node with no import is unaffected.
+func overrideAliasImport(te spkType, facadePath string) spkType {
+	switch t := te.(type) {
+	case spkScalar:
+		if t.ImportPath != "" {
+			t.ImportPath = facadePath
+		}
+		return t
+	case spkSlice:
+		if t.ImportPath != "" {
+			t.ImportPath = facadePath
+		}
+		return t
+	case spkMap:
+		if t.ImportPath != "" {
+			t.ImportPath = facadePath
+		}
+		return t
+	case spkStruct:
+		if t.ImportPath != "" {
+			t.ImportPath = facadePath
+		}
+		return t
+	default:
+		return te
+	}
+}
+
+// adaptToFieldInfo flattens the enriched TypeExpr produced by classifyTypeExpr
+// back to the legacy FieldInfo the folds still consume. It is the inverse of the
+// historical classifyType field assignments and the equivalence harness's oracle
+// (the ~30 TestAnalyze* cases assert the result). One arm per FieldKind shape.
+func adaptToFieldInfo(te spkType, goName, tomlKey string) FieldInfo {
+	fi := FieldInfo{GoName: goName, TomlKey: tomlKey}
+	switch t := te.(type) {
+	case spkScalar:
+		switch t.Codec {
+		case codecCustom:
+			fi.Kind = FieldCustom
+			fi.TypeName = t.TypeName
+		case codecText:
+			fi.Kind = FieldTextMarshaler
+			fi.TypeName = t.TypeName
+		default: // codecPrim
+			fi.Kind = FieldPrimitive
+			fi.TypeName = t.TypeName
+			fi.ElemType = t.ElemType
+			fi.ImportPath = t.ImportPath
+		}
+
+	case spkStruct:
+		fi.Kind = FieldStruct
+		fi.TypeName = t.TypeName
+		fi.ImportPath = t.ImportPath
+		fi.InnerInfo = t.InnerInfo
+
+	case spkDelegated:
+		fi.Kind = FieldDelegatedStruct
+		fi.TypeName = t.TypeName
+		fi.ImportPath = t.ImportPath
+		fi.InnerInfo = t.InnerInfo
+
+	case spkPtr:
+		inner := adaptToFieldInfo(t.Elem, goName, tomlKey)
+		switch inner.Kind {
+		case FieldPrimitive:
+			// Only a bare *basic becomes FieldPointerPrimitive; a named prim
+			// wrapper under a pointer historically drops the pointer (as do
+			// *TextMarshaler/*Custom/*alias), so leave inner unchanged there.
+			if inner.ElemType == "" && inner.ImportPath == "" {
+				inner.Kind = FieldPointerPrimitive
+			}
+		case FieldStruct:
+			inner.Kind = FieldPointerStruct
+		case FieldDelegatedStruct:
+			inner.Kind = FieldPointerDelegatedStruct
+		}
+		return inner
+
+	case spkSlice:
+		switch elem := t.Elem.(type) {
+		case spkScalar:
+			if elem.Codec == codecText {
+				fi.Kind = FieldSliceTextMarshaler
+				fi.TypeName = elem.TypeName
+				fi.ElemType = elem.TypeName
+				fi.ImportPath = elem.ImportPath
+			} else {
+				fi.Kind = FieldSlicePrimitive
+				fi.ElemType = elem.TypeName
+				fi.TypeName = t.TypeName // named slice-alias wrapper
+				fi.ImportPath = t.ImportPath
+			}
+		case spkStruct:
+			fi.Kind = FieldSliceStruct
+			fi.TypeName = elem.TypeName
+			fi.ImportPath = elem.ImportPath
+			fi.InnerInfo = elem.InnerInfo
+		case spkDelegated:
+			fi.Kind = FieldSliceDelegatedStruct
+			fi.TypeName = elem.TypeName
+			fi.ImportPath = elem.ImportPath
+		case spkPtr:
+			fi.SlicePointer = true
+			switch pe := elem.Elem.(type) {
+			case spkScalar:
+				fi.Kind = FieldSlicePrimitive
+				fi.ElemType = pe.TypeName
+			case spkStruct:
+				fi.Kind = FieldSliceStruct
+				fi.TypeName = pe.TypeName
+				fi.ImportPath = pe.ImportPath
+				fi.InnerInfo = pe.InnerInfo
+			case spkDelegated:
+				fi.Kind = FieldSliceDelegatedStruct
+				fi.TypeName = pe.TypeName
+				fi.ImportPath = pe.ImportPath
+			}
+		}
+
+	case spkMap:
+		switch elem := t.Elem.(type) {
+		case spkScalar:
+			fi.Kind = FieldMapStringString
+			fi.TypeName = t.TypeName
+			fi.ImportPath = t.ImportPath
+		case spkMap:
+			fi.Kind = FieldMapStringMapStringString
+			fi.TypeName = t.TypeName
+			fi.ImportPath = t.ImportPath
+		case spkStruct:
+			fi.Kind = FieldMapStringStruct
+			fi.TypeName = elem.TypeName
+			fi.ImportPath = elem.ImportPath
+			fi.InnerInfo = elem.InnerInfo
+		case spkDelegated:
+			fi.Kind = FieldMapStringDelegatedStruct
+			fi.ElemType = elem.TypeName
+			fi.TypeName = t.TypeName
+			if t.ImportPath != "" {
+				fi.ImportPath = t.ImportPath
+			} else {
+				fi.ImportPath = elem.ImportPath
+			}
+		case spkPtr:
+			fi.SlicePointer = true
+			if ps, ok := elem.Elem.(spkStruct); ok {
+				fi.Kind = FieldMapStringStruct
+				fi.TypeName = ps.TypeName
+				fi.ImportPath = ps.ImportPath
+				fi.InnerInfo = ps.InnerInfo
+			}
+		}
+	}
+	return fi
 }
 
 func isMapStringString(m *types.Map) bool {
@@ -942,29 +1039,6 @@ func aliasQualifiedName(pkg *packages.Package, alias *types.Alias) string {
 		return obj.Name()
 	}
 	return obj.Pkg().Name() + "." + obj.Name()
-}
-
-// classifySliceAliasStruct fills fi for a slice element whose type is a struct
-// reached through a type alias (`[]Alias` or `[]*Alias`). An exported underlying
-// delegates to its defining package — where the generated Decode/Encode methods
-// live, which checkDelegationImportable then rejects if that package is an
-// unreachable internal/ one. An unexported underlying is inlined under the
-// alias's exported name, importing the alias's (facade) package. The caller sets
-// TypeName and SlicePointer. See #81.
-func classifySliceAliasStruct(pkg *packages.Package, fi *FieldInfo, alias *types.Alias, named *types.Named, structType *types.Struct) error {
-	if named.Obj().Exported() {
-		fi.Kind = FieldSliceDelegatedStruct
-		fi.ImportPath = named.Obj().Pkg().Path()
-		return nil
-	}
-	fi.Kind = FieldSliceStruct
-	fi.ImportPath = alias.Obj().Pkg().Path()
-	resolvedInfo, err := resolveStructFromTypes(pkg, named.Obj().Name(), structType)
-	if err != nil {
-		return err
-	}
-	fi.InnerInfo = &resolvedInfo
-	return nil
 }
 
 // internalImportAllowed implements Go's internal-package visibility rule: a
