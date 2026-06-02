@@ -227,6 +227,92 @@ func TestMM(t *testing.T) {
 	}
 }
 
+// Regression for #92: a generated decoder must reject a table header defined
+// more than once (per the TOML spec, "Defining a table more than once is
+// invalid"), rather than silently using the first. Covers both the non-pointer
+// (cdInTable) and pointer (cdNilGuard) struct-field decode paths.
+func TestIntegrationDuplicateTableErrors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/duptable",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package duptable
+
+//go:generate tommy generate
+type Config struct {
+	Server Server  `+"`"+`toml:"server"`+"`"+`
+	Ptr    *Server `+"`"+`toml:"ptr"`+"`"+`
+}
+
+type Server struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "dup_test.go", `package duptable
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestDuplicateTableRejected(t *testing.T) {
+	// A non-pointer struct field's table defined twice must error.
+	dup := "[server]\nhost = \"a\"\n\n[server]\nhost = \"b\"\n"
+	if _, err := DecodeConfig([]byte(dup)); err == nil {
+		t.Fatal("expected error for duplicate [server], got nil")
+	} else if !strings.Contains(err.Error(), "duplicate table") {
+		t.Fatalf("error should mention the duplicate table, got: %v", err)
+	}
+
+	// A pointer struct field's table defined twice must error too.
+	dupPtr := "[ptr]\nhost = \"a\"\n\n[ptr]\nhost = \"b\"\n"
+	if _, err := DecodeConfig([]byte(dupPtr)); err == nil {
+		t.Fatal("expected error for duplicate [ptr], got nil")
+	}
+
+	// False-positive guard: each table once decodes cleanly.
+	valid := "[server]\nhost = \"x\"\n\n[ptr]\nhost = \"y\"\n"
+	d, err := DecodeConfig([]byte(valid))
+	if err != nil {
+		t.Fatalf("valid doc errored: %v", err)
+	}
+	got := d.Data()
+	if got.Server.Host != "x" || got.Ptr == nil || got.Ptr.Host != "y" {
+		t.Fatalf("valid doc decoded wrong: %#v", *got)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-run", "TestDuplicateTableRejected", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", output)
+	}
+}
+
 // Regression for #90: a generated decoder must reject a repeated key within a
 // table (per the TOML spec, "Defining a key multiple times is invalid") rather
 // than silently keeping the last occurrence. The same key name in distinct

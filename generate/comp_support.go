@@ -18,11 +18,19 @@ const (
 )
 
 // jenCtx carries context for decode rendering within one function scope:
-// the consumed-key map, the error-return shape, and the document variable.
+// the consumed-key map, the error-return shape, the document variable, and
+// whether this is the top-level receiver Decode (vs a delegated DecodeXInto).
 type jenCtx struct {
 	consumed *jen.Statement
 	retErr   func(fmtStr string, args ...jen.Code) jen.Code
 	docVar   *jen.Statement
+	// topLevel is true for the receiver Decode, where compInTable/compNilGuard
+	// scan the document root as the actual table scope (so duplicate-table
+	// detection there is correct, #92). A delegated DecodeXInto runs in the free
+	// context with topLevel=false; its inner table-scan is document-root-relative
+	// by a shared dotted key and cannot yet distinguish array-table entries, so
+	// duplicate-table detection is suppressed there until that is fixed.
+	topLevel bool
 }
 
 func receiverJenCtx() jenCtx {
@@ -33,7 +41,8 @@ func receiverJenCtx() jenCtx {
 			args = append(args, a...)
 			return jen.Return(jen.Nil(), jen.Qual("fmt", "Errorf").Call(args...))
 		},
-		docVar: jen.Id("d").Dot("cstDoc"),
+		docVar:   jen.Id("d").Dot("cstDoc"),
+		topLevel: true,
 	}
 }
 

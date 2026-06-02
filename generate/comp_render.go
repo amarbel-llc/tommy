@@ -203,12 +203,31 @@ func compMapMap(ctx jenCtx, n cdMapMap) []jen.Code {
 	})}
 }
 
+// compDupTableGuard is the body of the root-scan match for a struct field's
+// table. In the top-level receiver Decode (where the document root is the actual
+// table scope) it records the first match and errors on a second occurrence — a
+// TOML duplicate-table violation (#92, "Defining a table more than once is
+// invalid"); tableMatch is exact-header, so a super-table completed by a
+// sub-table ([a] alongside [a.b]) is not a false positive. In a delegated
+// DecodeXInto (topLevel=false) the same root-scan cannot yet distinguish
+// array-table entries that share a dotted key, so it keeps the historical
+// first-match-wins behavior (the cross-entry mis-scoping is tracked separately).
+func compDupTableGuard(ctx jenCtx, ftv, bareKey string) []jen.Code {
+	if !ctx.topLevel {
+		return []jen.Code{jen.Id(ftv).Op("=").Id("_ch"), jen.Break()}
+	}
+	return []jen.Code{
+		jen.If(jen.Id(ftv).Op("!=").Nil()).Block(ctx.retErr("duplicate table %q", jen.Lit(bareKey))),
+		jen.Id(ftv).Op("=").Id("_ch"),
+	}
+}
+
 func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
 	ftv := "_ft" + n.TKey.VarSuffix()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
-			jen.If(tableMatch(n.TKey)).Block(jen.Id(ftv).Op("=").Id("_ch"), jen.Break()),
+			jen.If(tableMatch(n.TKey)).Block(compDupTableGuard(ctx, ftv, n.TKey.BareKey())...),
 		)
 		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 			ib.Add(ctx.mc(n.TKey))
@@ -231,7 +250,7 @@ func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
-			jen.If(tableMatch(n.TKey)).Block(jen.Id(ftv).Op("=").Id("_ch"), jen.Break()),
+			jen.If(tableMatch(n.TKey)).Block(compDupTableGuard(ctx, ftv, n.TKey.BareKey())...),
 		)
 		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 			g.Add(ctx.mc(n.TKey))
