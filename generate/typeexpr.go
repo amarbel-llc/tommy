@@ -1,13 +1,12 @@
 package generate
 
-// TypeExpr is the compositional algebra the code generator classifies struct
-// fields into: a small, fixed set of constructors that compose, replacing the
-// flat FieldKind enumeration at the IR-build boundary. Custom/TextMarshaler are
+// TypeExpr is the compositional algebra classifyTypeExpr (analyze.go) classifies
+// struct fields into: a small, fixed set of constructors that compose, and which
+// the folds (comp_build.go) recurse over directly. Custom/TextMarshaler are
 // Scalar *codecs* (not constructors); Delegated is an opaque cross-package leaf.
-//
-// Every FieldKind maps to a composition (see fieldType), e.g. []*Struct =
-// Slice(Ptr(Struct)) and map[string]NamedMap = Map(Map(Scalar)) — the
-// SlicePointer flag becomes a structural Ptr rather than a side-channel bool.
+// A pointer is a structural Ptr node (e.g. []*Struct = Slice(Ptr(Struct)),
+// map[string]NamedMap = Map(Map(Scalar))) rather than a side-channel bool. Each
+// constructor carries the type-derived payload at the node that owns it.
 
 type spkType interface{ isSpkType() }
 
@@ -61,48 +60,3 @@ func (spkSlice) isSpkType()     {}
 func (spkMap) isSpkType()       {}
 func (spkStruct) isSpkType()    {}
 func (spkDelegated) isSpkType() {}
-
-// fieldType maps a classified FieldInfo to its compositional TypeExpr.
-func fieldType(fi FieldInfo) spkType {
-	ptrIf := func(p bool, t spkType) spkType {
-		if p {
-			return spkPtr{Elem: t}
-		}
-		return t
-	}
-	switch fi.Kind {
-	case FieldPrimitive:
-		return spkScalar{Codec: codecPrim}
-	case FieldCustom:
-		return spkScalar{Codec: codecCustom}
-	case FieldTextMarshaler:
-		return spkScalar{Codec: codecText}
-	case FieldPointerPrimitive:
-		return spkPtr{Elem: spkScalar{Codec: codecPrim}}
-	case FieldSlicePrimitive:
-		return spkSlice{Elem: ptrIf(fi.SlicePointer, spkScalar{Codec: codecPrim})}
-	case FieldSliceTextMarshaler:
-		return spkSlice{Elem: spkScalar{Codec: codecText}}
-	case FieldStruct:
-		return spkStruct{}
-	case FieldPointerStruct:
-		return spkPtr{Elem: spkStruct{}}
-	case FieldSliceStruct:
-		return spkSlice{Elem: ptrIf(fi.SlicePointer, spkStruct{})}
-	case FieldMapStringString:
-		return spkMap{Elem: spkScalar{Codec: codecPrim}}
-	case FieldMapStringMapStringString:
-		return spkMap{Elem: spkMap{Elem: spkScalar{Codec: codecPrim}}}
-	case FieldMapStringStruct:
-		return spkMap{Elem: ptrIf(fi.SlicePointer, spkStruct{})}
-	case FieldDelegatedStruct:
-		return spkDelegated{}
-	case FieldPointerDelegatedStruct:
-		return spkPtr{Elem: spkDelegated{}}
-	case FieldSliceDelegatedStruct:
-		return spkSlice{Elem: ptrIf(fi.SlicePointer, spkDelegated{})}
-	case FieldMapStringDelegatedStruct:
-		return spkMap{Elem: spkDelegated{}}
-	}
-	panic("fieldType: unknown FieldKind")
-}

@@ -6,10 +6,11 @@ import (
 	"strings"
 )
 
-// Compositional folds (#84). foldCompDecode/foldCompEncode build the cd*/ce*
-// node trees from a StructInfo by recursing over fieldType (typeexpr.go) and
-// threading the TOML position (compPos) plus the emitHandles flag. These replace
-// the FieldKind switches in ir_build.go.
+// Compositional folds (#84, #85). foldCompDecode/foldCompEncode build the cd*/ce*
+// node trees from a StructInfo by recursing over each field's TypeExpr
+// (FieldInfo.Type), reading the leaf payload (names, imports, inner StructInfo)
+// directly off the spkType nodes, and threading the TOML position (compPos) plus
+// the emitHandles flag.
 //
 // compPos.tkey is the full prefixed/dotted key for this position; child()
 // extends it. Consumed marks and table-header matching both derive from it, so
@@ -74,11 +75,11 @@ func foldCompDecode(si *StructInfo, pos compPos, emitHandles bool) []cdNode {
 func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
 	c := pos.child(fi.TomlKey, fi.GoName)
 
-	switch te := fieldType(fi).(type) {
+	switch te := fi.Type.(type) {
 	case spkScalar:
 		switch te.Codec {
 		case codecPrim:
-			return cdLeaf{Kind: cdLeafPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName, ElemType: fi.ElemType, ImportPath: fi.ImportPath}
+			return cdLeaf{Kind: cdLeafPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: te.TypeName, ElemType: te.ElemType, ImportPath: te.ImportPath}
 		case codecCustom:
 			return cdLeaf{Kind: cdLeafCustom, Tgt: c.tgt, TKey: c.tkey}
 		case codecText:
@@ -86,36 +87,36 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
 		}
 
 	case spkPtr:
-		switch te.Elem.(type) {
+		switch inner := te.Elem.(type) {
 		case spkScalar:
-			return cdLeaf{Kind: cdLeafPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName, Pointer: true}
+			return cdLeaf{Kind: cdLeafPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: inner.TypeName, Pointer: true}
 		case spkStruct:
-			return compDecodeNilGuard(fi, c)
+			return compDecodeNilGuard(fi, inner, c)
 		case spkDelegated:
-			return cdDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, Ptr: true}
+			return cdDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: inner.ImportPath, TypeName: inner.TypeName, Ptr: true}
 		}
 
 	case spkSlice:
 		switch elem := te.Elem.(type) {
 		case spkScalar:
 			if elem.Codec == codecText {
-				return cdLeaf{Kind: cdLeafSliceText, Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName, ImportPath: fi.ImportPath}
+				return cdLeaf{Kind: cdLeafSliceText, Tgt: c.tgt, TKey: c.tkey, TypeName: elem.TypeName, ImportPath: elem.ImportPath}
 			}
-			return cdLeaf{Kind: cdLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: fi.ElemType, TypeName: fi.TypeName, ImportPath: fi.ImportPath, SlicePointer: fi.SlicePointer}
+			return cdLeaf{Kind: cdLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: elem.TypeName, TypeName: te.TypeName, ImportPath: te.ImportPath, SlicePointer: false}
 		case spkStruct:
-			return compDecodeArrayTable(fi, c, false, emitHandles)
+			return compDecodeArrayTable(fi, elem, c, false, emitHandles)
 		case spkDelegated:
-			return cdDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: false, IdxVar: arrayIdxVar(c.arrayDepth)}
+			return cdDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: elem.ImportPath, TypeName: elem.TypeName, SlicePtr: false, IdxVar: arrayIdxVar(c.arrayDepth)}
 		case spkPtr:
-			switch elem.Elem.(type) {
+			switch pe := elem.Elem.(type) {
 			case spkScalar:
-				// []*prim: FieldSlicePrimitive carries the pointer as fieldType's
-				// Slice(Ptr(Scalar)), so it surfaces here, not under spkScalar.
-				return cdLeaf{Kind: cdLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: fi.ElemType, TypeName: fi.TypeName, ImportPath: fi.ImportPath, SlicePointer: true}
+				// []*prim: the pointer is the structural Slice(Ptr(Scalar)), so the
+				// element type is on the inner scalar.
+				return cdLeaf{Kind: cdLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: pe.TypeName, TypeName: te.TypeName, ImportPath: te.ImportPath, SlicePointer: true}
 			case spkStruct:
-				return compDecodeArrayTable(fi, c, true, emitHandles)
+				return compDecodeArrayTable(fi, pe, c, true, emitHandles)
 			case spkDelegated:
-				return cdDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: true, IdxVar: arrayIdxVar(c.arrayDepth)}
+				return cdDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: pe.ImportPath, TypeName: pe.TypeName, SlicePtr: true, IdxVar: arrayIdxVar(c.arrayDepth)}
 			}
 		}
 
@@ -124,31 +125,55 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
 		case spkScalar:
 			return cdMapScalar{Tgt: c.tgt, TKey: c.tkey}
 		case spkMap:
-			return cdMapMap{Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName, ImportPath: fi.ImportPath}
+			return cdMapMap{Tgt: c.tgt, TKey: c.tkey, TypeName: te.TypeName, ImportPath: te.ImportPath}
 		case spkStruct:
-			return compDecodeMapStruct(fi, c, false)
+			return compDecodeMapStruct(fi, elem, c, false)
 		case spkDelegated:
-			return cdDelMap{Tgt: c.tgt, TKey: c.tkey, ImportPath: fi.ImportPath, ElemType: fi.ElemType}
+			importPath := te.ImportPath
+			if importPath == "" {
+				importPath = elem.ImportPath
+			}
+			return cdDelMap{Tgt: c.tgt, TKey: c.tkey, ImportPath: importPath, ElemType: elem.TypeName}
 		case spkPtr:
-			if _, ok := elem.Elem.(spkStruct); ok {
-				return compDecodeMapStruct(fi, c, true)
+			if ps, ok := elem.Elem.(spkStruct); ok {
+				return compDecodeMapStruct(fi, ps, c, true)
 			}
 		}
 
 	case spkStruct:
-		if fi.InnerInfo == nil {
+		if te.InnerInfo == nil {
 			return nil
 		}
-		return cdInTable{TKey: c.tkey, Children: foldCompDecode(fi.InnerInfo, c, false)}
+		return cdInTable{TKey: c.tkey, Children: foldCompDecode(te.InnerInfo, c, false)}
 
 	case spkDelegated:
-		return cdDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, Ptr: false}
+		return cdDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: te.ImportPath, TypeName: te.TypeName, Ptr: false}
 	}
 	return nil
 }
 
-func compDecodeNilGuard(fi FieldInfo, c compPos) cdNode {
-	if fi.InnerInfo == nil {
+// isSliceOfStruct reports whether te is a slice whose element (possibly behind a
+// pointer) is a struct or delegated struct — i.e. an array-table field. The #55
+// flat fallback keeps such fields' dotted keys (matched from the document root)
+// while bare-keying the rest.
+func isSliceOfStruct(te spkType) bool {
+	s, ok := te.(spkSlice)
+	if !ok {
+		return false
+	}
+	elem := s.Elem
+	if p, ok := elem.(spkPtr); ok {
+		elem = p.Elem
+	}
+	switch elem.(type) {
+	case spkStruct, spkDelegated:
+		return true
+	}
+	return false
+}
+
+func compDecodeNilGuard(fi FieldInfo, st spkStruct, c compPos) cdNode {
+	if st.InnerInfo == nil {
 		return nil
 	}
 	// A process-unique local (not key-derived): nested pointer-structs whose
@@ -157,14 +182,14 @@ func compDecodeNilGuard(fi FieldInfo, c compPos) cdNode {
 	localVar := c.nextLocal(toLowerFirst(fi.GoName) + "Val")
 	localTgt := LocalTarget(localVar)
 	// Children: all inner fields decoded inside the explicit [table].
-	children := foldCompDecode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
+	children := foldCompDecode(st.InnerInfo, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
 	// FlatChildren (#55): inner fields decoded at the parent container. Array-table
 	// sub-fields keep their dotted keys (matched from the document root); other
 	// fields use bare keys at the current container.
 	var flat []cdNode
-	for _, inner := range fi.InnerInfo.Fields {
+	for _, inner := range st.InnerInfo.Fields {
 		var n cdNode
-		if inner.Kind == FieldSliceStruct || inner.Kind == FieldSliceDelegatedStruct {
+		if isSliceOfStruct(inner.Type) {
 			n = foldCompDecodeField(inner, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
 		} else {
 			n = foldCompDecodeField(inner, compPos{tkey: TOMLKey{}, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
@@ -173,31 +198,31 @@ func compDecodeNilGuard(fi FieldInfo, c compPos) cdNode {
 			flat = append(flat, n)
 		}
 	}
-	return cdNilGuard{Tgt: c.tgt, TypeName: fi.TypeName, TKey: c.tkey, LocalVar: localVar, Children: children, FlatChildren: flat}
+	return cdNilGuard{Tgt: c.tgt, TypeName: st.TypeName, TKey: c.tkey, LocalVar: localVar, Children: children, FlatChildren: flat}
 }
 
-func compDecodeArrayTable(fi FieldInfo, c compPos, slicePtr, emitHandles bool) cdNode {
-	if fi.InnerInfo == nil {
+func compDecodeArrayTable(fi FieldInfo, st spkStruct, c compPos, slicePtr, emitHandles bool) cdNode {
+	if st.InnerInfo == nil {
 		return nil
 	}
-	crossPkg := strings.Contains(fi.TypeName, ".")
+	crossPkg := strings.Contains(st.TypeName, ".")
 	iv := arrayIdxVar(c.arrayDepth)
 	return cdArrayTable{
 		Tgt:          c.tgt,
-		TypeName:     fi.TypeName,
-		ImportPath:   fi.ImportPath,
+		TypeName:     st.TypeName,
+		ImportPath:   st.ImportPath,
 		TKey:         StaticKey(fi.TomlKey),
 		TDottedKey:   c.tkey,
 		SlicePtr:     slicePtr,
 		TrackHandles: emitHandles && !crossPkg,
 		IdxVar:       iv,
 		EntryVar:     arrayEntryVar(c.arrayDepth),
-		Children:     foldCompDecode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, seq: c.seq}, false),
+		Children:     foldCompDecode(st.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, seq: c.seq}, false),
 	}
 }
 
-func compDecodeMapStruct(fi FieldInfo, c compPos, slicePtr bool) cdNode {
-	if fi.InnerInfo == nil {
+func compDecodeMapStruct(fi FieldInfo, st spkStruct, c compPos, slicePtr bool) cdNode {
+	if st.InnerInfo == nil {
 		return nil
 	}
 	// Seed inner positions with the runtime map-key variable spliced into the
@@ -209,10 +234,10 @@ func compDecodeMapStruct(fi FieldInfo, c compPos, slicePtr bool) cdNode {
 	return cdMapStruct{
 		Tgt:      c.tgt,
 		TKey:     c.tkey,
-		TypeName: fi.TypeName,
+		TypeName: st.TypeName,
 		SlicePtr: slicePtr,
 		MapVar:   mapVar,
-		Children: foldCompDecode(fi.InnerInfo, entryPos, false),
+		Children: foldCompDecode(st.InnerInfo, entryPos, false),
 	}
 }
 
@@ -231,11 +256,11 @@ func foldCompEncode(si *StructInfo, pos compPos, emitHandles bool) []ceNode {
 func foldCompEncodeField(fi FieldInfo, pos compPos, emitHandles bool) ceNode {
 	c := pos.child(fi.TomlKey, fi.GoName)
 
-	switch te := fieldType(fi).(type) {
+	switch te := fi.Type.(type) {
 	case spkScalar:
 		switch te.Codec {
 		case codecPrim:
-			return ceLeaf{Kind: ceLeafPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName, ElemType: fi.ElemType, ImportPath: fi.ImportPath, OmitEmpty: fi.OmitEmpty, Multiline: fi.Multiline}
+			return ceLeaf{Kind: ceLeafPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: te.TypeName, ElemType: te.ElemType, ImportPath: te.ImportPath, OmitEmpty: fi.OmitEmpty, Multiline: fi.Multiline}
 		case codecCustom:
 			return ceLeaf{Kind: ceLeafCustom, Tgt: c.tgt, TKey: c.tkey}
 		case codecText:
@@ -243,38 +268,38 @@ func foldCompEncodeField(fi FieldInfo, pos compPos, emitHandles bool) ceNode {
 		}
 
 	case spkPtr:
-		switch te.Elem.(type) {
+		switch inner := te.Elem.(type) {
 		case spkScalar:
-			return ceLeaf{Kind: ceLeafPtrPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName}
+			return ceLeaf{Kind: ceLeafPtrPrim, Tgt: c.tgt, TKey: c.tkey, TypeName: inner.TypeName}
 		case spkStruct:
-			if fi.InnerInfo == nil {
+			if inner.InnerInfo == nil {
 				return nil
 			}
-			return ceNilGuard{Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName, Children: foldCompEncode(fi.InnerInfo, c, false)}
+			return ceNilGuard{Tgt: c.tgt, TKey: c.tkey, TypeName: inner.TypeName, Children: foldCompEncode(inner.InnerInfo, c, false)}
 		case spkDelegated:
-			return ceDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, Ptr: true}
+			return ceDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: inner.ImportPath, TypeName: inner.TypeName, Ptr: true}
 		}
 
 	case spkSlice:
 		switch elem := te.Elem.(type) {
 		case spkScalar:
 			if elem.Codec == codecText {
-				return ceLeaf{Kind: ceLeafSliceText, Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName, ImportPath: fi.ImportPath, OmitEmpty: fi.OmitEmpty}
+				return ceLeaf{Kind: ceLeafSliceText, Tgt: c.tgt, TKey: c.tkey, TypeName: elem.TypeName, ImportPath: elem.ImportPath, OmitEmpty: fi.OmitEmpty}
 			}
-			return ceLeaf{Kind: ceLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: fi.ElemType, TypeName: fi.TypeName, ImportPath: fi.ImportPath, SlicePointer: fi.SlicePointer, OmitEmpty: fi.OmitEmpty}
+			return ceLeaf{Kind: ceLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: elem.TypeName, TypeName: te.TypeName, ImportPath: te.ImportPath, SlicePointer: false, OmitEmpty: fi.OmitEmpty}
 		case spkStruct:
-			return compEncodeArrayTable(fi, c, false, emitHandles)
+			return compEncodeArrayTable(fi, elem, c, false, emitHandles)
 		case spkDelegated:
-			return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: false, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.scoped}
+			return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: elem.ImportPath, TypeName: elem.TypeName, SlicePtr: false, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.scoped}
 		case spkPtr:
-			switch elem.Elem.(type) {
+			switch pe := elem.Elem.(type) {
 			case spkScalar:
 				// []*prim — see the decode fold's matching note.
-				return ceLeaf{Kind: ceLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: fi.ElemType, TypeName: fi.TypeName, ImportPath: fi.ImportPath, SlicePointer: true, OmitEmpty: fi.OmitEmpty}
+				return ceLeaf{Kind: ceLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: pe.TypeName, TypeName: te.TypeName, ImportPath: te.ImportPath, SlicePointer: true, OmitEmpty: fi.OmitEmpty}
 			case spkStruct:
-				return compEncodeArrayTable(fi, c, true, emitHandles)
+				return compEncodeArrayTable(fi, pe, c, true, emitHandles)
 			case spkDelegated:
-				return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, SlicePtr: true, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.scoped}
+				return ceDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: pe.ImportPath, TypeName: pe.TypeName, SlicePtr: true, IdxVar: arrayIdxVar(c.arrayDepth), Scoped: c.scoped}
 			}
 		}
 
@@ -283,51 +308,55 @@ func foldCompEncodeField(fi FieldInfo, pos compPos, emitHandles bool) ceNode {
 		case spkScalar:
 			return ceMapScalar{Tgt: c.tgt, TKey: c.tkey}
 		case spkMap:
-			return ceMapMap{Tgt: c.tgt, TKey: c.tkey, TypeName: fi.TypeName}
+			return ceMapMap{Tgt: c.tgt, TKey: c.tkey, TypeName: te.TypeName}
 		case spkStruct:
-			return compEncodeMapStruct(fi, c, false)
+			return compEncodeMapStruct(fi, elem, c, false)
 		case spkDelegated:
-			return ceDelMap{Tgt: c.tgt, TKey: c.tkey, ImportPath: fi.ImportPath, ElemType: fi.ElemType}
+			importPath := te.ImportPath
+			if importPath == "" {
+				importPath = elem.ImportPath
+			}
+			return ceDelMap{Tgt: c.tgt, TKey: c.tkey, ImportPath: importPath, ElemType: elem.TypeName}
 		case spkPtr:
-			if _, ok := elem.Elem.(spkStruct); ok {
-				return compEncodeMapStruct(fi, c, true)
+			if ps, ok := elem.Elem.(spkStruct); ok {
+				return compEncodeMapStruct(fi, ps, c, true)
 			}
 		}
 
 	case spkStruct:
-		if fi.InnerInfo == nil {
+		if te.InnerInfo == nil {
 			return nil
 		}
-		return ceTable{TKey: c.tkey, Children: foldCompEncode(fi.InnerInfo, c, false)}
+		return ceTable{TKey: c.tkey, Children: foldCompEncode(te.InnerInfo, c, false)}
 
 	case spkDelegated:
-		return ceDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: fi.ImportPath, TypeName: fi.TypeName, Ptr: false}
+		return ceDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: te.ImportPath, TypeName: te.TypeName, Ptr: false}
 	}
 	return nil
 }
 
-func compEncodeArrayTable(fi FieldInfo, c compPos, slicePtr, emitHandles bool) ceNode {
-	if fi.InnerInfo == nil {
+func compEncodeArrayTable(fi FieldInfo, st spkStruct, c compPos, slicePtr, emitHandles bool) ceNode {
+	if st.InnerInfo == nil {
 		return nil
 	}
-	crossPkg := strings.Contains(fi.TypeName, ".")
+	crossPkg := strings.Contains(st.TypeName, ".")
 	iv := arrayIdxVar(c.arrayDepth)
 	return ceArrayTable{
 		Tgt:          c.tgt,
 		TKey:         StaticKey(fi.TomlKey),
 		TDottedKey:   c.tkey,
-		TypeName:     fi.TypeName,
-		ImportPath:   fi.ImportPath,
+		TypeName:     st.TypeName,
+		ImportPath:   st.ImportPath,
 		SlicePtr:     slicePtr,
 		TrackHandles: emitHandles && !crossPkg,
 		IdxVar:       iv,
 		Scoped:       c.scoped,
-		Children:     foldCompEncode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, scoped: true}, false),
+		Children:     foldCompEncode(st.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, scoped: true}, false),
 	}
 }
 
-func compEncodeMapStruct(fi FieldInfo, c compPos, slicePtr bool) ceNode {
-	if fi.InnerInfo == nil {
+func compEncodeMapStruct(fi FieldInfo, st spkStruct, c compPos, slicePtr bool) ceNode {
+	if st.InnerInfo == nil {
 		return nil
 	}
 	entryTgt := LocalTarget("mapVal")
@@ -337,8 +366,8 @@ func compEncodeMapStruct(fi FieldInfo, c compPos, slicePtr bool) ceNode {
 	return ceMapStruct{
 		Tgt:      c.tgt,
 		TKey:     c.tkey,
-		TypeName: fi.TypeName,
+		TypeName: st.TypeName,
 		SlicePtr: slicePtr,
-		Children: foldCompEncode(fi.InnerInfo, compPos{tkey: c.tkey, tgt: entryTgt, arrayDepth: c.arrayDepth, scoped: true}, false),
+		Children: foldCompEncode(st.InnerInfo, compPos{tkey: c.tkey, tgt: entryTgt, arrayDepth: c.arrayDepth, scoped: true}, false),
 	}
 }

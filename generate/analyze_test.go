@@ -22,7 +22,7 @@ func TestAnalyzePrimitiveFields(t *testing.T) {
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
 	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tName    string  `toml:\"name\"`\n\tPort    int     `toml:\"port\"`\n\tEnabled bool    `toml:\"enabled\"`\n}\n")
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestAnalyzeSliceOfStructs(t *testing.T) {
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
 	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tServers []Server `toml:\"servers\"`\n}\n\ntype Server struct {\n\tName    string `toml:\"name\"`\n\tCommand string `toml:\"command\"`\n}\n")
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func (c *Command) UnmarshalTOML(v interface{}) error {
 }
 `)
 
-	_, err := Analyze(dir, "config.go")
+	_, err := analyzeLegacy(dir, "config.go")
 	if err == nil {
 		t.Fatal("expected error for type with UnmarshalTOML but no MarshalTOML")
 	}
@@ -128,7 +128,7 @@ func (c Command) MarshalTOML() (string, error) {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func (c Command) MarshalTOML() (string, error) {
 }
 `)
 
-	_, err := Analyze(dir, "config.go")
+	_, err := analyzeLegacy(dir, "config.go")
 	if err == nil {
 		t.Fatal("expected error for type with MarshalTOML but no UnmarshalTOML")
 	}
@@ -175,7 +175,7 @@ func TestAnalyzeMapStringString(t *testing.T) {
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
 	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tEnv map[string]string `toml:\"env\"`\n}\n")
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ type Config struct {
 	}
 }
 
-func fieldNames(fields []FieldInfo) []string {
+func fieldNames(fields []legacyFieldInfo) []string {
 	var names []string
 	for _, f := range fields {
 		names = append(names, f.GoName)
@@ -367,7 +367,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ type Extended struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "consumer.go")
+	infos, err := analyzeLegacy(consumerDir, "consumer.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "consumer.go")
+	infos, err := analyzeLegacy(consumerDir, "consumer.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +563,7 @@ type Defaults struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +607,7 @@ func (c Config) Validate() error {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +647,7 @@ func TestAnalyzeUnsupportedTypeErrors(t *testing.T) {
 	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
 	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tData map[string]int `toml:\"data\"`\n}\n")
 
-	_, err := Analyze(dir, "config.go")
+	_, err := analyzeLegacy(dir, "config.go")
 	if err == nil {
 		t.Fatal("expected error for unsupported map value type")
 	}
@@ -677,7 +677,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,7 +731,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -786,7 +786,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -850,7 +850,7 @@ type Config struct {
 }
 `)
 
-			_, err := Analyze(mainDir, "config.go")
+			_, err := analyzeLegacy(mainDir, "config.go")
 			if err == nil {
 				t.Fatalf("expected error for delegated struct re-exported over an internal package, got nil")
 			}
@@ -894,7 +894,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(mainDir, "config.go")
+	infos, err := analyzeLegacy(mainDir, "config.go")
 	if err != nil {
 		t.Fatalf("public re-export delegation should not error: %v", err)
 	}
@@ -943,7 +943,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "config.go")
+	infos, err := analyzeLegacy(consumerDir, "config.go")
 	if err != nil {
 		t.Fatalf("expected no error with delegation, got: %s", err)
 	}
@@ -991,7 +991,7 @@ type Wrapper struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "config.go")
+	infos, err := analyzeLegacy(consumerDir, "config.go")
 	if err != nil {
 		t.Fatalf("expected no error for []TypeAlias with TextMarshaler in recursive resolution, got: %s", err)
 	}
@@ -1008,7 +1008,7 @@ type Wrapper struct {
 		t.Fatal("expected InnerInfo to be set for struct field")
 	}
 
-	var tagsField *FieldInfo
+	var tagsField *legacyFieldInfo
 	for _, f := range innerField.InnerInfo.Fields {
 		if f.GoName == "Tags" {
 			tagsField = &f
@@ -1061,7 +1061,7 @@ type Outer struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "wrapper.go")
+	infos, err := analyzeLegacy(consumerDir, "wrapper.go")
 	if err != nil {
 		t.Fatalf("expected no error for transitive []TypeAlias (struct, not TextMarshaler), got: %s", err)
 	}
@@ -1079,7 +1079,7 @@ type Outer struct {
 	}
 
 	// Find the Tags field in Inner's InnerInfo
-	var tagsField *FieldInfo
+	var tagsField *legacyFieldInfo
 	for _, f := range dataField.InnerInfo.Fields {
 		if f.GoName == "Tags" {
 			tagsField = &f
@@ -1128,7 +1128,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "config.go")
+	infos, err := analyzeLegacy(consumerDir, "config.go")
 	if err != nil {
 		t.Fatalf("expected no error for []pkg.StructType, got: %s", err)
 	}
@@ -1174,7 +1174,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "config.go")
+	infos, err := analyzeLegacy(consumerDir, "config.go")
 	if err != nil {
 		t.Fatalf("expected no error for []*pkg.AliasType, got: %s", err)
 	}
@@ -1220,7 +1220,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "config.go")
+	infos, err := analyzeLegacy(consumerDir, "config.go")
 	if err != nil {
 		t.Fatalf("expected no error for map[string]pkg.AliasType, got: %s", err)
 	}
@@ -1265,7 +1265,7 @@ type Config struct {
 }
 `)
 
-	_, err := Analyze(consumerDir, "config.go")
+	_, err := analyzeLegacy(consumerDir, "config.go")
 	if err == nil {
 		t.Fatal("expected error for map[string]InterfaceType, but got nil")
 	}
@@ -1319,7 +1319,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(consumerDir, "consumer.go")
+	infos, err := analyzeLegacy(consumerDir, "consumer.go")
 	if err != nil {
 		t.Fatalf("expected no error for embedded interface, got: %v", err)
 	}
@@ -1348,7 +1348,7 @@ type Node struct {
 }
 `)
 
-	_, err := Analyze(dir, "config.go")
+	_, err := analyzeLegacy(dir, "config.go")
 	if err == nil {
 		t.Fatal("expected error for self-referential struct, got nil")
 	}
@@ -1375,7 +1375,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -1401,7 +1401,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -1434,7 +1434,7 @@ type Server struct {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -1469,7 +1469,7 @@ type Config struct {
 }
 `)
 
-	infos, err := Analyze(dir, "config.go")
+	infos, err := analyzeLegacy(dir, "config.go")
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}

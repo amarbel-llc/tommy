@@ -47,10 +47,36 @@ func tomlKey(fullKey string) string {
 	return fullKey
 }
 
+// sliceStructElem returns the struct node of a slice-of-struct field (unwrapping
+// an element pointer), and whether the field is one.
+func sliceStructElem(fi FieldInfo) (spkStruct, bool) {
+	s, ok := fi.Type.(spkSlice)
+	if !ok {
+		return spkStruct{}, false
+	}
+	elem := s.Elem
+	if p, ok := elem.(spkPtr); ok {
+		elem = p.Elem
+	}
+	st, ok := elem.(spkStruct)
+	return st, ok
+}
+
 // isSamePackageSliceStruct reports whether a field is a slice of a struct
-// declared in the same package (rendered via a generated Handle type).
+// declared in the same package (rendered via a generated Handle type). A
+// cross-package element is a delegated node, not a struct, so it never matches;
+// an inline cross-package struct (via an unexported-target alias) has a
+// dot-qualified name and is excluded.
 func isSamePackageSliceStruct(fi FieldInfo) bool {
-	return fi.Kind == FieldSliceStruct && !strings.Contains(fi.TypeName, ".")
+	st, ok := sliceStructElem(fi)
+	return ok && !strings.Contains(st.TypeName, ".")
+}
+
+// sliceStructName is the element struct's type name for a same-package
+// slice-struct field (the basis of its generated Handle type name).
+func sliceStructName(fi FieldInfo) string {
+	st, _ := sliceStructElem(fi)
+	return st.TypeName
 }
 
 // collectImportPaths returns the cross-package import paths referenced by the
@@ -69,13 +95,42 @@ func collectImportPaths(structs []StructInfo) []string {
 
 func collectFieldImports(fields []FieldInfo, seen map[string]bool) {
 	for _, fi := range fields {
-		if fi.ImportPath != "" {
-			seen[fi.ImportPath] = true
+		collectTypeImports(fi.Type, seen)
+	}
+}
+
+// collectTypeImports records every import path a TypeExpr references, recursing
+// into composites and struct InnerInfo. Delegated nodes contribute their own
+// import but are not recursed: the target package's generated code owns its
+// inner imports.
+func collectTypeImports(te spkType, seen map[string]bool) {
+	switch t := te.(type) {
+	case spkScalar:
+		if t.ImportPath != "" {
+			seen[t.ImportPath] = true
 		}
-		// Don't recurse into delegated fields — their inner imports are
-		// handled by the target package's generated code, not ours.
-		if fi.InnerInfo != nil && fi.Kind != FieldDelegatedStruct && fi.Kind != FieldPointerDelegatedStruct && fi.Kind != FieldSliceDelegatedStruct && fi.Kind != FieldMapStringDelegatedStruct {
-			collectFieldImports(fi.InnerInfo.Fields, seen)
+	case spkPtr:
+		collectTypeImports(t.Elem, seen)
+	case spkSlice:
+		if t.ImportPath != "" {
+			seen[t.ImportPath] = true
+		}
+		collectTypeImports(t.Elem, seen)
+	case spkMap:
+		if t.ImportPath != "" {
+			seen[t.ImportPath] = true
+		}
+		collectTypeImports(t.Elem, seen)
+	case spkStruct:
+		if t.ImportPath != "" {
+			seen[t.ImportPath] = true
+		}
+		if t.InnerInfo != nil {
+			collectFieldImports(t.InnerInfo.Fields, seen)
+		}
+	case spkDelegated:
+		if t.ImportPath != "" {
+			seen[t.ImportPath] = true
 		}
 	}
 }

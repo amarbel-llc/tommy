@@ -11,8 +11,8 @@ package generate
 // #55 fallback list), and the positional jenP* family folds into one compPosOp
 // dispatch reused recursively.
 //
-// Phase 1 keeps the analyze.go classifier; the folds (comp_build.go) consume the
-// existing FieldInfo via fieldType (typeexpr.go).
+// The folds (comp_build.go) build these nodes by recursing over each field's
+// TypeExpr (FieldInfo.Type, #85).
 
 // --- Decode nodes ---
 

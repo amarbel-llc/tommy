@@ -10,28 +10,6 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// FieldKind classifies how a struct field should be encoded/decoded.
-type FieldKind int
-
-const (
-	FieldPrimitive        FieldKind = iota // string, int, int64, float64, bool
-	FieldStruct                            // nested struct with toml tags
-	FieldPointerStruct                     // *SomeStruct
-	FieldSlicePrimitive                    // []int, []string
-	FieldSliceStruct                       // []Server (array-of-tables)
-	FieldCustom                            // implements TOMLUnmarshaler
-	FieldPointerPrimitive                  // *bool, *int, etc.
-	FieldMapStringString                   // map[string]string
-	FieldTextMarshaler                     // implements encoding.TextMarshaler/TextUnmarshaler
-	FieldMapStringStruct                   // map[string]SomeStruct
-	FieldSliceTextMarshaler                // []TextMarshalerType
-	FieldMapStringMapStringString           // map[string]NamedMap where NamedMap is map[string]string
-	FieldDelegatedStruct                   // cross-package struct — delegate to its DecodeInto/EncodeFrom
-	FieldPointerDelegatedStruct            // pointer to cross-package struct — delegate
-	FieldSliceDelegatedStruct              // []cross-package struct — delegate per element
-	FieldMapStringDelegatedStruct          // map[string]cross-package struct — delegate per entry
-)
-
 // StructInfo describes a struct that needs code generation.
 type StructInfo struct {
 	Name        string
@@ -39,18 +17,15 @@ type StructInfo struct {
 	Validatable bool
 }
 
-// FieldInfo describes a single field within a struct.
+// FieldInfo describes a single field within a struct. Type carries the
+// compositional classification (#85); GoName/TomlKey and the tag-derived
+// OmitEmpty/Multiline are the field metadata the type cannot supply.
 type FieldInfo struct {
-	GoName     string
-	TomlKey    string
-	Kind       FieldKind
-	ElemType   string // wrapper type name for primitive aliases (e.g., "types.Version")
-	TypeName   string
-	InnerInfo  *StructInfo
-	OmitEmpty  bool
-	Multiline  bool
-	ImportPath   string // import path needed for ElemType (e.g., "example.com/pkg/types")
-	SlicePointer bool   // true when slice element is a pointer (e.g., []*Struct)
+	GoName    string
+	TomlKey   string
+	Type      spkType
+	OmitEmpty bool
+	Multiline bool
 }
 
 // Analyze inspects the given Go source file for structs with
@@ -545,17 +520,16 @@ func classifyNamedMapTypeExpr(obj *types.TypeName, mapType *types.Map) (spkType,
 	return nil, fmt.Errorf("unsupported cross-package map value type in %s.%s (value type %s)", obj.Pkg().Name(), obj.Name(), valElem)
 }
 
-// classifyType classifies a struct field's type into the legacy FieldInfo the
-// folds consume. It is a thin wrapper over the single go/types classifier
-// classifyTypeExpr (which produces the compositional TypeExpr) plus
-// adaptToFieldInfo (which flattens it back). GoName/TomlKey are field metadata,
-// not type-derived, so they are stamped on here.
+// classifyType builds a struct field's FieldInfo: its compositional TypeExpr
+// (from the single go/types classifier classifyTypeExpr) plus the field metadata
+// (GoName/TomlKey) the type cannot supply. The folds consume FieldInfo.Type
+// directly; OmitEmpty/Multiline are filled by the caller from the struct tag.
 func classifyType(pkg *packages.Package, goName, tomlKey string, typ types.Type) (FieldInfo, error) {
 	te, err := classifyTypeExpr(pkg, typ)
 	if err != nil {
 		return FieldInfo{GoName: goName, TomlKey: tomlKey}, err
 	}
-	return adaptToFieldInfo(te, goName, tomlKey), nil
+	return FieldInfo{GoName: goName, TomlKey: tomlKey, Type: te}, nil
 }
 
 // classifyTypeExpr is the single field-type classifier (#85 Phase 2b). It maps a
@@ -877,135 +851,6 @@ func overrideAliasImport(te spkType, facadePath string) spkType {
 	}
 }
 
-// adaptToFieldInfo flattens the enriched TypeExpr produced by classifyTypeExpr
-// back to the legacy FieldInfo the folds still consume. It is the inverse of the
-// historical classifyType field assignments and the equivalence harness's oracle
-// (the ~30 TestAnalyze* cases assert the result). One arm per FieldKind shape.
-func adaptToFieldInfo(te spkType, goName, tomlKey string) FieldInfo {
-	fi := FieldInfo{GoName: goName, TomlKey: tomlKey}
-	switch t := te.(type) {
-	case spkScalar:
-		switch t.Codec {
-		case codecCustom:
-			fi.Kind = FieldCustom
-			fi.TypeName = t.TypeName
-		case codecText:
-			fi.Kind = FieldTextMarshaler
-			fi.TypeName = t.TypeName
-		default: // codecPrim
-			fi.Kind = FieldPrimitive
-			fi.TypeName = t.TypeName
-			fi.ElemType = t.ElemType
-			fi.ImportPath = t.ImportPath
-		}
-
-	case spkStruct:
-		fi.Kind = FieldStruct
-		fi.TypeName = t.TypeName
-		fi.ImportPath = t.ImportPath
-		fi.InnerInfo = t.InnerInfo
-
-	case spkDelegated:
-		fi.Kind = FieldDelegatedStruct
-		fi.TypeName = t.TypeName
-		fi.ImportPath = t.ImportPath
-		fi.InnerInfo = t.InnerInfo
-
-	case spkPtr:
-		inner := adaptToFieldInfo(t.Elem, goName, tomlKey)
-		switch inner.Kind {
-		case FieldPrimitive:
-			// Only a bare *basic becomes FieldPointerPrimitive; a named prim
-			// wrapper under a pointer historically drops the pointer (as do
-			// *TextMarshaler/*Custom/*alias), so leave inner unchanged there.
-			if inner.ElemType == "" && inner.ImportPath == "" {
-				inner.Kind = FieldPointerPrimitive
-			}
-		case FieldStruct:
-			inner.Kind = FieldPointerStruct
-		case FieldDelegatedStruct:
-			inner.Kind = FieldPointerDelegatedStruct
-		}
-		return inner
-
-	case spkSlice:
-		switch elem := t.Elem.(type) {
-		case spkScalar:
-			if elem.Codec == codecText {
-				fi.Kind = FieldSliceTextMarshaler
-				fi.TypeName = elem.TypeName
-				fi.ElemType = elem.TypeName
-				fi.ImportPath = elem.ImportPath
-			} else {
-				fi.Kind = FieldSlicePrimitive
-				fi.ElemType = elem.TypeName
-				fi.TypeName = t.TypeName // named slice-alias wrapper
-				fi.ImportPath = t.ImportPath
-			}
-		case spkStruct:
-			fi.Kind = FieldSliceStruct
-			fi.TypeName = elem.TypeName
-			fi.ImportPath = elem.ImportPath
-			fi.InnerInfo = elem.InnerInfo
-		case spkDelegated:
-			fi.Kind = FieldSliceDelegatedStruct
-			fi.TypeName = elem.TypeName
-			fi.ImportPath = elem.ImportPath
-		case spkPtr:
-			fi.SlicePointer = true
-			switch pe := elem.Elem.(type) {
-			case spkScalar:
-				fi.Kind = FieldSlicePrimitive
-				fi.ElemType = pe.TypeName
-			case spkStruct:
-				fi.Kind = FieldSliceStruct
-				fi.TypeName = pe.TypeName
-				fi.ImportPath = pe.ImportPath
-				fi.InnerInfo = pe.InnerInfo
-			case spkDelegated:
-				fi.Kind = FieldSliceDelegatedStruct
-				fi.TypeName = pe.TypeName
-				fi.ImportPath = pe.ImportPath
-			}
-		}
-
-	case spkMap:
-		switch elem := t.Elem.(type) {
-		case spkScalar:
-			fi.Kind = FieldMapStringString
-			fi.TypeName = t.TypeName
-			fi.ImportPath = t.ImportPath
-		case spkMap:
-			fi.Kind = FieldMapStringMapStringString
-			fi.TypeName = t.TypeName
-			fi.ImportPath = t.ImportPath
-		case spkStruct:
-			fi.Kind = FieldMapStringStruct
-			fi.TypeName = elem.TypeName
-			fi.ImportPath = elem.ImportPath
-			fi.InnerInfo = elem.InnerInfo
-		case spkDelegated:
-			fi.Kind = FieldMapStringDelegatedStruct
-			fi.ElemType = elem.TypeName
-			fi.TypeName = t.TypeName
-			if t.ImportPath != "" {
-				fi.ImportPath = t.ImportPath
-			} else {
-				fi.ImportPath = elem.ImportPath
-			}
-		case spkPtr:
-			fi.SlicePointer = true
-			if ps, ok := elem.Elem.(spkStruct); ok {
-				fi.Kind = FieldMapStringStruct
-				fi.TypeName = ps.TypeName
-				fi.ImportPath = ps.ImportPath
-				fi.InnerInfo = ps.InnerInfo
-			}
-		}
-	}
-	return fi
-}
-
 func isMapStringString(m *types.Map) bool {
 	key, ok := m.Key().(*types.Basic)
 	if !ok || key.Kind() != types.String {
@@ -1015,18 +860,26 @@ func isMapStringString(m *types.Map) bool {
 	return ok && val.Kind() == types.String
 }
 
-// isDelegatedKind reports whether a field kind emits calls to the target
-// package's generated Decode<T>Into/EncodeFrom methods rather than inlining
-// field handling. Delegated kinds require importing the type's *defining*
-// package (where those methods are generated).
-func isDelegatedKind(k FieldKind) bool {
-	switch k {
-	case FieldDelegatedStruct, FieldPointerDelegatedStruct,
-		FieldSliceDelegatedStruct, FieldMapStringDelegatedStruct:
-		return true
-	default:
-		return false
+// delegatedTarget returns the import path and qualified name of the cross-package
+// struct a field delegates to — directly, or as a pointer/slice/map element — if
+// any. For a map whose element delegates, an import on the Map node (a named map
+// alias) overrides the element's, matching how the delegation is emitted.
+func delegatedTarget(te spkType) (importPath, typeName string, ok bool) {
+	switch t := te.(type) {
+	case spkDelegated:
+		return t.ImportPath, t.TypeName, true
+	case spkPtr:
+		return delegatedTarget(t.Elem)
+	case spkSlice:
+		return delegatedTarget(t.Elem)
+	case spkMap:
+		ip, tn, found := delegatedTarget(t.Elem)
+		if found && t.ImportPath != "" {
+			ip = t.ImportPath
+		}
+		return ip, tn, found
 	}
+	return "", "", false
 }
 
 // aliasQualifiedName renders an alias's exported, package-qualified name (e.g.
@@ -1068,15 +921,16 @@ func internalImportAllowed(target, importer string) bool {
 // internal package, and the public alias does not carry them, so no importable
 // package satisfies the delegation. See #81.
 func checkDelegationImportable(importerPath string, fi FieldInfo) error {
-	if !isDelegatedKind(fi.Kind) || fi.ImportPath == "" {
+	importPath, typeName, ok := delegatedTarget(fi.Type)
+	if !ok || importPath == "" {
 		return nil
 	}
-	if internalImportAllowed(fi.ImportPath, importerPath) {
+	if internalImportAllowed(importPath, importerPath) {
 		return nil
 	}
 	return fmt.Errorf(
 		"cannot delegate decoding of %s: its generated Decode/Encode methods live in internal package %q, which %q may not import (Go internal-package rule). This type is reached through a re-export alias over an internal package. Generate the facade in copy mode so the type is concrete in the public package, or mark the field `toml:\"-\"`",
-		fi.TypeName, fi.ImportPath, importerPath)
+		typeName, importPath, importerPath)
 }
 
 // resolvingTypes tracks which struct types are currently being resolved

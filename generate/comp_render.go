@@ -1102,7 +1102,7 @@ func compEmitStruct(f *jen.File, si StructInfo) {
 	dt := si.Name + "Document"
 	for _, fi := range si.Fields {
 		if isSamePackageSliceStruct(fi) {
-			f.Type().Id(unexport(fi.TypeName) + "Handle").Struct(jen.Id("node").Op("*").Qual(cstPkg, "Node"))
+			f.Type().Id(unexport(sliceStructName(fi)) + "Handle").Struct(jen.Id("node").Op("*").Qual(cstPkg, "Node"))
 		}
 	}
 	f.Type().Id(dt).StructFunc(func(g *jen.Group) {
@@ -1111,7 +1111,7 @@ func compEmitStruct(f *jen.File, si StructInfo) {
 		g.Id("consumed").Map(jen.String()).Bool()
 		for _, fi := range si.Fields {
 			if isSamePackageSliceStruct(fi) {
-				g.Id(unexport(fi.GoName)).Index().Id(unexport(fi.TypeName) + "Handle")
+				g.Id(unexport(fi.GoName)).Index().Id(unexport(sliceStructName(fi)) + "Handle")
 			}
 		}
 	})
