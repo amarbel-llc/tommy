@@ -6904,8 +6904,8 @@ func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
 }
 
 // Regression #47: cross-package named map type alias (type ScriptMap map[string]Struct)
-// used as a direct field goes through classifySelectorExpr → classifyFromType →
-// *types.Map, which has no struct value handling.
+// used as a direct field goes through classifyType → *types.Map, which has no
+// struct value handling.
 func TestIntegrationCrossPackageMapTypeAlias(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

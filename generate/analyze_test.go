@@ -755,8 +755,8 @@ type Config struct {
 // Regression test for #81 (follow-up, Class A): a map[string]NamedMap field
 // where NamedMap is a map[string]string alias re-exported from a facade over an
 // internal/ package must resolve ImportPath to the facade, not the underlying
-// internal definition. This is the AST map-value path (analyze.go ~473), which
-// resolved through the alias to the underlying *types.Named like the original
+// internal definition. This is classifyType's *types.Map alias-value path, which
+// resolves through the alias to the underlying *types.Named like the original
 // #81 scalar case did.
 func TestAnalyzeAliasReExportMapStringStringImportPath(t *testing.T) {
 	dir := t.TempDir()
@@ -957,7 +957,7 @@ type Config struct {
 }
 
 // Regression test for #36: []TypeAlias where alias target is unexported should
-// be handled in the recursive classifyFromType path (cross-package struct resolution).
+// be handled in classifyType (cross-package struct resolution).
 func TestAnalyzeCrossPackageSliceTypeAliasInRecursion(t *testing.T) {
 	dir := t.TempDir()
 
@@ -1099,7 +1099,7 @@ type Outer struct {
 	}
 }
 
-// Regression test for #43/#44: classifyField AST path for []pkg.StructType
+// Regression test for #43/#44: classifyType's []pkg.StructType handling
 // should support cross-package struct delegation, not only TextMarshaler.
 func TestAnalyzeCrossPackageSliceStructDirect(t *testing.T) {
 	dir := t.TempDir()
