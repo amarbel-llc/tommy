@@ -283,6 +283,64 @@ func TestFF(t *testing.T) {
 	}
 }
 
+// Regression for #101: an absent *struct whose inner field is itself
+// table-valued (a map, here) must not false-match a root- or grandparent-level
+// table. The #55/#89 flat-key fallback only makes sense for inner fields that
+// read bare keys from the parent container; a map field resolves via a
+// document-root [m] table scan, which previously matched the sibling Config.M
+// and wrongly materialized Ptr. Acceptance test for the flat-fallback rework.
+func TestIntegrationFlatFallbackTableValuedInner(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/fftv\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package fftv
+
+type Inner struct {
+	M map[string]string `+"`"+`toml:"m"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	Ptr *Inner            `+"`"+`toml:"ptr"`+"`"+`
+	M   map[string]string `+"`"+`toml:"m"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "fftv_test.go", `package fftv
+
+import "testing"
+
+func TestFFTV(t *testing.T) {
+	// Only a root [m] table (Config.M); no [ptr] table, so Ptr must be nil.
+	d, err := DecodeConfig([]byte("[m]\nk = \"v\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := d.Data()
+	if got.Ptr != nil {
+		t.Fatalf("Ptr should be nil (no [ptr] table), got %#v", got.Ptr)
+	}
+	if got.M["k"] != "v" {
+		t.Fatalf("Config.M[k] = %q, want \"v\"", got.M["k"])
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestFFTV", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Regression for #92: a generated decoder must reject a table header defined
 // more than once (per the TOML spec, "Defining a table more than once is
 // invalid"), rather than silently using the first. Covers both the non-pointer

@@ -178,6 +178,9 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool, siblingKey
 func compDecodeFlatChildren(inner *StructInfo, c compPos, tgt TargetPath, siblingKeys map[string]bool) []cdNode {
 	var flat []cdNode
 	for _, f := range inner.Fields {
+		if !flatDecodable(f.Type) {
+			continue
+		}
 		if !isSliceOfStruct(f.Type) && siblingKeys[f.TomlKey] {
 			continue
 		}
@@ -190,6 +193,34 @@ func compDecodeFlatChildren(inner *StructInfo, c compPos, tgt TargetPath, siblin
 		}
 	}
 	return flat
+}
+
+// flatDecodable reports whether an inner field has a meaningful flat
+// representation at the parent container when its struct's [table] header is
+// absent (#55/#89). Only fields that read from the container directly qualify:
+//
+//   - scalars and *scalars — a bare `key = value` in the parent scope;
+//   - any slice — a primitive slice is a bare `key = [...]` (sibling-guarded by
+//     #100); an array-table keeps its specific dotted key (`parent.field`), which
+//     cannot collide with an unrelated table.
+//
+// Fields that resolve via a document-root table scan are NOT flat-decodable:
+// maps (`[field]` / `[field.k]`), nested value/pointer structs and delegated
+// structs (`[field]`). In a flat fallback they scan the whole document and can
+// false-match a root- or grandparent-level table, wrongly materializing a
+// pointer that should be nil (#101). Such a field is only decodable via the
+// struct's explicit [table], which is unambiguous.
+func flatDecodable(te spkType) bool {
+	switch t := te.(type) {
+	case spkScalar, spkSlice:
+		return true
+	case spkPtr:
+		_, scalar := t.Elem.(spkScalar)
+		return scalar
+	default:
+		// spkMap, spkStruct, spkDelegated: document-root table scans.
+		return false
+	}
 }
 
 // isSliceOfStruct reports whether te is a slice whose element (possibly behind a

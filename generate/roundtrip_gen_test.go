@@ -228,17 +228,13 @@ func (g *shapeGen) genValue(t *td) string {
 			}
 			fv := g.genValue(f.t)
 			// Emit a nil field ~1/4 of the time, but only where it round-trips
-			// cleanly: a nil *scalar / map / mapmap field is simply an absent key.
-			// Excluded: nil *struct fields — #100's direct sibling-key false-match
-			// is fixed, but the flat-fallback still false-matches root/grandparent
-			// tables via inner table/map fields (deeper leak, tracked); nil slices
-			// (the nil/empty fidelity gap); and any nil collection element (no null).
+			// cleanly: a nil *scalar / *struct / map / mapmap field is simply an
+			// absent key (or absent [table]). Excluded: nil slices (the nil/empty
+			// fidelity gap, #21) and any nil collection element (TOML has no null).
 			nilable := false
 			switch f.t.kind {
-			case "map", "mapmap":
+			case "map", "mapmap", "ptr":
 				nilable = true
-			case "ptr":
-				nilable = f.t.elem.kind != "struct"
 			}
 			if nilable && g.rng.Intn(4) == 0 {
 				fv = "nil"
@@ -259,6 +255,78 @@ func fuzzEnvInt(name string, def int) int {
 	}
 	return def
 }
+
+// dumpHelperSrc is injected into the generated fuzz test harness. The default
+// %#v rendering prints pointer ADDRESSES (so two structurally-identical values
+// that differ only behind a pointer look the same in a mismatch report). dump
+// recursively dereferences pointers (showing nil vs &value), sorts map keys, and
+// renders slices/structs, so a round-trip mismatch shows the real value diff.
+const dumpHelperSrc = `func dump(v any) string {
+	var b strings.Builder
+	var rec func(rv reflect.Value)
+	rec = func(rv reflect.Value) {
+		switch rv.Kind() {
+		case reflect.Ptr:
+			if rv.IsNil() {
+				b.WriteString("nil")
+				return
+			}
+			b.WriteString("&")
+			rec(rv.Elem())
+		case reflect.Interface:
+			if rv.IsNil() {
+				b.WriteString("nil")
+				return
+			}
+			rec(rv.Elem())
+		case reflect.Slice:
+			if rv.IsNil() {
+				b.WriteString("nil")
+				return
+			}
+			b.WriteString("[")
+			for i := 0; i < rv.Len(); i++ {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				rec(rv.Index(i))
+			}
+			b.WriteString("]")
+		case reflect.Map:
+			if rv.IsNil() {
+				b.WriteString("nil")
+				return
+			}
+			keys := rv.MapKeys()
+			sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j]) })
+			b.WriteString("{")
+			for i, k := range keys {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(fmt.Sprintf("%v: ", k))
+				rec(rv.MapIndex(k))
+			}
+			b.WriteString("}")
+		case reflect.Struct:
+			b.WriteString(rv.Type().Name() + "{")
+			for i := 0; i < rv.NumField(); i++ {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(rv.Type().Field(i).Name + ": ")
+				rec(rv.Field(i))
+			}
+			b.WriteString("}")
+		default:
+			b.WriteString(fmt.Sprintf("%#v", rv.Interface()))
+		}
+	}
+	rec(reflect.ValueOf(v))
+	return b.String()
+}
+
+`
 
 func TestRoundTripFuzz(t *testing.T) {
 	if testing.Short() {
@@ -287,7 +355,7 @@ func TestRoundTripFuzz(t *testing.T) {
 		d2, err := Decode%s(out)
 		if err != nil { t.Fatalf("re-decode: %%v\ntoml:\n%%s", err, out) }
 		if !reflect.DeepEqual(*d2.Data(), want) {
-			t.Fatalf("round-trip mismatch\nwant: %%#v\ngot:  %%#v\ntoml:\n%%s", want, *d2.Data(), out)
+			t.Fatalf("round-trip mismatch\nwant: %%s\ngot:  %%s\ntoml:\n%%s", dump(want), dump(*d2.Data()), out)
 		}
 		if u := d2.Undecoded(); len(u) != 0 {
 			t.Fatalf("undecoded keys %%v\ntoml:\n%%s", u, out)
@@ -297,8 +365,9 @@ func TestRoundTripFuzz(t *testing.T) {
 	}
 
 	configSrc := "package fuzz\n\n" + g.typeDefs.String()
-	testSrc := "package fuzz\n\nimport (\n\t\"reflect\"\n\t\"testing\"\n)\n\n" +
+	testSrc := "package fuzz\n\nimport (\n\t\"fmt\"\n\t\"reflect\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n)\n\n" +
 		"func ptr[T any](v T) *T { return &v }\n\n" +
+		dumpHelperSrc +
 		"func TestRoundTrip(t *testing.T) {\n" + testBodies.String() + "}\n"
 
 	dir := t.TempDir()
