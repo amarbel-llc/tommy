@@ -77,9 +77,10 @@ func (g *shapeGen) sliceScalarType() string {
 
 // genType picks a random field shape from the surface the codegen actually
 // supports: scalars {string,int,bool,float64}, []scalar/[]*scalar over
-// {string,int}, map[string]string, structs/pointers/slices/maps of structs
-// recursing. (Bare map[string]map[string]string, map[string]<non-string>, and
-// non-string/int element slices are not supported by the current classifier +
+// {string,int}, map[string]string, map[string]NamedMap (a named map[string]string
+// alias, the FieldMapStringMapStringString kind), structs/pointers/slices/maps of
+// structs recursing. (Bare map[string]map[string]string, map[string]<non-string>,
+// and non-string/int element slices are not supported by the current classifier +
 // renderer and are excluded — see the tracked coverage gaps.) At depth<=0 only
 // non-struct shapes are produced so recursion terminates.
 func (g *shapeGen) genType(depth int) *td {
@@ -89,6 +90,7 @@ func (g *shapeGen) genType(depth int) *td {
 		shSliceScalar
 		shSlicePtrScalar
 		shMapScalar
+		shMapMap
 		shStruct
 		shPtrStruct
 		shSliceStruct
@@ -96,7 +98,7 @@ func (g *shapeGen) genType(depth int) *td {
 		shMapStruct
 		shMapPtrStruct
 	)
-	leaf := []int{shScalar, shPtrScalar, shSliceScalar, shSlicePtrScalar, shMapScalar}
+	leaf := []int{shScalar, shPtrScalar, shSliceScalar, shSlicePtrScalar, shMapScalar, shMapMap}
 	all := append(append([]int{}, leaf...), shStruct, shPtrStruct, shSliceStruct, shSlicePtrStruct, shMapStruct, shMapPtrStruct)
 
 	choices := all
@@ -116,6 +118,8 @@ func (g *shapeGen) genType(depth int) *td {
 		return &td{kind: "slice", elem: &td{kind: "ptr", elem: sliceScal()}}
 	case shMapScalar:
 		return &td{kind: "map", elem: &td{kind: "scalar", scalar: "string"}}
+	case shMapMap:
+		return g.genMapMap()
 	case shStruct:
 		return g.genStruct(depth)
 	case shPtrStruct:
@@ -155,6 +159,17 @@ func (g *shapeGen) genStruct(depth int) *td {
 	return &td{kind: "struct", stName: name, fields: fields}
 }
 
+// genMapMap emits a named map[string]string alias and returns a
+// map[string]<alias> shape — the FieldMapStringMapStringString kind. The alias is
+// required: the classifier only accepts the nested-map form through a named map
+// type, not bare map[string]map[string]string. stName carries the alias name.
+func (g *shapeGen) genMapMap() *td {
+	name := fmt.Sprintf("Mapalias%d", g.subN)
+	g.subN++
+	fmt.Fprintf(g.typeDefs, "type %s map[string]string\n\n", name)
+	return &td{kind: "mapmap", stName: name}
+}
+
 func (g *shapeGen) goType(t *td) string {
 	switch t.kind {
 	case "scalar":
@@ -165,6 +180,8 @@ func (g *shapeGen) goType(t *td) string {
 		return "[]" + g.goType(t.elem)
 	case "map":
 		return "map[string]" + g.goType(t.elem)
+	case "mapmap":
+		return "map[string]" + t.stName
 	case "struct":
 		return t.stName
 	}
@@ -186,6 +203,13 @@ func (g *shapeGen) genValue(t *td) string {
 		return g.goType(t) + "{" + g.genValue(t.elem) + ", " + g.genValue(t.elem) + "}"
 	case "map":
 		return g.goType(t) + "{\"k0\": " + g.genValue(t.elem) + ", \"k1\": " + g.genValue(t.elem) + "}"
+	case "mapmap":
+		// Two outer keys, each a two-entry inner map, so a swapped or mis-scoped
+		// entry is caught by DeepEqual. Values are random, so they differ.
+		inner := func() string {
+			return t.stName + "{\"ik0\": " + g.scalarValue("string") + ", \"ik1\": " + g.scalarValue("string") + "}"
+		}
+		return g.goType(t) + "{\"k0\": " + inner() + ", \"k1\": " + inner() + "}"
 	case "struct":
 		var b strings.Builder
 		b.WriteString(t.stName + "{")

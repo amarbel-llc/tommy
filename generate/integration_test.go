@@ -146,6 +146,87 @@ func TestDecodeEncode(t *testing.T) {
 	}
 }
 
+// Regression for the nested map[string]NamedMap scoping bug surfaced by the #91
+// fuzzer extension: a mapmap nested inside a map-struct entry (itself inside an
+// array-table entry) must scope its sub-tables to the enclosing entry, not the
+// document root, and must trim the runtime map key against the enclosing scope's
+// header (the loop's _ch must not shadow that scope). See #86/#87 for the kind.
+func TestIntegrationNestedMapMapScoping(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/mm\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package mm
+
+type Labels map[string]string
+
+type Inner struct {
+	M map[string]Labels `+"`"+`toml:"m"`+"`"+`
+}
+
+// MapStruct holds a map[string]Inner, so a mapmap nests inside a map-struct entry.
+//go:generate tommy generate
+type MapStructCfg struct {
+	Am map[string]Inner `+"`"+`toml:"am"`+"`"+`
+}
+
+// ArrayMapStruct nests mapmap inside a map-struct entry inside an array entry.
+//go:generate tommy generate
+type ArrayMapStructCfg struct {
+	Items []MapStructCfg `+"`"+`toml:"items"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "mm_test.go", `package mm
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestMM(t *testing.T) {
+	// map-struct entry containing a mapmap.
+	md, _ := DecodeMapStructCfg([]byte(""))
+	wantMS := MapStructCfg{Am: map[string]Inner{
+		"e0": {M: map[string]Labels{"k0": {"a": "1"}, "k1": {"b": "2"}}},
+		"e1": {M: map[string]Labels{"k0": {"c": "3"}}},
+	}}
+	*md.Data() = wantMS
+	out, _ := md.Encode()
+	md2, err := DecodeMapStructCfg(out)
+	if err != nil || !reflect.DeepEqual(*md2.Data(), wantMS) {
+		t.Fatalf("MAPSTRUCT mismatch err=%v\nwant %#v\ngot  %#v\n--TOML--\n%s", err, wantMS, *md2.Data(), out)
+	}
+
+	// array entry -> map-struct entry -> mapmap (the failing fuzzer shape).
+	ad, _ := DecodeArrayMapStructCfg([]byte(""))
+	wantA := ArrayMapStructCfg{Items: []MapStructCfg{
+		{Am: map[string]Inner{"e0": {M: map[string]Labels{"x": {"a": "1"}}}}},
+		{Am: map[string]Inner{"e1": {M: map[string]Labels{"y": {"b": "2"}}}}},
+	}}
+	*ad.Data() = wantA
+	out2, _ := ad.Encode()
+	ad2, err := DecodeArrayMapStructCfg(out2)
+	if err != nil || !reflect.DeepEqual(*ad2.Data(), wantA) {
+		t.Fatalf("ARRAY-MAPSTRUCT mismatch err=%v\nwant %#v\ngot  %#v\n--TOML--\n%s", err, wantA, *ad2.Data(), out2)
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestMM", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", output)
+	}
+}
+
 // Regression for #90: a generated decoder must reject a repeated key within a
 // table (per the TOML spec, "Defining a key multiple times is invalid") rather
 // than silently keeping the last occurrence. The same key name in distinct

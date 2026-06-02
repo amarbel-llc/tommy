@@ -400,23 +400,67 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 		compScopedDelMap(ctx, g, n, scope)
 
 	case cdMapMap:
-		// map[string]map[string]string nested directly inside an array-table entry
-		// is a rare, untested shape; the prior renderer had no positional case for
-		// it either, so it is left unhandled here.
+		compScopedMapMap(ctx, g, n, scope)
 	}
+}
+
+// compScopedMapMap decodes a map[string]NamedMap nested inside an array-table or
+// map entry: its sub-tables are scoped to the entry node (FindChildSubTables),
+// mirroring compScopedMapStruct but extracting a string map per entry rather than
+// decoding a struct. See #86/#87 (scoping) applied to the mapmap kind.
+func compScopedMapMap(ctx jenCtx, g *jen.Group, n cdMapMap, scope *jen.Statement) {
+	field := n.TKey.BareKey()
+	mapType := func() *jen.Statement {
+		if n.TypeName != "" {
+			return jen.Map(jen.String()).Add(jenType(n.TypeName, n.ImportPath))
+		}
+		return jen.Map(jen.String()).Map(jen.String()).String()
+	}
+	g.BlockFunc(func(b *jen.Group) {
+		pv := scopedSubTablePrefix(b, scope, n.TKey, field)
+		b.Var().Id("_mr").Add(mapType())
+		b.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Qual(cstPkg, "FindChildSubTables").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(field))).BlockFunc(func(lb *jen.Group) {
+			lb.Id("_mk").Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), jen.Id(pv))
+			lb.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(ib *jen.Group) {
+				ib.Add(ctx.mc(n.TKey))
+				ib.Id("_mr").Op("=").Make(mapType())
+			})
+			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
+			lb.Id("_inner").Op(":=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_ch"))
+			lb.For(jen.Id("_ik").Op(":=").Range().Id("_inner")).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk").Op("+").Lit(".").Op("+").Id("_ik")))
+			if n.TypeName != "" {
+				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Add(jenType(n.TypeName, n.ImportPath)).Call(jen.Id("_inner"))
+			} else {
+				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("_inner")
+			}
+		})
+		b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
+	})
+}
+
+// scopedSubTablePrefix declares a uniquely-named local holding
+// "<scope header>.<field>." — the dotted prefix shared by a scoped map's
+// sub-tables — captured BEFORE the iteration loop. This matters when a scoped
+// map nests inside another: the loop's `_ch` shadows an enclosing scope that is
+// also bound to `_ch`, so re-evaluating TableHeaderKey(scope) inside the loop
+// would read the wrong node. Returns the local's name. See #86/#87.
+func scopedSubTablePrefix(b *jen.Group, scope *jen.Statement, key TOMLKey, field string) string {
+	v := "_pfx" + key.VarSuffix()
+	b.Id(v).Op(":=").Qual(cstPkg, "TableHeaderKey").Call(scope.Clone()).Op("+").Lit("." + field + ".")
+	return v
 }
 
 func compScopedMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, scope *jen.Statement) {
 	field := n.TKey.BareKey()
-	prefix := jen.Qual(cstPkg, "TableHeaderKey").Call(scope.Clone()).Op("+").Lit("." + field + ".")
 	g.BlockFunc(func(b *jen.Group) {
+		pv := scopedSubTablePrefix(b, scope, n.TKey, field)
 		if n.SlicePtr {
 			b.Var().Id("_mr").Map(jen.String()).Op("*").Id(n.TypeName)
 		} else {
 			b.Var().Id("_mr").Map(jen.String()).Id(n.TypeName)
 		}
 		b.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Qual(cstPkg, "FindChildSubTables").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(field))).BlockFunc(func(lb *jen.Group) {
-			lb.Id(n.MapVar).Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), prefix.Clone())
+			lb.Id(n.MapVar).Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), jen.Id(pv))
 			lb.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(ctx.mc(n.TKey))
 				if n.SlicePtr {
@@ -493,9 +537,9 @@ func compScopedDelMap(ctx jenCtx, g *jen.Group, n cdDelMap, scope *jen.Statement
 	field := n.TKey.BareKey()
 	bk := n.TKey.BareKey()
 	decFn := "Decode" + st + "Into"
-	prefix := jen.Qual(cstPkg, "TableHeaderKey").Call(scope.Clone()).Op("+").Lit("." + field + ".")
+	pv := scopedSubTablePrefix(g, scope, n.TKey, field)
 	g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Qual(cstPkg, "FindChildSubTables").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(field))).BlockFunc(func(lb *jen.Group) {
-		lb.Id("_mk").Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), prefix.Clone())
+		lb.Id("_mk").Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), jen.Id(pv))
 		lb.If(n.Tgt.Jen().Clone().Op("==").Nil()).BlockFunc(func(ib *jen.Group) {
 			ib.Add(ctx.mc(n.TKey))
 			ib.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Qual(n.ImportPath, st))
@@ -664,16 +708,14 @@ func compRenderEncodeBody(ctx encCtx, children []ceNode, cv *jen.Statement) []je
 
 // compEncodeNeedsContainer reports whether the parent table/sub-table node will
 // be referenced by any child — i.e. whether to bind it to a variable rather than
-// `_`. Most child kinds write through the container, but those that operate on
-// the document root do not: ceMapMap always, and array-tables / delegated slices
-// when they are NOT scoped (top-level / struct-nested, found root-wide by their
-// unique dotted key). A scoped array-table/delegated-slice does use the container
-// (it finds/appends within the parent's child scope).
+// `_`. Most child kinds write through the container (now including ceMapMap,
+// which nests its sub-tables under it). The exceptions operate on the document
+// root: array-tables / delegated slices when NOT scoped (top-level /
+// struct-nested, found root-wide by their unique dotted key). A scoped
+// array-table/delegated-slice does use the container (find/append within scope).
 func compEncodeNeedsContainer(children []ceNode) bool {
 	for _, c := range children {
 		switch n := c.(type) {
-		case ceMapMap:
-			continue
 		case ceArrayTable:
 			if n.Scoped {
 				return true
@@ -696,7 +738,7 @@ func compEncodeNode(ctx encCtx, c ceNode, cv *jen.Statement) []jen.Code {
 	case ceMapScalar:
 		return compSetMapScalar(ctx, n, cv)
 	case ceMapMap:
-		return compEncMapMap(ctx, n)
+		return compEncMapMap(ctx, n, cv)
 	case ceTable:
 		return compEncTable(ctx, n, cv)
 	case ceNilGuard:
@@ -867,13 +909,17 @@ func compSetMapScalar(ctx encCtx, n ceMapScalar, cv *jen.Statement) []jen.Code {
 	}
 }
 
-func compEncMapMap(ctx encCtx, n ceMapMap) []jen.Code {
+func compEncMapMap(ctx encCtx, n ceMapMap, cv *jen.Statement) []jen.Code {
 	bk := n.TKey.BareKey()
 	src := n.Tgt.Jen()
+	// cv is the parent container (document root at top level, the enclosing
+	// struct/array-entry node when nested). Nesting the sub-tables under it —
+	// like ceMapStruct — keeps map[string]NamedMap scoped to its parent (#86/#87
+	// for the mapmap kind), rather than always writing at the document root.
 	return []jen.Code{
 		jen.If(jen.Len(src.Clone()).Op(">").Lit(0)).BlockFunc(func(g *jen.Group) {
 			g.For(jen.List(jen.Id("mapKey"), jen.Id("mapVal")).Op(":=").Range().Add(src.Clone())).Block(
-				jen.Id("subTable").Op(":=").Qual(cstPkg, "EnsureChildSubTable").Call(ctx.rootVar.Clone(), ctx.rootVar.Clone(), jen.Lit(bk), jen.Id("mapKey")),
+				jen.Id("subTable").Op(":=").Qual(cstPkg, "EnsureChildSubTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk), jen.Id("mapKey")),
 				jen.Qual(cstPkg, "DeleteAllValues").Call(jen.Id("subTable")),
 				jen.For(jen.List(jen.Id("k"), jen.Id("v")).Op(":=").Range().Map(jen.String()).String().Call(jen.Id("mapVal"))).Block(
 					jen.If(jen.Err().Op(":=").Qual(cstPkg, "SetAny").Call(

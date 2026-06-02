@@ -156,6 +156,15 @@ debug-offline-test test_name:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
     go test -run '^{{test_name}}$' ./generate/ -v -count=1
 
+# Run the round-trip fuzzer for ONE seed with a small case count, showing the
+# full failure (want/got/TOML) so a single mismatch can be inspected. The sweep's
+# grep truncates and overflows on large dumps; this is the drill-down companion.
+[group('debug')]
+debug-fuzz-one seed='1' cases='4':
+  GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
+    TOMMY_FUZZ_SEED={{seed}} TOMMY_FUZZ_CASES={{cases}} \
+    go test -run '^TestRoundTripFuzz$' ./generate/ -v -count=1
+
 # Sweep the round-trip fuzzer across N seeds (each a different random shape set)
 # to flush codegen bugs in untested type-shape combinations. CI runs seed 1 only;
 # this is for local widening.
