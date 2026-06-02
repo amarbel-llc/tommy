@@ -2391,9 +2391,11 @@ import (
 	"testing"
 )
 
-// Encoding from a document that never had the keys must still emit them as
-// "key = []" because neither field carries omitempty.
-func TestEmptyNonOmitemptySlicesEmitted(t *testing.T) {
+// Faithful nil/empty (#21): a non-omitempty slice that was never present in the
+// source (nil after decode) is OMITTED on encode — distinct from an explicit
+// empty slice, which still emits "key = []" (see the companion test below). This
+// is the present-vs-absent distinction TOML's inline arrays can carry.
+func TestNilNonOmitemptySlicesOmitted(t *testing.T) {
 	doc, err := DecodeConfig([]byte("name = \"app\"\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -2403,11 +2405,11 @@ func TestEmptyNonOmitemptySlicesEmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "tags = []") {
-		t.Fatalf("expected primitive slice to emit \"tags = []\", got:\n%s", out)
+	if strings.Contains(string(out), "tags") {
+		t.Fatalf("nil primitive slice should be omitted, got tags in:\n%s", out)
 	}
-	if !strings.Contains(string(out), "marks = []") {
-		t.Fatalf("expected text-marshaler slice to emit \"marks = []\", got:\n%s", out)
+	if strings.Contains(string(out), "marks") {
+		t.Fatalf("nil text-marshaler slice should be omitted, got marks in:\n%s", out)
 	}
 }
 
@@ -2429,6 +2431,32 @@ func TestExplicitEmptyNonOmitemptySlicesEmitted(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "marks = []") {
 		t.Fatalf("expected \"marks = []\", got:\n%s", out)
+	}
+}
+
+// Faithful nil/empty (#21): nil and empty primitive slices stay distinct across
+// a full encode→decode round-trip — nil omits and re-decodes nil; empty emits
+// "key = []" and re-decodes a non-nil empty slice.
+func TestNilEmptyPrimitiveSliceRoundTrip(t *testing.T) {
+	rt := func(set func(c *Config)) Config {
+		doc, err := DecodeConfig([]byte("name = \"app\"\n"))
+		if err != nil { t.Fatal(err) }
+		set(doc.Data())
+		out, err := doc.Encode()
+		if err != nil { t.Fatal(err) }
+		d2, err := DecodeConfig(out)
+		if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+		return *d2.Data()
+	}
+
+	nilRT := rt(func(c *Config) { c.Tags = nil })
+	if nilRT.Tags != nil {
+		t.Fatalf("nil Tags should round-trip to nil, got %#v", nilRT.Tags)
+	}
+
+	emptyRT := rt(func(c *Config) { c.Tags = []string{} })
+	if emptyRT.Tags == nil || len(emptyRT.Tags) != 0 {
+		t.Fatalf("empty Tags should round-trip to non-nil empty, got %#v", emptyRT.Tags)
 	}
 }
 `)

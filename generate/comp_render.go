@@ -114,8 +114,17 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 			)
 		} else if l.TypeName != "" {
 			body = append(body, l.Tgt.Jen().Clone().Op("=").Add(jenType(l.TypeName, l.ImportPath)).Call(jen.Id("v")))
+			// Faithful nil/empty (#21): the extractor returns a nil slice for a
+			// present-but-empty `key = []`; keep it non-nil so it round-trips as
+			// empty rather than collapsing to an absent-key nil.
+			body = append(body, jen.If(l.Tgt.Jen().Clone().Op("==").Nil()).Block(
+				l.Tgt.Jen().Clone().Op("=").Add(jenType(l.TypeName, l.ImportPath)).Values(),
+			))
 		} else {
 			body = append(body, l.Tgt.Jen().Clone().Op("=").Id("v"))
+			body = append(body, jen.If(l.Tgt.Jen().Clone().Op("==").Nil()).Block(
+				l.Tgt.Jen().Clone().Op("=").Index().Id(l.ElemType).Values(),
+			))
 		}
 		body = append(body, ctx.mc(l.TKey))
 		return wrap(jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, cstSliceExtractFunc(l.ElemType)).Call(jen.Id("_kv")), jen.Id("ok")).Block(body...))
@@ -857,8 +866,13 @@ func compSetPrimitive(ctx encCtx, n ceLeaf, cv *jen.Statement) []jen.Code {
 func compSetSlicePrimitive(ctx encCtx, n ceLeaf, cv *jen.Statement) []jen.Code {
 	bk := n.TKey.BareKey()
 	if !n.OmitEmpty {
+		// Faithful nil/empty (#21): a nil slice omits the key entirely; a non-nil
+		// slice — including an empty one — emits `key = [...]` / `key = []`. (An
+		// inline array, unlike an array-of-tables, has a present-empty TOML form.)
 		return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-			g.Add(compSlicePrimSet(ctx, n, cv, bk))
+			g.If(n.Tgt.Jen().Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
+				g.Add(compSlicePrimSet(ctx, n, cv, bk))
+			})
 		})}
 	}
 	src := n.Tgt.Jen()
@@ -905,7 +919,10 @@ func compSetSliceTextMarshaler(ctx encCtx, n ceLeaf, cv *jen.Statement) []jen.Co
 		g.Add(jenSetCall(ctx, cv, StaticKey(bk), jen.Id("vals")))
 	}
 	if !n.OmitEmpty {
-		return []jen.Code{jen.BlockFunc(emit)}
+		// Faithful nil/empty (#21): nil omits, non-nil (incl. empty) emits.
+		return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
+			g.If(src.Clone().Op("!=").Nil()).BlockFunc(emit)
+		})}
 	}
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.If(jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "HasValue").Call(cv.Clone(), jen.Lit(bk))).BlockFunc(emit)

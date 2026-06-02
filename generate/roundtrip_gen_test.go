@@ -227,17 +227,29 @@ func (g *shapeGen) genValue(t *td) string {
 				b.WriteString(", ")
 			}
 			fv := g.genValue(f.t)
-			// Emit a nil field ~1/4 of the time, but only where it round-trips
-			// cleanly: a nil *scalar / *struct / map / mapmap field is simply an
-			// absent key (or absent [table]). Excluded: nil slices (the nil/empty
-			// fidelity gap, #21) and any nil collection element (TOML has no null).
-			nilable := false
+			// Emit nil/empty variants where they round-trip faithfully (#21). A nil
+			// *scalar / *struct / map / mapmap field is simply an absent key/[table].
+			// A primitive slice distinguishes nil (key omitted) from empty `= []`, so
+			// generate both. An array-table slice ([]struct / []*struct) has no
+			// present-empty TOML form (an array-of-tables exists only with ≥1 entry),
+			// so nil≡empty there — keep those populated. Nil collection ELEMENTS stay
+			// excluded (TOML has no null).
 			switch f.t.kind {
 			case "map", "mapmap", "ptr":
-				nilable = true
-			}
-			if nilable && g.rng.Intn(4) == 0 {
-				fv = "nil"
+				if g.rng.Intn(4) == 0 {
+					fv = "nil"
+				}
+			case "slice":
+				primElem := f.t.elem.kind == "scalar" ||
+					(f.t.elem.kind == "ptr" && f.t.elem.elem.kind == "scalar")
+				if primElem {
+					switch g.rng.Intn(4) {
+					case 0:
+						fv = "nil"
+					case 1:
+						fv = g.goType(f.t) + "{}"
+					}
+				}
 			}
 			b.WriteString(f.name + ": " + fv)
 		}

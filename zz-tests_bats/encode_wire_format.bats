@@ -12,11 +12,11 @@ setup() {
   setup_tommy_proj
 }
 
-# Regression for #82: a slice field WITHOUT omitempty must serialize even when
-# empty, as `key = []`. Round-trip stays byte-identical (empty -> omitted ->
-# decodes back to empty), so only an explicit emission assertion catches the
-# drop. Covers both the primitive-slice and TextMarshaler-slice encode paths
-# (madder's `Encryption []markl.Id` is the latter).
+# Regression for #82 under the faithful nil/empty contract (#21): an EXPLICIT
+# empty (non-nil) slice without omitempty must serialize as `key = []` (not be
+# dropped), while a nil/absent slice is OMITTED — the two are distinct. Covers
+# both the primitive-slice and TextMarshaler-slice encode paths (madder's
+# `Encryption []markl.Id` is the latter).
 function empty_non_omitempty_slices_emit_brackets { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
@@ -48,12 +48,13 @@ import (
 )
 
 func TestEmptyNonOmitemptySlicesEmitted(t *testing.T) {
-	// A document that never carried the keys must still emit them: neither
-	// field has omitempty.
+	// An EXPLICIT empty (non-nil) slice must emit "key = []" (not be dropped).
 	doc, err := DecodeConfig([]byte("name = \"app\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	doc.Data().Tags = []string{}
+	doc.Data().Marks = []Mark{}
 	out, err := doc.Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +64,19 @@ func TestEmptyNonOmitemptySlicesEmitted(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "marks = []") {
 		t.Fatalf("text-marshaler slice: want \"marks = []\" in output, got:\n%s", out)
+	}
+
+	// A nil/absent slice, by contrast, is omitted.
+	doc2, err := DecodeConfig([]byte("name = \"app\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out2, err := doc2.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out2), "tags") || strings.Contains(string(out2), "marks") {
+		t.Fatalf("nil slices should be omitted, got:\n%s", out2)
 	}
 }
 GOEOF
