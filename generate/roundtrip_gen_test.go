@@ -235,8 +235,23 @@ func (g *shapeGen) genValue(t *td) string {
 			// so nil≡empty there — keep those populated. Nil collection ELEMENTS stay
 			// excluded (TOML has no null).
 			switch f.t.kind {
-			case "map", "mapmap", "ptr":
+			case "mapmap", "ptr":
 				if g.rng.Intn(4) == 0 {
+					fv = "nil"
+				}
+			case "map":
+				// map[string]string (scalar elem) has a present-empty form (an empty
+				// `[table]`), so it's faithful: generate nil AND empty. map[string]Struct
+				// uses `[m.key]` sub-tables with no distinct empty representation, so it
+				// normalizes nil≡empty — only nil there.
+				if f.t.elem.kind == "scalar" {
+					switch g.rng.Intn(4) {
+					case 0:
+						fv = "nil"
+					case 1:
+						fv = g.goType(f.t) + "{}"
+					}
+				} else if g.rng.Intn(4) == 0 {
 					fv = "nil"
 				}
 			case "slice":

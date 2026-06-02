@@ -283,6 +283,75 @@ func TestFF(t *testing.T) {
 	}
 }
 
+// Regression for #21 (maps): a nil map[string]string omits its [table] and
+// re-decodes nil; a present-but-empty map emits an empty [m] table and
+// re-decodes a non-nil empty map. (struct/nested-map kinds normalize nil≡empty
+// because their sub-table encoding has no distinct empty form.)
+func TestIntegrationNilEmptyMapRoundTrip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/nem\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package nem
+
+//go:generate tommy generate
+type Config struct {
+	Name string            `+"`"+`toml:"name"`+"`"+`
+	M    map[string]string `+"`"+`toml:"m"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "nem_test.go", `package nem
+
+import (
+	"strings"
+	"testing"
+)
+
+func rt(t *testing.T, set func(c *Config)) (Config, string) {
+	doc, err := DecodeConfig([]byte("name = \"app\"\n"))
+	if err != nil { t.Fatal(err) }
+	set(doc.Data())
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	d2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	return *d2.Data(), string(out)
+}
+
+func TestNEM(t *testing.T) {
+	nilRT, nilOut := rt(t, func(c *Config) { c.M = nil })
+	if nilRT.M != nil {
+		t.Fatalf("nil map should round-trip to nil, got %#v", nilRT.M)
+	}
+	if strings.Contains(nilOut, "[m]") {
+		t.Fatalf("nil map should omit the [m] table, got:\n%s", nilOut)
+	}
+
+	emptyRT, emptyOut := rt(t, func(c *Config) { c.M = map[string]string{} })
+	if emptyRT.M == nil || len(emptyRT.M) != 0 {
+		t.Fatalf("empty map should round-trip to non-nil empty, got %#v", emptyRT.M)
+	}
+	if !strings.Contains(emptyOut, "[m]") {
+		t.Fatalf("empty map should emit an empty [m] table, got:\n%s", emptyOut)
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestNEM", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Regression for #101: an absent *struct whose inner field is itself
 // table-valued (a map, here) must not false-match a root- or grandparent-level
 // table. The #55/#89 flat-key fallback only makes sense for inner fields that

@@ -168,6 +168,9 @@ func compMapScalar(ctx jenCtx, n cdMapScalar, fv string) []jen.Code {
 	return []jen.Code{jen.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
 		jen.If(tableMatch(n.TKey)).BlockFunc(func(g *jen.Group) {
 			g.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_ch"))
+			// Faithful nil/empty (#21): a present-but-empty [table] extracts to a
+			// nil map; keep it non-nil so it round-trips as empty, not absent.
+			g.If(n.Tgt.Jen().Clone().Op("==").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Map(jen.String()).String().Values())
 			if fv != "" {
 				g.Id(fv).Op("=").True()
 			}
@@ -407,6 +410,8 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
 			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id(v))
+				// Faithful nil/empty (#21): present-but-empty [table] -> non-nil.
+				ib.If(n.Tgt.Jen().Clone().Op("==").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Map(jen.String()).String().Values())
 				if fv != "" {
 					ib.Id(fv).Op("=").True()
 				}
@@ -932,8 +937,12 @@ func compSetSliceTextMarshaler(ctx encCtx, n ceLeaf, cv *jen.Statement) []jen.Co
 func compSetMapScalar(ctx encCtx, n ceMapScalar, cv *jen.Statement) []jen.Code {
 	bk := n.TKey.BareKey()
 	src := n.Tgt.Jen()
+	// Faithful nil/empty (#21): a nil map omits the [table]; a non-nil map —
+	// including an empty one — emits the `[table]` header (EnsureChildTable creates
+	// it even with no entries), so a present-empty map round-trips as non-nil
+	// rather than collapsing to an absent-table nil.
 	return []jen.Code{
-		jen.If(jen.Len(src.Clone()).Op(">").Lit(0)).BlockFunc(func(g *jen.Group) {
+		jen.If(src.Clone().Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 			g.Id("tableNode").Op(":=").Qual(cstPkg, "EnsureChildTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk))
 			g.Qual(cstPkg, "DeleteAllValues").Call(jen.Id("tableNode"))
 			g.For(jen.List(jen.Id("k"), jen.Id("v")).Op(":=").Range().Add(src.Clone())).Block(
