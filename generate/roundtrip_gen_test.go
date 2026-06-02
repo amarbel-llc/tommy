@@ -191,6 +191,15 @@ func (g *shapeGen) goType(t *td) string {
 // genValue emits a Go composite literal populating t. Every slice/map gets two
 // distinct entries so a swapped index or mis-scoped entry is caught by DeepEqual.
 func (g *shapeGen) genValue(t *td) string {
+	// nil generation is confined to representable positions. A nil pointer or nil
+	// map as a STRUCT FIELD round-trips cleanly (the key is simply absent), and is
+	// emitted ~1/4 of the time by the struct case below. A nil pointer as a
+	// slice/map ELEMENT is NOT generated: TOML arrays/sub-tables have no null, so
+	// []*T{nil} / map[string]*T{k:nil} are unrepresentable. nil *slices* are also
+	// not generated — their decode normalizes inconsistently across element types
+	// (nil []string -> nil, but nil []*int/[]Struct -> empty), a fidelity gap
+	// tracked separately. Empty non-nil collections normalize to nil and are not
+	// generated either.
 	switch t.kind {
 	case "scalar":
 		return g.scalarValue(t.scalar)
@@ -217,7 +226,24 @@ func (g *shapeGen) genValue(t *td) string {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(f.name + ": " + g.genValue(f.t))
+			fv := g.genValue(f.t)
+			// Emit a nil field ~1/4 of the time, but only where it round-trips
+			// cleanly: a nil *scalar / map / mapmap field is simply an absent key.
+			// Excluded: nil *struct fields (they hit the #55/#89 flat-fallback
+			// sibling-key false-match, tracked separately), nil slices (the
+			// nil/empty fidelity gap), and any nil collection element (TOML has no
+			// null).
+			nilable := false
+			switch f.t.kind {
+			case "map", "mapmap":
+				nilable = true
+			case "ptr":
+				nilable = f.t.elem.kind != "struct"
+			}
+			if nilable && g.rng.Intn(4) == 0 {
+				fv = "nil"
+			}
+			b.WriteString(f.name + ": " + fv)
 		}
 		b.WriteString("}")
 		return b.String()
