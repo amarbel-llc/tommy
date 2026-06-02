@@ -146,6 +146,111 @@ func TestDecodeEncode(t *testing.T) {
 	}
 }
 
+// Regression for #89: a struct whose fields are ALL array-of-tables must not
+// emit a bare parent [table] header — the array-table headers already imply the
+// parent. An empty inner slice yielded a content-less [section]; a non-empty one
+// yielded a redundant [section] above the [[section.items]] entries.
+func TestIntegrationAllArrayFieldStructNoEmptyTable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/allarray",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package allarray
+
+//go:generate tommy generate
+type Outer struct {
+	Section Section `+"`"+`toml:"section"`+"`"+`
+}
+
+type Section struct {
+	Items []Item `+"`"+`toml:"items"`+"`"+`
+}
+
+type Item struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "wire_test.go", `package allarray
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestNoSpuriousSectionHeader(t *testing.T) {
+	// Empty array-table field: encode must not emit a content-less [section].
+	d, err := DecodeOuter([]byte(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	*d.Data() = Outer{Section: Section{Items: nil}}
+	out, err := d.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "[section]") {
+		t.Fatalf("empty all-array struct emitted a bare [section]:\n%q", string(out))
+	}
+
+	// Non-empty: the array-table headers carry the parent, so no bare [section];
+	// and the document must still round-trip.
+	d2, err := DecodeOuter([]byte(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Outer{Section: Section{Items: []Item{{Name: "a"}, {Name: "b"}}}}
+	*d2.Data() = want
+	out2, err := d2.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out2), "[section]") {
+		t.Fatalf("non-empty all-array struct emitted a bare [section]:\n%s", out2)
+	}
+	if !strings.Contains(string(out2), "[[section.items]]") {
+		t.Fatalf("want [[section.items]] entries in output:\n%s", out2)
+	}
+	d3, err := DecodeOuter(out2)
+	if err != nil {
+		t.Fatalf("re-decode: %v\n%s", err, out2)
+	}
+	if !reflect.DeepEqual(*d3.Data(), want) {
+		t.Fatalf("round-trip mismatch\nwant %#v\ngot  %#v\n%s", want, *d3.Data(), out2)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-run", "TestNoSpuriousSectionHeader", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 func TestIntegrationSizedIntegers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

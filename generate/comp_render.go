@@ -202,15 +202,25 @@ func compMapMap(ctx jenCtx, n cdMapMap) []jen.Code {
 }
 
 func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
-	return []jen.Code{jen.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
-		jen.If(tableMatch(n.TKey)).BlockFunc(func(g *jen.Group) {
-			g.Add(ctx.mc(n.TKey))
-			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id("_ch"), "") {
-				g.Add(s)
+	ftv := "_ft" + n.TKey.VarSuffix()
+	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
+		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
+		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
+			jen.If(tableMatch(n.TKey)).Block(jen.Id(ftv).Op("=").Id("_ch"), jen.Break()),
+		)
+		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+			ib.Add(ctx.mc(n.TKey))
+			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id(ftv), "") {
+				ib.Add(s)
 			}
-			g.Break()
-		}),
-	)}
+		}).Else().BlockFunc(func(eb *jen.Group) {
+			// Header absent (#89): decode document-root-relative children (array
+			// tables / delegated slices) against the root node anyway.
+			for _, s := range compRenderDecodeBody(ctx, n.FlatChildren, ctx.docVar.Clone().Dot("Root").Call(), "") {
+				eb.Add(s)
+			}
+		})
+	})}
 }
 
 func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
@@ -309,9 +319,16 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 	switch n := c.(type) {
 	case cdInTable:
 		v := "_ct" + n.TKey.VarSuffix()
-		g.If(jen.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey())), jen.Id(v).Op("!=").Nil()).BlockFunc(func(b *jen.Group) {
-			b.Add(ctx.mc(n.TKey))
-			compScopedBody(ctx, b, n.Children, jen.Id(v), "")
+		g.BlockFunc(func(b *jen.Group) {
+			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+				ib.Add(ctx.mc(n.TKey))
+				compScopedBody(ctx, ib, n.Children, jen.Id(v), "")
+			}).Else().BlockFunc(func(eb *jen.Group) {
+				// Header absent (#89): decode scope-relative array-table/delegated
+				// children within the parent scope anyway.
+				compScopedBody(ctx, eb, n.FlatChildren, scope.Clone(), "")
+			})
 		})
 
 	case cdNilGuard:
@@ -869,26 +886,60 @@ func compEncMapMap(ctx encCtx, n ceMapMap) []jen.Code {
 func compEncTable(ctx encCtx, n ceTable, cv *jen.Statement) []jen.Code {
 	bk := n.TKey.BareKey()
 	needsTable := compEncodeNeedsContainer(n.Children)
+	skip := compEncodeAllArrayTables(n.Children)
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		if needsTable {
 			g.Id("tableNode").Op(":=").Qual(cstPkg, "EnsureChildTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk))
-		} else {
+		} else if !skip {
 			g.Id("_").Op("=").Qual(cstPkg, "EnsureChildTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk))
 		}
+		// When every child is a document-root-relative array-table (#89), no
+		// parent table is created — the array-table headers imply it, and decode
+		// falls back to the dotted-key search (cdInTable.FlatChildren).
 		for _, s := range compRenderEncodeBody(ctx, n.Children, jen.Id("tableNode")) {
 			g.Add(s)
 		}
 	})}
 }
 
+// compEncodeAllArrayTables reports whether every child is a document-root-
+// relative array-table or delegated-slice. Such a struct needs no parent table
+// node on encode: the [[a.b]] headers already name the parent, and decode falls
+// back to the dotted-key search when the [a] header is absent (#89). A nested-map
+// child (which compEncodeNeedsContainer also treats as root-relative) or any
+// container-writing child returns false, so those keep their parent table.
+func compEncodeAllArrayTables(children []ceNode) bool {
+	if len(children) == 0 {
+		return false
+	}
+	for _, c := range children {
+		switch n := c.(type) {
+		case ceArrayTable:
+			if n.Scoped {
+				return false
+			}
+		case ceDelSlice:
+			if n.Scoped {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func compEncNilGuard(ctx encCtx, n ceNilGuard, cv *jen.Statement) []jen.Code {
 	bk := n.TKey.BareKey()
 	needsTable := compEncodeNeedsContainer(n.Children)
+	skip := compEncodeAllArrayTables(n.Children)
 	return []jen.Code{
 		jen.If(n.Tgt.Jen().Clone().Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
+			// See compEncTable / #89: a struct of only array-tables needs no
+			// parent table node; other root-relative children keep theirs.
 			if needsTable {
 				g.Id("tableNode").Op(":=").Qual(cstPkg, "EnsureChildTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk))
-			} else {
+			} else if !skip {
 				g.Id("_").Op("=").Qual(cstPkg, "EnsureChildTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk))
 			}
 			for _, s := range compRenderEncodeBody(ctx, n.Children, jen.Id("tableNode")) {

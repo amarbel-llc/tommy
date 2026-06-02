@@ -144,12 +144,36 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool) cdNode {
 		if te.InnerInfo == nil {
 			return nil
 		}
-		return cdInTable{TKey: c.tkey, Children: foldCompDecode(te.InnerInfo, c, false)}
+		return cdInTable{
+			TKey:         c.tkey,
+			Children:     foldCompDecode(te.InnerInfo, c, false),
+			FlatChildren: compDecodeFlatChildren(te.InnerInfo, c, c.tgt),
+		}
 
 	case spkDelegated:
 		return cdDelStruct{Tgt: c.tgt, TKey: c.tkey, ImportPath: te.ImportPath, TypeName: te.TypeName, Ptr: false}
 	}
 	return nil
+}
+
+// compDecodeFlatChildren builds the flat-key fallback decode for a struct's
+// inner fields, decoded at the parent container when the struct's own [table]
+// header is absent (#55, #89): array-table sub-fields keep their full dotted key
+// (matched document-root-relative), every other field uses a bare key at the
+// current container. tgt is where the decoded values land (a nil-guard local for
+// pointer structs, the field itself for value structs).
+func compDecodeFlatChildren(inner *StructInfo, c compPos, tgt TargetPath) []cdNode {
+	var flat []cdNode
+	for _, f := range inner.Fields {
+		pos := compPos{tgt: tgt, arrayDepth: c.arrayDepth, seq: c.seq}
+		if isSliceOfStruct(f.Type) {
+			pos.tkey = c.tkey
+		}
+		if n := foldCompDecodeField(f, pos, false); n != nil {
+			flat = append(flat, n)
+		}
+	}
+	return flat
 }
 
 // isSliceOfStruct reports whether te is a slice whose element (possibly behind a
@@ -183,21 +207,9 @@ func compDecodeNilGuard(fi FieldInfo, st spkStruct, c compPos) cdNode {
 	localTgt := LocalTarget(localVar)
 	// Children: all inner fields decoded inside the explicit [table].
 	children := foldCompDecode(st.InnerInfo, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
-	// FlatChildren (#55): inner fields decoded at the parent container. Array-table
-	// sub-fields keep their dotted keys (matched from the document root); other
-	// fields use bare keys at the current container.
-	var flat []cdNode
-	for _, inner := range st.InnerInfo.Fields {
-		var n cdNode
-		if isSliceOfStruct(inner.Type) {
-			n = foldCompDecodeField(inner, compPos{tkey: c.tkey, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
-		} else {
-			n = foldCompDecodeField(inner, compPos{tkey: TOMLKey{}, tgt: localTgt, arrayDepth: c.arrayDepth, seq: c.seq}, false)
-		}
-		if n != nil {
-			flat = append(flat, n)
-		}
-	}
+	// FlatChildren (#55): inner fields decoded at the parent container when the
+	// [table] header is absent.
+	flat := compDecodeFlatChildren(st.InnerInfo, c, localTgt)
 	return cdNilGuard{Tgt: c.tgt, TypeName: st.TypeName, TKey: c.tkey, LocalVar: localVar, Children: children, FlatChildren: flat}
 }
 

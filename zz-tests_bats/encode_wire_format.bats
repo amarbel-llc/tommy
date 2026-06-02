@@ -71,3 +71,81 @@ GOEOF
   assert_success
   assert_output --partial "ok"
 }
+
+# Regression for #89: a struct whose fields are ALL array-of-tables must not emit
+# a bare parent [table] header (the array-table headers already imply it), and
+# the headerless output must still round-trip — exercising the non-pointer
+# struct's flat-key decode fallback.
+function all_array_field_struct_omits_parent_table { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Outer struct {
+	Section Section `toml:"section"`
+}
+
+type Section struct {
+	Items []Item `toml:"items"`
+}
+
+type Item struct {
+	Name string `toml:"name"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > wire_test.go <<'GOEOF'
+package batstest
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestNoSpuriousSectionHeader(t *testing.T) {
+	d, err := DecodeOuter([]byte(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	*d.Data() = Outer{Section: Section{Items: nil}}
+	out, err := d.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "[section]") {
+		t.Fatalf("empty all-array struct emitted a bare [section]:\n%q", string(out))
+	}
+
+	d2, err := DecodeOuter([]byte(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Outer{Section: Section{Items: []Item{{Name: "a"}, {Name: "b"}}}}
+	*d2.Data() = want
+	out2, err := d2.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out2), "[section]") {
+		t.Fatalf("non-empty all-array struct emitted a bare [section]:\n%s", out2)
+	}
+	d3, err := DecodeOuter(out2)
+	if err != nil {
+		t.Fatalf("re-decode: %v\n%s", err, out2)
+	}
+	if !reflect.DeepEqual(*d3.Data(), want) {
+		t.Fatalf("round-trip mismatch\nwant %#v\ngot  %#v\n%s", want, *d3.Data(), out2)
+	}
+}
+GOEOF
+
+  run go test -run TestNoSpuriousSectionHeader ./...
+  assert_success
+  assert_output --partial "ok"
+}

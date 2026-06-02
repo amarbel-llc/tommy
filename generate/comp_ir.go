@@ -45,10 +45,15 @@ type cdLeaf struct {
 }
 
 // cdInTable finds [TKey] from the document root and decodes children scoped to
-// the found node.
+// the found node. When the header is absent, FlatChildren decode at the parent
+// container instead — array-table/delegated-slice sub-fields search by their
+// full dotted key (document-root-relative), so they round-trip even when the
+// parent table is omitted (#89; mirrors cdNilGuard's #55 fallback for the
+// non-pointer struct case, which is always materialized so needs no nil guard).
 type cdInTable struct {
-	TKey     TOMLKey
-	Children []cdNode
+	TKey         TOMLKey
+	Children     []cdNode
+	FlatChildren []cdNode
 }
 
 // cdNilGuard is Ptr(Struct): find [TKey], allocate *TypeName, decode Children;
