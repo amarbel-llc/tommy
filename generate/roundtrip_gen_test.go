@@ -52,17 +52,14 @@ type shapeGen struct {
 
 // fuzzableScalars is the fuzzer's scalar universe, DERIVED from the canonical
 // scalarTypes registry (scalars.go) rather than hardcoded — so adding a scalar to
-// the registry auto-expands fuzz coverage (#24). Restricted to the cast-free rows
-// for now: sized ints (int8/16/32, uint/8/16/32) and float32 also need a
-// per-element casting decode loop + encode conversion before they round-trip
-// (#96); once that lands this filter drops and every registry row is fuzzed.
-// Every name returned here must have a scalarValue case below.
+// the registry auto-expands fuzz coverage (#24). Every registry row is fuzzed now
+// that the sized rows (int8/16/32, uint/8/16/32, float32) have their per-element
+// casting decode loop + encode widening (#96). Every name here must have a
+// (range-clamped, for sized types) scalarValue case below.
 func fuzzableScalars() []string {
-	var out []string
-	for _, s := range scalarTypes {
-		if s.cast == "" {
-			out = append(out, s.goName)
-		}
+	out := make([]string, len(scalarTypes))
+	for i, s := range scalarTypes {
+		out[i] = s.goName
 	}
 	return out
 }
@@ -74,20 +71,37 @@ func (g *shapeGen) scalarType() string {
 
 func (g *shapeGen) scalarValue(typ string) string {
 	// int/bool/float64/string emit a literal whose untyped-constant default type
-	// already matches the field, so `ptr(...)` infers correctly. int64/uint64 do
-	// NOT (an untyped int constant defaults to int), so they must be emitted as a
-	// typed conversion — else `*int64` / `[]*uint64` literals fail to compile.
+	// already matches the field, so `ptr(...)` infers correctly. Every other
+	// scalar is emitted as a typed conversion (else `*int8` / `[]*uint32` literals
+	// fail to compile), and each sized sample is clamped to its type's range so the
+	// value survives the round-trip exactly.
 	switch typ {
 	case "string":
 		return strconv.Quote(fmt.Sprintf("s%d", g.rng.Intn(1_000_000)))
-	case "int":
-		return strconv.Itoa(g.rng.Intn(1_000_000) - 500_000)
-	case "int64":
-		return "int64(" + strconv.Itoa(g.rng.Intn(1_000_000)-500_000) + ")"
-	case "uint64":
-		return "uint64(" + strconv.Itoa(g.rng.Intn(1_000_000)) + ")"
 	case "bool":
 		return strconv.FormatBool(g.rng.Intn(2) == 1)
+	case "int":
+		return strconv.Itoa(g.rng.Intn(1_000_000) - 500_000)
+	case "int8":
+		return "int8(" + strconv.Itoa(g.rng.Intn(256)-128) + ")"
+	case "int16":
+		return "int16(" + strconv.Itoa(g.rng.Intn(65536)-32768) + ")"
+	case "int32":
+		return "int32(" + strconv.Itoa(g.rng.Intn(1_000_000)-500_000) + ")"
+	case "int64":
+		return "int64(" + strconv.Itoa(g.rng.Intn(1_000_000)-500_000) + ")"
+	case "uint":
+		return "uint(" + strconv.Itoa(g.rng.Intn(1_000_000)) + ")"
+	case "uint8":
+		return "uint8(" + strconv.Itoa(g.rng.Intn(256)) + ")"
+	case "uint16":
+		return "uint16(" + strconv.Itoa(g.rng.Intn(65536)) + ")"
+	case "uint32":
+		return "uint32(" + strconv.Itoa(g.rng.Intn(1_000_000)) + ")"
+	case "uint64":
+		return "uint64(" + strconv.Itoa(g.rng.Intn(1_000_000)) + ")"
+	case "float32":
+		return fmt.Sprintf("float32(%d.5)", g.rng.Intn(10_000))
 	case "float64":
 		return fmt.Sprintf("%d.5", g.rng.Intn(10_000))
 	}

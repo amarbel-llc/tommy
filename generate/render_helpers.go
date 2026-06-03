@@ -152,14 +152,15 @@ func cstExtract(typeName string) extractInfo {
 	return extractInfo{fn: "ExtractString"}
 }
 
-// cstSliceExtractFunc maps a primitive slice element type to the cst slice
-// extractor whose return type matches the element DIRECTLY — i.e. registry rows
-// with no cast (string/bool/int/int64/uint64/float64). Sized ints (int8/16/32,
-// uint/8/16/32) and float32 have a registry sliceFn too, but decoding them needs
-// a per-element casting loop in the renderer (tracked with #96); until that lands
-// they fall through to the string extractor (which only matches string elements).
+// cstSliceExtractFunc maps a primitive slice element type to its cst slice
+// extractor, from the registry. Cast-free rows (string/bool/int/int64/uint64/
+// float64) return a slice of the element's exact type; sized rows (int8/16/32,
+// uint/8/16/32, float32) return the widest variant ([]int64/[]uint64/[]float64),
+// which the renderer narrows per-element using the registry cast (see
+// compLeafCase cdLeafSlicePrim). Unknown element types fall back to the string
+// extractor.
 func cstSliceExtractFunc(elemType string) string {
-	if s, ok := lookupScalar(elemType); ok && s.cast == "" {
+	if s, ok := lookupScalar(elemType); ok {
 		return s.sliceFn
 	}
 	return "ExtractStringSlice"

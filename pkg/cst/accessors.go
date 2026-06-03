@@ -420,6 +420,22 @@ func EncodeValue(value any) ([]byte, NodeKind, error) {
 		return encodeBoolSliceBytes(v), NodeArray, nil
 	case []string:
 		return encodeStringSliceBytes(v), NodeArray, nil
+	case []int8:
+		return encodeInt64SliceBytes(toInt64Slice(v)), NodeArray, nil
+	case []int16:
+		return encodeInt64SliceBytes(toInt64Slice(v)), NodeArray, nil
+	case []int32:
+		return encodeInt64SliceBytes(toInt64Slice(v)), NodeArray, nil
+	case []uint:
+		return encodeUint64SliceBytes(toUint64Slice(v)), NodeArray, nil
+	case []uint8:
+		return encodeUint64SliceBytes(toUint64Slice(v)), NodeArray, nil
+	case []uint16:
+		return encodeUint64SliceBytes(toUint64Slice(v)), NodeArray, nil
+	case []uint32:
+		return encodeUint64SliceBytes(toUint64Slice(v)), NodeArray, nil
+	case []float32:
+		return encodeFloat64SliceBytes(toFloat64Slice(v)), NodeArray, nil
 	default:
 		return nil, 0, fmt.Errorf("unsupported value type %T", value)
 	}
@@ -486,6 +502,34 @@ func encodeBoolSliceBytes(v []bool) []byte {
 		parts[i] = strconv.FormatBool(b)
 	}
 	return []byte("[" + strings.Join(parts, ", ") + "]")
+}
+
+// toInt64Slice / toUint64Slice / toFloat64Slice widen a sized numeric slice to
+// its widest variant so the base slice encoders can render it (a []int8 encodes
+// identically to the []int64 of the same values). Used by EncodeValue's sized
+// slice cases.
+func toInt64Slice[T int8 | int16 | int32](v []T) []int64 {
+	out := make([]int64, len(v))
+	for i, e := range v {
+		out[i] = int64(e)
+	}
+	return out
+}
+
+func toUint64Slice[T uint | uint8 | uint16 | uint32](v []T) []uint64 {
+	out := make([]uint64, len(v))
+	for i, e := range v {
+		out[i] = uint64(e)
+	}
+	return out
+}
+
+func toFloat64Slice[T float32](v []T) []float64 {
+	out := make([]float64, len(v))
+	for i, e := range v {
+		out[i] = float64(e)
+	}
+	return out
 }
 
 // --- Value mutations ---

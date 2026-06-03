@@ -107,12 +107,38 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 		return wrap(jen.If(jen.List(jen.Id("v"), jen.Id("ok")).Op(":=").Qual(cstPkg, "ExtractString").Call(jen.Id("_kv")), jen.Id("ok")).Block(body...))
 	case cdLeafSlicePrim:
 		var body []jen.Code
-		if l.SlicePointer {
+		// cast is non-empty for a sized element (int8/16/32, uint/8/16/32, float32):
+		// the slice extractor returns the widest variant ([]int64/[]uint64/[]float64),
+		// so each element is narrowed with cast(...). A make(...,len(v))-based build
+		// is also non-nil for a present-but-empty `[]`, satisfying the #21 contract
+		// without a separate nil→empty guard.
+		sc, _ := lookupScalar(l.ElemType)
+		switch {
+		case l.SlicePointer && sc.cast != "":
+			body = append(body,
+				l.Tgt.Jen().Clone().Op("=").Make(jen.Index().Op("*").Id(l.ElemType), jen.Len(jen.Id("v"))),
+				jen.For(jen.Id("_si").Op(":=").Range().Id("v")).Block(
+					jen.Id("_e").Op(":=").Id(sc.cast).Call(jen.Id("v").Index(jen.Id("_si"))),
+					l.Tgt.Jen().Clone().Index(jen.Id("_si")).Op("=").Op("&").Id("_e"),
+				),
+			)
+		case l.SlicePointer:
 			body = append(body,
 				l.Tgt.Jen().Clone().Op("=").Make(jen.Index().Op("*").Id(l.ElemType), jen.Len(jen.Id("v"))),
 				jen.For(jen.Id("_si").Op(":=").Range().Id("v")).Block(l.Tgt.Jen().Clone().Index(jen.Id("_si")).Op("=").Op("&").Id("v").Index(jen.Id("_si"))),
 			)
-		} else if l.TypeName != "" {
+		case sc.cast != "":
+			sliceType := jen.Index().Id(l.ElemType)
+			if l.TypeName != "" {
+				sliceType = jenType(l.TypeName, l.ImportPath)
+			}
+			body = append(body,
+				l.Tgt.Jen().Clone().Op("=").Make(sliceType, jen.Len(jen.Id("v"))),
+				jen.For(jen.Id("_si").Op(":=").Range().Id("v")).Block(
+					l.Tgt.Jen().Clone().Index(jen.Id("_si")).Op("=").Id(sc.cast).Call(jen.Id("v").Index(jen.Id("_si"))),
+				),
+			)
+		case l.TypeName != "":
 			body = append(body, l.Tgt.Jen().Clone().Op("=").Add(jenType(l.TypeName, l.ImportPath)).Call(jen.Id("v")))
 			// Faithful nil/empty (#21): the extractor returns a nil slice for a
 			// present-but-empty `key = []`; keep it non-nil so it round-trips as
@@ -120,7 +146,7 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 			body = append(body, jen.If(l.Tgt.Jen().Clone().Op("==").Nil()).Block(
 				l.Tgt.Jen().Clone().Op("=").Add(jenType(l.TypeName, l.ImportPath)).Values(),
 			))
-		} else {
+		default:
 			body = append(body, l.Tgt.Jen().Clone().Op("=").Id("v"))
 			body = append(body, jen.If(l.Tgt.Jen().Clone().Op("==").Nil()).Block(
 				l.Tgt.Jen().Clone().Op("=").Index().Id(l.ElemType).Values(),

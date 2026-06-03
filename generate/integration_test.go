@@ -348,6 +348,79 @@ func TestSlices98(t *testing.T) {
 	}
 }
 
+// Coverage for #96: sized integer and float32 fields — scalars, slices, and a
+// pointer-slice — must round-trip. Sized slices decode via the widest extractor
+// ([]int64/[]uint64/[]float64) narrowed per-element by the registry cast, and
+// encode by widening back through the base slice encoders.
+func TestIntegrationSizedScalarSlices(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/sized96\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package sized96
+
+//go:generate tommy generate
+type Config struct {
+	I8  int8      `+"`"+`toml:"i8"`+"`"+`
+	S8  []int8    `+"`"+`toml:"s8"`+"`"+`
+	U8  uint8     `+"`"+`toml:"u8"`+"`"+`
+	SU8 []uint8   `+"`"+`toml:"su8"`+"`"+`
+	I16 []int16   `+"`"+`toml:"i16"`+"`"+`
+	U32 []uint32  `+"`"+`toml:"u32"`+"`"+`
+	F32 float32   `+"`"+`toml:"f32"`+"`"+`
+	SF  []float32 `+"`"+`toml:"sf"`+"`"+`
+	PI8 []*int8   `+"`"+`toml:"pi8"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "sized_test.go", `package sized96
+
+import (
+	"reflect"
+	"testing"
+)
+
+func ptr[T any](v T) *T { return &v }
+
+func TestSized96(t *testing.T) {
+	want := Config{
+		I8:  -42,
+		S8:  []int8{-128, 0, 127},
+		U8:  200,
+		SU8: []uint8{0, 255},
+		I16: []int16{-30000, 30000},
+		U32: []uint32{0, 4000000000},
+		F32: 1.5,
+		SF:  []float32{-2.25, 0.5},
+		PI8: []*int8{ptr(int8(-5)), ptr(int8(5))},
+	}
+	d, err := DecodeConfig([]byte(""))
+	if err != nil { t.Fatal(err) }
+	*d.Data() = want
+	out, err := d.Encode()
+	if err != nil { t.Fatalf("encode: %v", err) }
+	d2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	if !reflect.DeepEqual(*d2.Data(), want) {
+		t.Fatalf("round-trip mismatch\nwant %#v\ngot  %#v\ntoml:\n%s", want, *d2.Data(), out)
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestSized96", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Regression for #21 (maps): a nil map[string]string omits its [table] and
 // re-decodes nil; a present-but-empty map emits an empty [m] table and
 // re-decodes a non-nil empty map. (struct/nested-map kinds normalize nil≡empty
