@@ -536,12 +536,12 @@ func compScopedMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, scope *jen.Sta
 				}
 			})
 			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
-			lb.Var().Id("entry").Id(n.TypeName)
+			lb.Var().Id(n.EntryVar).Id(n.TypeName)
 			compScopedBody(ctx, lb, n.Children, jen.Id("_ch"), "")
 			if n.SlicePtr {
-				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id("entry")
+				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id(n.EntryVar)
 			} else {
-				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id("entry")
+				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
 			}
 		})
 		b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
@@ -605,16 +605,16 @@ func compScopedDelMap(ctx jenCtx, g *jen.Group, n cdDelMap, scope *jen.Statement
 	decFn := "Decode" + st + "Into"
 	pv := scopedSubTablePrefix(g, scope, n.TKey, field)
 	g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Qual(cstPkg, "FindChildSubTables").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(field))).BlockFunc(func(lb *jen.Group) {
-		lb.Id("_mk").Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), jen.Id(pv))
+		lb.Id(n.MapVar).Op(":=").Qual("strings", "TrimPrefix").Call(jen.Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")), jen.Id(pv))
 		lb.If(n.Tgt.Jen().Clone().Op("==").Nil()).BlockFunc(func(ib *jen.Group) {
 			ib.Add(ctx.mc(n.TKey))
 			ib.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Qual(n.ImportPath, st))
 		})
-		lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
-		lb.Var().Id("entry").Qual(n.ImportPath, st)
-		dke := n.TKey.Lit(".").Var("_mk").Lit(".")
-		lb.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(jen.Op("&").Id("entry"), ctx.docVar.Clone(), jen.Id("_ch"), ctx.consumed.Clone(), dke.Jen()), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+".%s: %w", jen.Id("_mk"), jen.Err()))
-		lb.Add(n.Tgt.Jen().Clone()).Index(jen.Id("_mk")).Op("=").Id("entry")
+		lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
+		lb.Var().Id(n.EntryVar).Qual(n.ImportPath, st)
+		dke := n.TKey.Lit(".").Var(n.MapVar).Lit(".")
+		lb.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(jen.Op("&").Id(n.EntryVar), ctx.docVar.Clone(), jen.Id("_ch"), ctx.consumed.Clone(), dke.Jen()), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+".%s: %w", jen.Id(n.MapVar), jen.Err()))
+		lb.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
 	})
 }
 
@@ -648,14 +648,14 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 				}
 			})
 			g.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
-			g.Var().Id("entry").Id(n.TypeName)
+			g.Var().Id(n.EntryVar).Id(n.TypeName)
 			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id("_ch"), "") {
 				g.Add(s)
 			}
 			if n.SlicePtr {
-				g.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id("entry")
+				g.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id(n.EntryVar)
 			} else {
-				g.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id("entry")
+				g.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
 			}
 		})
 		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
@@ -755,18 +755,18 @@ func compDelMap(ctx jenCtx, n cdDelMap) []jen.Code {
 			g.If(jen.Op("!").Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), pf.Jen())).Block(jen.Continue())
 			g.Id("_segs").Op(":=").Qual(cstPkg, "TableHeaderSegments").Call(jen.Id("_ch"))
 			g.If(jen.Len(jen.Id("_segs")).Op("!=").Lit(n.TKey.SegmentCount()+1)).Block(jen.Continue())
-			g.Id("_mk").Op(":=").Id("_segs").Index(jen.Len(jen.Id("_segs")).Op("-").Lit(1))
+			g.Id(n.MapVar).Op(":=").Id("_segs").Index(jen.Len(jen.Id("_segs")).Op("-").Lit(1))
 			g.If(n.Tgt.Jen().Clone().Op("==").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(n.TKey))
 				g.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Qual(n.ImportPath, st))
 			})
-			g.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
-			g.Var().Id("entry").Qual(n.ImportPath, st)
-			dke := n.TKey.Lit(".").Var("_mk").Lit(".")
+			g.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
+			g.Var().Id(n.EntryVar).Qual(n.ImportPath, st)
+			dke := n.TKey.Lit(".").Var(n.MapVar).Lit(".")
 			g.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(
-				jen.Op("&").Id("entry"), ctx.docVar.Clone(), jen.Id("_ch"), ctx.consumed.Clone(), dke.Jen(),
-			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+".%s: %w", jen.Id("_mk"), jen.Err()))
-			g.Add(n.Tgt.Jen().Clone()).Index(jen.Id("_mk")).Op("=").Id("entry")
+				jen.Op("&").Id(n.EntryVar), ctx.docVar.Clone(), jen.Id("_ch"), ctx.consumed.Clone(), dke.Jen(),
+			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+".%s: %w", jen.Id(n.MapVar), jen.Err()))
+			g.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
 		})
 	})}
 }

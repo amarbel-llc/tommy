@@ -113,6 +113,8 @@ type cdMapStruct struct {
 	TypeName string
 	SlicePtr bool
 	MapVar   string
+	EntryVar string // unique per nesting level so a delegated map inside the
+	// entry struct can't shadow it (its target expression references EntryVar)
 	Children []cdNode
 }
 
@@ -136,12 +138,17 @@ type cdDelSlice struct {
 	IdxVar     string // depth-distinct loop index var
 }
 
-// cdDelMap delegates per [TKey.<key>] sub-table.
+// cdDelMap delegates per [TKey.<key>] sub-table. MapVar/EntryVar are unique per
+// nesting level (like cdMapStruct) so a delegated map nested inside a map-struct
+// entry doesn't shadow that entry's `entry`/key locals — the collision that
+// produced uncompilable code (#105).
 type cdDelMap struct {
 	Tgt        TargetPath
 	TKey       TOMLKey
 	ImportPath string
 	ElemType   string // full "pkg.Type"
+	MapVar     string
+	EntryVar   string
 }
 
 func (cdLeaf) isCDNode()       {}

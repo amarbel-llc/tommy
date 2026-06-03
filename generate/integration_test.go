@@ -7831,6 +7831,109 @@ func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
 	}
 }
 
+// Regression #105: a delegated map nested inside a same-package map-struct entry
+// (map[string]Wrapper where Wrapper has map[string]pkga.Thing) must generate
+// compilable code. The map-struct entry decoder and the inner delegated-map
+// decoder both used a hardcoded `entry`/`_mk` local; nested, the inner `entry`
+// shadowed the outer, so the inner map's target expression (entry.Things)
+// rebound to the wrong type and the generated code failed to compile. Surfaced
+// by the cross-package round-trip fuzzer.
+func TestIntegrationDelegatedMapInStructMap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pkgaDir := filepath.Join(dir, "pkga")
+	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkga", "", "go 1.26", "",
+		"require github.com/amarbel-llc/tommy v0.0.0", "",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+	}, "\n"))
+	writeFixture(t, pkgaDir, "pkga.go", `package pkga
+
+//go:generate tommy generate
+type Thing struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+	if err := Generate(pkgaDir, "pkga.go"); err != nil {
+		t.Fatalf("Generate pkga: %v", err)
+	}
+
+	pkgbDir := filepath.Join(dir, "pkgb")
+	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkgb", "", "go 1.26", "",
+		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/pkga v0.0.0", ")", "",
+		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/pkga => ../pkga", ")", "",
+	}, "\n"))
+	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
+
+import "example.com/test/pkga"
+
+//go:generate tommy generate
+type Config struct {
+	Wrappers map[string]Wrapper `+"`"+`toml:"wrappers"`+"`"+`
+}
+
+type Wrapper struct {
+	Things map[string]pkga.Thing `+"`"+`toml:"things"`+"`"+`
+}
+`)
+	if err := Generate(pkgbDir, "pkgb.go"); err != nil {
+		t.Fatalf("Generate pkgb: %v", err)
+	}
+
+	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
+
+import (
+	"reflect"
+	"testing"
+
+	"example.com/test/pkga"
+)
+
+func TestDelegatedMapInStructMapRoundTrip(t *testing.T) {
+	// Round-trip from a value (as the fuzzer does) so the encoder emits the
+	// intermediate [wrappers.<k>] headers; hand-written TOML omitting them is a
+	// separate implicit-super-table concern, not what #105 is about.
+	d, err := DecodeConfig([]byte(""))
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	want := map[string]Wrapper{
+		"w1": {Things: map[string]pkga.Thing{"t1": {Name: "a"}, "t2": {Name: "b"}}},
+		"w2": {Things: map[string]pkga.Thing{"t3": {Name: "c"}}},
+	}
+	d.Data().Wrappers = want
+	out, err := d.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	d2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(d2.Data().Wrappers, want) {
+		t.Fatalf("round-trip mismatch:\ngot:  %#v\nwant: %#v\ntoml:\n%s", d2.Data().Wrappers, want, out)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = pkgbDir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 // Regression #103: a map key needing TOML quoting (a dot or a space) used as a
 // delegated map[string]CrossPackageStruct entry must serialize its sub-table
 // header quoted ([actions."build.fast"]) and decode back as one segment — not

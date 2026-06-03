@@ -140,7 +140,7 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool, siblingKey
 			if importPath == "" {
 				importPath = elem.ImportPath
 			}
-			return cdDelMap{Tgt: c.tgt, TKey: c.tkey, ImportPath: importPath, ElemType: elem.TypeName}
+			return cdDelMap{Tgt: c.tgt, TKey: c.tkey, ImportPath: importPath, ElemType: elem.TypeName, MapVar: c.nextLocal("_mk"), EntryVar: c.nextLocal("entry")}
 		case spkPtr:
 			if ps, ok := elem.Elem.(spkStruct); ok {
 				return compDecodeMapStruct(fi, ps, c, true)
@@ -289,13 +289,15 @@ func compDecodeMapStruct(fi FieldInfo, st spkStruct, c compPos, slicePtr bool) c
 	// directly. mapVar is unique per nesting level so a nested map-struct doesn't
 	// shadow the outer key its consumed marks still reference through TKey.
 	mapVar := c.nextLocal("_mk")
-	entryPos := compPos{tkey: c.tkey.Lit(".").Var(mapVar), tgt: LocalTarget("entry"), arrayDepth: c.arrayDepth, seq: c.seq}
+	entryVar := c.nextLocal("entry")
+	entryPos := compPos{tkey: c.tkey.Lit(".").Var(mapVar), tgt: LocalTarget(entryVar), arrayDepth: c.arrayDepth, seq: c.seq}
 	return cdMapStruct{
 		Tgt:      c.tgt,
 		TKey:     c.tkey,
 		TypeName: st.TypeName,
 		SlicePtr: slicePtr,
 		MapVar:   mapVar,
+		EntryVar: entryVar,
 		Children: foldCompDecode(st.InnerInfo, entryPos, false),
 	}
 }
