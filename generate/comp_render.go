@@ -1337,9 +1337,14 @@ func compEmitDecodeInto(f *jen.File, si StructInfo) {
 		jen.Id("consumed").Map(jen.String()).Bool(),
 		jen.Id("keyPrefix").String(),
 	).Error().BlockFunc(func(g *jen.Group) {
-		for _, s := range compRenderDecodeBody(ctx, nodes, jen.Id("container"), "") {
-			g.Add(s)
-		}
+		// Decode V's fields scoped to the passed container (#99). The delegated
+		// decoder always runs within a container (a [[slice]] entry or a [field]
+		// table), so nested table fields must resolve relative to it via
+		// FindChildTable(root, container, key) — not by scanning the document root,
+		// which makes every array-table entry pick up the first entry's sub-table.
+		// compScopedBody is the same scope-relative path same-package array-tables
+		// use (the #86/#87 fix); leaves still scan container.Children unchanged.
+		compScopedBody(ctx, g, nodes, jen.Id("container"), "")
 		g.Return(jen.Nil())
 	})
 }

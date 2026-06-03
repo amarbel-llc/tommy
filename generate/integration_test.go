@@ -7009,6 +7009,97 @@ func TestSliceCrossPackageUnexportedRoundTrip(t *testing.T) {
 	}
 }
 
+// Acceptance test for #99: a delegated struct used as an array-table element
+// ([]options_print.V1) whose definition has a nested *table* field
+// (Abbreviations *abbreviationsV1) must decode that sub-table scoped to ITS OWN
+// [[outputs]] entry. Entry 1 here has no [outputs.abbreviations], so its
+// Abbreviations must stay nil — and a round-trip must NOT manufacture a second
+// [outputs.abbreviations] under the second entry.
+func TestIntegrationDelegatedNestedTableScoping(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	extDir := filepath.Join(dir, "options_print")
+	writeFixture(t, extDir, "go.mod", "module example.com/test99/options_print\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, extDir, "options.go", `package options_print
+
+//go:generate tommy generate
+type abbreviationsV1 struct {
+	ZettelIds *bool `+"`"+`toml:"zettel-ids"`+"`"+`
+}
+
+//go:generate tommy generate
+type V1 struct {
+	Abbreviations *abbreviationsV1 `+"`"+`toml:"abbreviations"`+"`"+`
+	PrintColors   *bool            `+"`"+`toml:"print-colors"`+"`"+`
+}
+`)
+	if err := Generate(extDir, "options.go"); err != nil {
+		t.Fatalf("Generate options_print: %v", err)
+	}
+	consumerDir := filepath.Join(dir, "repo_configs")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test99/repo_configs\n\ngo 1.26\n\nrequire (\n\tgithub.com/amarbel-llc/tommy v0.0.0\n\texample.com/test99/options_print v0.0.0\n)\n\nreplace (\n\tgithub.com/amarbel-llc/tommy => "+repoRoot+"\n\texample.com/test99/options_print => ../options_print\n)\n")
+	writeFixture(t, consumerDir, "config.go", `package repo_configs
+
+import "example.com/test99/options_print"
+
+//go:generate tommy generate
+type V0 struct {
+	Outputs []options_print.V1 `+"`"+`toml:"outputs"`+"`"+`
+}
+`)
+	if err := Generate(consumerDir, "config.go"); err != nil {
+		t.Fatalf("Generate repo_configs: %v", err)
+	}
+	writeFixture(t, consumerDir, "scope_test.go", `package repo_configs
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestDelegatedScope(t *testing.T) {
+	// Only the FIRST [[outputs]] has an [outputs.abbreviations] sub-table.
+	input := []byte("[[outputs]]\nprint-colors = true\n\n[outputs.abbreviations]\nzettel-ids = true\n\n[[outputs]]\nprint-colors = false\n")
+	doc, err := DecodeV0(input)
+	if err != nil { t.Fatalf("DecodeV0: %v", err) }
+	cfg := doc.Data()
+	if len(cfg.Outputs) != 2 {
+		t.Fatalf("len(Outputs) = %d, want 2", len(cfg.Outputs))
+	}
+	if cfg.Outputs[0].Abbreviations == nil {
+		t.Fatal("Outputs[0].Abbreviations should be set")
+	}
+	if cfg.Outputs[1].Abbreviations != nil {
+		t.Fatalf("Outputs[1].Abbreviations should be nil (entry 1 has no [outputs.abbreviations]), got %#v", cfg.Outputs[1].Abbreviations)
+	}
+
+	out, err := doc.Encode()
+	if err != nil { t.Fatalf("Encode: %v", err) }
+	if n := strings.Count(string(out), "[outputs.abbreviations]"); n != 1 {
+		t.Fatalf("want exactly one [outputs.abbreviations] in output, got %d:\n%s", n, out)
+	}
+
+	doc2, err := DecodeV0(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	if doc2.Data().Outputs[1].Abbreviations != nil {
+		t.Fatal("re-decoded Outputs[1].Abbreviations should still be nil")
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestDelegatedScope", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Issue #44: codegen fails on slice fields whose element type is a type alias
 // to an unexported struct from another package.
 // Variant A: the struct with the slice is generated directly (AST path).
