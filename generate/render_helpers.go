@@ -142,61 +142,25 @@ type extractInfo struct {
 	cast string // e.g. "int16" or "" if no cast needed
 }
 
+// cstExtract maps a scalar type name to its cst scalar extractor + cast, from the
+// canonical scalarTypes registry (scalars.go). Unknown names (named/aliased
+// types reaching here) fall back to the string extractor, as before.
 func cstExtract(typeName string) extractInfo {
-	switch typeName {
-	case "string":
-		return extractInfo{fn: "ExtractString"}
-	case "int":
-		return extractInfo{fn: "ExtractInt"}
-	case "int64":
-		return extractInfo{fn: "ExtractInt64"}
-	case "int8":
-		return extractInfo{fn: "ExtractInt64", cast: "int8"}
-	case "int16":
-		return extractInfo{fn: "ExtractInt64", cast: "int16"}
-	case "int32":
-		return extractInfo{fn: "ExtractInt64", cast: "int32"}
-	case "uint":
-		return extractInfo{fn: "ExtractUint64", cast: "uint"}
-	case "uint8":
-		return extractInfo{fn: "ExtractUint64", cast: "uint8"}
-	case "uint16":
-		return extractInfo{fn: "ExtractUint64", cast: "uint16"}
-	case "uint32":
-		return extractInfo{fn: "ExtractUint64", cast: "uint32"}
-	case "uint64":
-		return extractInfo{fn: "ExtractUint64"}
-	case "float32":
-		return extractInfo{fn: "ExtractFloat64", cast: "float32"}
-	case "float64":
-		return extractInfo{fn: "ExtractFloat64"}
-	case "bool":
-		return extractInfo{fn: "ExtractBool"}
-	default:
-		return extractInfo{fn: "ExtractString"}
+	if s, ok := lookupScalar(typeName); ok {
+		return extractInfo{fn: s.extractFn, cast: s.cast}
 	}
+	return extractInfo{fn: "ExtractString"}
 }
 
-// cstSliceExtractFunc maps a primitive slice element type to the cst extractor
-// whose return slice type matches it directly (no per-element cast). Sized ints
-// (int8/16/32, uint/8/16/32) and float32 are NOT here yet — they need a casting
-// decode loop (tracked with #96); they currently fall through to the string
-// extractor, which only matches string elements.
+// cstSliceExtractFunc maps a primitive slice element type to the cst slice
+// extractor whose return type matches the element DIRECTLY — i.e. registry rows
+// with no cast (string/bool/int/int64/uint64/float64). Sized ints (int8/16/32,
+// uint/8/16/32) and float32 have a registry sliceFn too, but decoding them needs
+// a per-element casting loop in the renderer (tracked with #96); until that lands
+// they fall through to the string extractor (which only matches string elements).
 func cstSliceExtractFunc(elemType string) string {
-	switch elemType {
-	case "string":
-		return "ExtractStringSlice"
-	case "int":
-		return "ExtractIntSlice"
-	case "int64":
-		return "ExtractInt64Slice"
-	case "uint64":
-		return "ExtractUint64Slice"
-	case "float64":
-		return "ExtractFloat64Slice"
-	case "bool":
-		return "ExtractBoolSlice"
-	default:
-		return "ExtractStringSlice"
+	if s, ok := lookupScalar(elemType); ok && s.cast == "" {
+		return s.sliceFn
 	}
+	return "ExtractStringSlice"
 }
