@@ -621,6 +621,33 @@ func replaceValue(kv *Node, encoded []byte, kind NodeKind) error {
 	return fmt.Errorf("malformed key-value node")
 }
 
+// KeyNeedsQuoting reports whether a TOML key must be quoted: a bare key may only
+// contain ASCII letters, digits, '_' and '-'. An empty key, or any other
+// character (dots, spaces, unicode, etc.), requires a quoted key.
+func KeyNeedsQuoting(key string) bool {
+	if key == "" {
+		return true
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// QuoteKey returns key rendered as a TOML key node: bare if it qualifies as a
+// bare key, otherwise a basic-string-quoted, escaped key (e.g. `"a.b"`). The
+// inverse of the decode-side StripQuotes applied by KeyValueName/TableHeaderKey.
+func QuoteKey(key string) string {
+	if KeyNeedsQuoting(key) {
+		return `"` + EscapeString(key) + `"`
+	}
+	return key
+}
+
 func appendKeyValue(container *Node, key string, encoded []byte, kind NodeKind) {
 	var valueNode *Node
 	if kind == NodeArray {
@@ -636,7 +663,11 @@ func appendKeyValue(container *Node, key string, encoded []byte, kind NodeKind) 
 	kv := &Node{
 		Kind: NodeKeyValue,
 		Children: []*Node{
-			{Kind: NodeKey, Raw: []byte(key)},
+			// Quote the key if it isn't a bare key (#95): a map key like "a.b" or
+			// "a b" must serialize as `"a.b" = ...` / `"a b" = ...`, else it parses
+			// back as a dotted key (wrong) or invalid TOML (dropped). KeyValueName
+			// strips the quotes on the way back in.
+			{Kind: NodeKey, Raw: []byte(QuoteKey(key))},
 			{Kind: NodeWhitespace, Raw: []byte(" ")},
 			{Kind: NodeEquals, Raw: []byte("=")},
 			{Kind: NodeWhitespace, Raw: []byte(" ")},

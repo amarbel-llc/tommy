@@ -421,6 +421,68 @@ func TestSized96(t *testing.T) {
 	}
 }
 
+// Regression for #95 (map[string]string half): a map key needing TOML quoting
+// (a dot or a space) must round-trip. Before the fix a dotted key serialized as
+// the wrong `a.b = v` (a nested key) and a spaced key as invalid `a b = v` that
+// re-decoded to an empty map (data loss). Now the key is quoted on encode and
+// unquoted on decode.
+func TestIntegrationQuotedMapStringKeys(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/qmk\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package qmk
+
+//go:generate tommy generate
+type Config struct {
+	M map[string]string `+"`"+`toml:"m"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "qmk_test.go", `package qmk
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestQMK(t *testing.T) {
+	want := Config{M: map[string]string{"a.b": "x", "a b": "y", "plain": "z"}}
+	d, err := DecodeConfig([]byte(""))
+	if err != nil { t.Fatal(err) }
+	*d.Data() = want
+	out, err := d.Encode()
+	if err != nil { t.Fatalf("encode: %v", err) }
+	s := string(out)
+	if !strings.Contains(s, "\"a.b\" = ") || !strings.Contains(s, "\"a b\" = ") {
+		t.Fatalf("keys needing quoting should be quoted, got:\n%s", s)
+	}
+	if !strings.Contains(s, "\nplain = ") {
+		t.Fatalf("a bare key should stay unquoted, got:\n%s", s)
+	}
+	d2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	if !reflect.DeepEqual(*d2.Data(), want) {
+		t.Fatalf("round-trip mismatch\nwant %#v\ngot  %#v\ntoml:\n%s", want, *d2.Data(), out)
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestQMK", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Regression for #21 (maps): a nil map[string]string omits its [table] and
 // re-decodes nil; a present-but-empty map emits an empty [m] table and
 // re-decodes a non-nil empty map. (struct/nested-map kinds normalize nil≡empty
