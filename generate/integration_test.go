@@ -283,6 +283,71 @@ func TestFF(t *testing.T) {
 	}
 }
 
+// Regression for #98: primitive slices of element types beyond string/int
+// ([]bool, []float64, []int64, []uint64, and a pointer variant) must round-trip.
+// Before the fix cstSliceExtractFunc fell through to the string extractor and
+// EncodeValue rejected the slice — both silently dropped non-string/int slices.
+func TestIntegrationNonStringIntSlices(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/slices98\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package slices98
+
+//go:generate tommy generate
+type Config struct {
+	B   []bool    `+"`"+`toml:"b"`+"`"+`
+	F   []float64 `+"`"+`toml:"f"`+"`"+`
+	I64 []int64   `+"`"+`toml:"i64"`+"`"+`
+	U64 []uint64  `+"`"+`toml:"u64"`+"`"+`
+	PB  []*bool   `+"`"+`toml:"pb"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "slices98_test.go", `package slices98
+
+import (
+	"reflect"
+	"testing"
+)
+
+func ptr[T any](v T) *T { return &v }
+
+func TestSlices98(t *testing.T) {
+	want := Config{
+		B:   []bool{true, false, true},
+		F:   []float64{1.5, -2.25, 0.5},
+		I64: []int64{-9000000000, 42},
+		U64: []uint64{18000000000, 7},
+		PB:  []*bool{ptr(true), ptr(false)},
+	}
+	d, err := DecodeConfig([]byte(""))
+	if err != nil { t.Fatal(err) }
+	*d.Data() = want
+	out, err := d.Encode()
+	if err != nil { t.Fatalf("encode: %v", err) }
+	d2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	if !reflect.DeepEqual(*d2.Data(), want) {
+		t.Fatalf("round-trip mismatch\nwant %#v\ngot  %#v\ntoml:\n%s", want, *d2.Data(), out)
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestSlices98", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Regression for #21 (maps): a nil map[string]string omits its [table] and
 // re-decodes nil; a present-but-empty map emits an empty [m] table and
 // re-decodes a non-nil empty map. (struct/nested-map kinds normalize nil≡empty

@@ -167,6 +167,84 @@ func ExtractIntSlice(kv *Node) ([]int, bool) {
 	return result, true
 }
 
+// ExtractInt64Slice extracts a []int64 from a NodeKeyValue whose value is a NodeArray.
+func ExtractInt64Slice(kv *Node) ([]int64, bool) {
+	v := KeyValueValue(kv)
+	if v == nil || v.Kind != NodeArray {
+		return nil, false
+	}
+	var result []int64
+	for _, child := range v.Children {
+		if child.Kind == NodeInteger {
+			n, err := strconv.ParseInt(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
+			if err != nil {
+				return nil, false
+			}
+			result = append(result, n)
+		}
+	}
+	return result, true
+}
+
+// ExtractUint64Slice extracts a []uint64 from a NodeKeyValue whose value is a NodeArray.
+func ExtractUint64Slice(kv *Node) ([]uint64, bool) {
+	v := KeyValueValue(kv)
+	if v == nil || v.Kind != NodeArray {
+		return nil, false
+	}
+	var result []uint64
+	for _, child := range v.Children {
+		if child.Kind == NodeInteger {
+			n, err := strconv.ParseUint(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
+			if err != nil {
+				return nil, false
+			}
+			result = append(result, n)
+		}
+	}
+	return result, true
+}
+
+// ExtractFloat64Slice extracts a []float64 from a NodeKeyValue whose value is a
+// NodeArray. Integer-valued array elements are accepted too (a whole-number
+// float like `[1, 2.5]` encodes its 1 as a NodeInteger).
+func ExtractFloat64Slice(kv *Node) ([]float64, bool) {
+	v := KeyValueValue(kv)
+	if v == nil || v.Kind != NodeArray {
+		return nil, false
+	}
+	var result []float64
+	for _, child := range v.Children {
+		if child.Kind == NodeFloat || child.Kind == NodeInteger {
+			n, err := strconv.ParseFloat(strings.ReplaceAll(string(child.Raw), "_", ""), 64)
+			if err != nil {
+				return nil, false
+			}
+			result = append(result, n)
+		}
+	}
+	return result, true
+}
+
+// ExtractBoolSlice extracts a []bool from a NodeKeyValue whose value is a NodeArray.
+func ExtractBoolSlice(kv *Node) ([]bool, bool) {
+	v := KeyValueValue(kv)
+	if v == nil || v.Kind != NodeArray {
+		return nil, false
+	}
+	var result []bool
+	for _, child := range v.Children {
+		if child.Kind == NodeBool {
+			b, err := strconv.ParseBool(string(child.Raw))
+			if err != nil {
+				return nil, false
+			}
+			result = append(result, b)
+		}
+	}
+	return result, true
+}
+
 // ExtractRaw extracts the value from a NodeKeyValue as a natural Go type
 // (string, int64, float64, bool, or []any). Used for custom unmarshalers.
 func ExtractRaw(kv *Node) (any, bool) {
@@ -332,6 +410,14 @@ func EncodeValue(value any) ([]byte, NodeKind, error) {
 		return []byte(strconv.FormatBool(v)), NodeBool, nil
 	case []int:
 		return encodeIntSliceBytes(v), NodeArray, nil
+	case []int64:
+		return encodeInt64SliceBytes(v), NodeArray, nil
+	case []uint64:
+		return encodeUint64SliceBytes(v), NodeArray, nil
+	case []float64:
+		return encodeFloat64SliceBytes(v), NodeArray, nil
+	case []bool:
+		return encodeBoolSliceBytes(v), NodeArray, nil
 	case []string:
 		return encodeStringSliceBytes(v), NodeArray, nil
 	default:
@@ -366,6 +452,38 @@ func encodeStringSliceBytes(v []string) []byte {
 	parts := make([]string, len(v))
 	for i, s := range v {
 		parts[i] = `"` + EscapeString(s) + `"`
+	}
+	return []byte("[" + strings.Join(parts, ", ") + "]")
+}
+
+func encodeInt64SliceBytes(v []int64) []byte {
+	parts := make([]string, len(v))
+	for i, n := range v {
+		parts[i] = strconv.FormatInt(n, 10)
+	}
+	return []byte("[" + strings.Join(parts, ", ") + "]")
+}
+
+func encodeUint64SliceBytes(v []uint64) []byte {
+	parts := make([]string, len(v))
+	for i, n := range v {
+		parts[i] = strconv.FormatUint(n, 10)
+	}
+	return []byte("[" + strings.Join(parts, ", ") + "]")
+}
+
+func encodeFloat64SliceBytes(v []float64) []byte {
+	parts := make([]string, len(v))
+	for i, n := range v {
+		parts[i] = strconv.FormatFloat(n, 'f', -1, 64)
+	}
+	return []byte("[" + strings.Join(parts, ", ") + "]")
+}
+
+func encodeBoolSliceBytes(v []bool) []byte {
+	parts := make([]string, len(v))
+	for i, b := range v {
+		parts[i] = strconv.FormatBool(b)
 	}
 	return []byte("[" + strings.Join(parts, ", ") + "]")
 }

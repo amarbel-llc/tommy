@@ -177,12 +177,25 @@ func cstExtract(typeName string) extractInfo {
 	}
 }
 
+// cstSliceExtractFunc maps a primitive slice element type to the cst extractor
+// whose return slice type matches it directly (no per-element cast). Sized ints
+// (int8/16/32, uint/8/16/32) and float32 are NOT here yet — they need a casting
+// decode loop (tracked with #96); they currently fall through to the string
+// extractor, which only matches string elements.
 func cstSliceExtractFunc(elemType string) string {
 	switch elemType {
 	case "string":
 		return "ExtractStringSlice"
 	case "int":
 		return "ExtractIntSlice"
+	case "int64":
+		return "ExtractInt64Slice"
+	case "uint64":
+		return "ExtractUint64Slice"
+	case "float64":
+		return "ExtractFloat64Slice"
+	case "bool":
+		return "ExtractBoolSlice"
 	default:
 		return "ExtractStringSlice"
 	}

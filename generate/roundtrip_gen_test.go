@@ -67,12 +67,11 @@ func (g *shapeGen) scalarValue(typ string) string {
 	return `""`
 }
 
-// sliceScalarType is the element type for []scalar / []*scalar. The renderer's
-// cstSliceExtractFunc only implements string and int slices, so the fuzzer stays
-// within that surface; other element slices are a separate coverage gap tracked
-// out-of-band.
+// sliceScalarType is the element type for []scalar / []*scalar. Covers the
+// element types with a direct (no-cast) cst slice extractor + encoder; sized
+// ints / float32 need a casting decode loop (tracked with #96) and are excluded.
 func (g *shapeGen) sliceScalarType() string {
-	return []string{"string", "int"}[g.rng.Intn(2)]
+	return []string{"string", "int", "bool", "float64"}[g.rng.Intn(4)]
 }
 
 // genType picks a random field shape from the surface the codegen actually
