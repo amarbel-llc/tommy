@@ -233,6 +233,30 @@ func (k TOMLKey) IsStatic() bool {
 	return true
 }
 
+// SegmentCount returns the number of dot-separated TOML key segments this key
+// denotes, known structurally at codegen time. A KeyVar (a spliced runtime map
+// key) counts as exactly one segment no matter what its runtime value contains —
+// so a dotted map key like "k.0" stays one segment, which the runtime
+// strings.Count(joined, ".") miscounts (#103, the nested-map decode bug). Each
+// dot inside a KeyLit part is a segment separator. Panics on a KeyPrefix part:
+// the keyPrefix parameter's segment count is not known at codegen time, and the
+// only caller (compMapStruct) is reached only with KeyPrefix-free keys.
+func (k TOMLKey) SegmentCount() int {
+	if len(k.Parts) == 0 {
+		return 0
+	}
+	separators := 0
+	for _, p := range k.Parts {
+		switch p.Kind {
+		case KeyLit:
+			separators += strings.Count(p.Value, ".")
+		case KeyPrefix:
+			panic("TOMLKey.SegmentCount() called on key with keyPrefix")
+		}
+	}
+	return separators + 1
+}
+
 // BareKey returns the last segment after the final dot separator.
 // For "servers.settings.max_conns", returns "max_conns".
 // Works on dynamic keys by examining the last literal part.

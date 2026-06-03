@@ -264,14 +264,19 @@ func (g *shapeGen) genValue(t *td) string {
 	case "slice":
 		return g.goType(t) + "{" + g.genValue(t.elem) + ", " + g.genValue(t.elem) + "}"
 	case "map":
-		return g.goType(t) + "{\"k0\": " + g.genValue(t.elem) + ", \"k1\": " + g.genValue(t.elem) + "}"
+		// Quote-requiring keys (a dot and a space) are the #103 canary: they
+		// exercise quoted sub-table header keys (map[string]Struct/NamedMap) at
+		// every nesting level. A dotted key in a [m."k.0"] header must round-trip
+		// as one segment, not nest as m→k→0.
+		return g.goType(t) + "{\"k.0\": " + g.genValue(t.elem) + ", \"k 1\": " + g.genValue(t.elem) + "}"
 	case "mapmap":
 		// Two outer keys, each a two-entry inner map, so a swapped or mis-scoped
-		// entry is caught by DeepEqual. Values are random, so they differ.
+		// entry is caught by DeepEqual. Values are random, so they differ. Keys
+		// require quoting (#103 canary).
 		inner := func() string {
-			return t.stName + "{\"ik0\": " + g.scalarValue("string") + ", \"ik1\": " + g.scalarValue("string") + "}"
+			return t.stName + "{\"ik.0\": " + g.scalarValue("string") + ", \"ik 1\": " + g.scalarValue("string") + "}"
 		}
-		return g.goType(t) + "{\"k0\": " + inner() + ", \"k1\": " + inner() + "}"
+		return g.goType(t) + "{\"k.0\": " + inner() + ", \"k 1\": " + inner() + "}"
 	case "struct":
 		var b strings.Builder
 		b.WriteString(t.stName + "{")

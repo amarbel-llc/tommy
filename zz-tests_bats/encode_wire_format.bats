@@ -163,3 +163,56 @@ GOEOF
   assert_success
   assert_output --partial "ok"
 }
+
+# Regression for #103: a map[string]Struct key that needs TOML quoting (here a
+# dot) must serialize its sub-table header quoted ([servers."a.b"]) and decode
+# back as a single map key, not nest as servers→a→b.
+function map_struct_quoted_key_roundtrips { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Servers map[string]Server `toml:"servers"`
+}
+
+type Server struct {
+	Host string `toml:"host"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > wire_test.go <<'GOEOF'
+package batstest
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestMapStructQuotedKey(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[servers.\"a.b\"]\nhost = \"h1\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Data().Servers["a.b"]; got.Host != "h1" {
+		t.Fatalf("servers[\"a.b\"] = %+v, want host=h1", got)
+	}
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "[servers.\"a.b\"]") {
+		t.Fatalf("want quoted header [servers.\"a.b\"] in output, got:\n%s", out)
+	}
+}
+GOEOF
+
+  run go test -run TestMapStructQuotedKey ./...
+  assert_success
+  assert_output --partial "ok"
+}

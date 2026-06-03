@@ -7831,6 +7831,131 @@ func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
 	}
 }
 
+// Regression #103: a map key needing TOML quoting (a dot or a space) used as a
+// delegated map[string]CrossPackageStruct entry must serialize its sub-table
+// header quoted ([actions."build.fast"]) and decode back as one segment — not
+// nest as actions→build→fast. The round-trip fuzzer covers same-package maps but
+// not cross-package delegation, so this pins the delegated path explicitly.
+func TestIntegrationMapStringCrossPackageStructQuotedKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pkgaDir := filepath.Join(dir, "pkga")
+	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkga",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, pkgaDir, "pkga.go", `package pkga
+
+//go:generate tommy generate
+type Action struct {
+	Command string `+"`"+`toml:"command"`+"`"+`
+	Timeout int    `+"`"+`toml:"timeout"`+"`"+`
+}
+`)
+
+	if err := Generate(pkgaDir, "pkga.go"); err != nil {
+		t.Fatalf("Generate pkga: %v", err)
+	}
+
+	pkgbDir := filepath.Join(dir, "pkgb")
+	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkgb",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/pkga v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/pkga => ../pkga",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
+
+import "example.com/test/pkga"
+
+//go:generate tommy generate
+type Config struct {
+	Actions map[string]pkga.Action `+"`"+`toml:"actions,omitempty"`+"`"+`
+}
+`)
+
+	if err := Generate(pkgbDir, "pkgb.go"); err != nil {
+		t.Fatalf("Generate pkgb: %v", err)
+	}
+
+	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestMapCrossPackageQuotedKeyRoundTrip(t *testing.T) {
+	// Two keys that require quoting: one with a dot, one with a space.
+	input := []byte("[actions.\"build.fast\"]\ncommand = \"make\"\ntimeout = 30\n\n[actions.\"run all\"]\ncommand = \"go test\"\ntimeout = 60\n")
+	doc, err := DecodeConfig(input)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+
+	cfg := doc.Data()
+	if len(cfg.Actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d: %v", len(cfg.Actions), cfg.Actions)
+	}
+	if got := cfg.Actions["build.fast"]; got.Command != "make" || got.Timeout != 30 {
+		t.Fatalf("actions[\"build.fast\"] = %+v, want {make 30}", got)
+	}
+	if got := cfg.Actions["run all"]; got.Command != "go test" || got.Timeout != 60 {
+		t.Fatalf("actions[\"run all\"] = %+v, want {go test 60}", got)
+	}
+
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	// The dotted key must be re-emitted quoted as one segment, not flattened.
+	if !strings.Contains(string(out), "[actions.\"build.fast\"]") {
+		t.Fatalf("encoded output missing quoted header [actions.\"build.fast\"]:\n%s", out)
+	}
+
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v", err)
+	}
+	if got := doc2.Data().Actions["build.fast"]; got.Command != "make" {
+		t.Fatalf("re-decoded actions[\"build.fast\"] = %+v, want command=make", got)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = pkgbDir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 // Regression #47: cross-package named map type alias (type ScriptMap map[string]Struct)
 // used as a direct field goes through classifyType → *types.Map, which has no
 // struct value handling.

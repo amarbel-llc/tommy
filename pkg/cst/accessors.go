@@ -45,6 +45,10 @@ func KeyValueValue(kv *Node) *Node {
 
 // TableHeaderKey returns the dotted key from a NodeTable or NodeArrayTable
 // header. For `[a.b.c]`, returns "a.b.c".
+//
+// It joins segments with ".", which is lossy: a single quoted segment `"a.b"`
+// and the nesting `a.b` both yield "a.b". Callers that must distinguish a
+// dot-containing key from nesting (#103) use TableHeaderSegments instead.
 func TableHeaderKey(table *Node) string {
 	var parts []string
 	for _, child := range table.Children {
@@ -53,6 +57,35 @@ func TableHeaderKey(table *Node) string {
 		}
 	}
 	return strings.Join(parts, ".")
+}
+
+// TableHeaderSegments returns the per-segment keys of a NodeTable or
+// NodeArrayTable header, each with quotes stripped. For `[a."b.c".d]` it
+// returns ["a", "b.c", "d"] — unlike TableHeaderKey, which joins them into the
+// ambiguous "a.b.c.d". Preserving segment boundaries lets a quoted key that
+// contains dots or spaces be distinguished from genuine table nesting (#103).
+func TableHeaderSegments(table *Node) []string {
+	var segs []string
+	for _, child := range table.Children {
+		if child.Kind == NodeKey {
+			segs = append(segs, StripQuotes(string(child.Raw)))
+		}
+	}
+	return segs
+}
+
+// segmentsHavePrefix reports whether segs begins with the given prefix segments,
+// compared element-by-element (no joined-string flattening).
+func segmentsHavePrefix(segs, prefix []string) bool {
+	if len(segs) < len(prefix) {
+		return false
+	}
+	for i, p := range prefix {
+		if segs[i] != p {
+			return false
+		}
+	}
+	return true
 }
 
 // --- Type-specific value extraction ---
@@ -648,6 +681,44 @@ func QuoteKey(key string) string {
 	return key
 }
 
+// headerKeyNodes builds the NodeKey/NodeDot children of a table header from
+// per-segment keys, QuoteKey-ing each segment and separating them with NodeDot
+// — the same per-segment shape the parser produces for a dotted header. A
+// segment "a.b" becomes the single quoted NodeKey `"a.b"`, so the header
+// round-trips as one segment instead of re-parsing as nesting (#103). It is the
+// encode-side inverse of TableHeaderSegments. Building per-segment (rather than
+// one joined NodeKey) is what lets a quoted segment survive when it is reused as
+// the prefix of a deeper table's header.
+func headerKeyNodes(segs []string) []*Node {
+	nodes := make([]*Node, 0, 2*len(segs))
+	for i, seg := range segs {
+		if i > 0 {
+			nodes = append(nodes, &Node{Kind: NodeDot, Raw: []byte(".")})
+		}
+		nodes = append(nodes, &Node{Kind: NodeKey, Raw: []byte(QuoteKey(seg))})
+	}
+	return nodes
+}
+
+// tableHeaderChildren assembles the full child list for a NodeTable
+// (`[seg.seg]`) or NodeArrayTable (`[[seg.seg]]`) header from per-segment keys,
+// including the brackets and the trailing newline. The key segments are built
+// per-segment and individually quoted via headerKeyNodes (#103).
+func tableHeaderChildren(segs []string, arrayTable bool) []*Node {
+	children := make([]*Node, 0, 2*len(segs)+5)
+	children = append(children, &Node{Kind: NodeBracketOpen, Raw: []byte("[")})
+	if arrayTable {
+		children = append(children, &Node{Kind: NodeBracketOpen, Raw: []byte("[")})
+	}
+	children = append(children, headerKeyNodes(segs)...)
+	children = append(children, &Node{Kind: NodeBracketClose, Raw: []byte("]")})
+	if arrayTable {
+		children = append(children, &Node{Kind: NodeBracketClose, Raw: []byte("]")})
+	}
+	children = append(children, &Node{Kind: NodeNewline, Raw: []byte("\n")})
+	return children
+}
+
 func appendKeyValue(container *Node, key string, encoded []byte, kind NodeKind) {
 	var valueNode *Node
 	if kind == NodeArray {
@@ -734,15 +805,12 @@ func EnsureChildTable(root *Node, parent *Node, key string) *Node {
 		}
 	}
 
-	// Create new table node
+	// Create new table node. Build the header per-segment (parent's segments,
+	// each re-quoted, plus the new key) so a quoted segment in parent's header
+	// is preserved rather than flattened by the joined TableHeaderKey (#103).
 	table := &Node{
-		Kind: NodeTable,
-		Children: []*Node{
-			{Kind: NodeBracketOpen, Raw: []byte("[")},
-			{Kind: NodeKey, Raw: []byte(fullKey)},
-			{Kind: NodeBracketClose, Raw: []byte("]")},
-			{Kind: NodeNewline, Raw: []byte("\n")},
-		},
+		Kind:     NodeTable,
+		Children: tableHeaderChildren(append(TableHeaderSegments(parent), key), false),
 	}
 	blankLine := &Node{Kind: NodeNewline, Raw: []byte("\n")}
 
@@ -776,17 +844,14 @@ func EnsureChildSubTable(root *Node, parent *Node, prefix, key string) *Node {
 		}
 	}
 
-	// Create with dotted key structure
+	// Create with per-segment header: parent's segments (re-quoted), then the
+	// field prefix, then the map-key leaf — each QuoteKey-ed. A map key like
+	// "a.b" or "a b" becomes one quoted segment `[parent."a.b"]` instead of
+	// re-parsing as nesting (#103).
+	segs := append(TableHeaderSegments(parent), prefix, key)
 	table := &Node{
-		Kind: NodeTable,
-		Children: []*Node{
-			{Kind: NodeBracketOpen, Raw: []byte("[")},
-			{Kind: NodeKey, Raw: []byte(fullPrefix)},
-			{Kind: NodeDot, Raw: []byte(".")},
-			{Kind: NodeKey, Raw: []byte(key)},
-			{Kind: NodeBracketClose, Raw: []byte("]")},
-			{Kind: NodeNewline, Raw: []byte("\n")},
-		},
+		Kind:     NodeTable,
+		Children: tableHeaderChildren(segs, false),
 	}
 	blankLine := &Node{Kind: NodeNewline, Raw: []byte("\n")}
 
@@ -800,18 +865,15 @@ func EnsureChildSubTable(root *Node, parent *Node, prefix, key string) *Node {
 }
 
 // AppendArrayTableEntryAfter appends a new [[key]] array-table entry,
-// inserting it after the last existing [[key]] or at the end.
+// inserting it after the last existing [[key]] or at the end. key is a static
+// dotted path of bare field-name segments (runtime map keys flow through
+// EnsureChildSubTable instead), so splitting it on "." into per-segment NodeKeys
+// is lossless and gives the same per-segment header shape the parser produces —
+// which a deeper sub-table built on top of this entry relies on (#103).
 func AppendArrayTableEntryAfter(root *Node, key string) *Node {
 	newNode := &Node{
-		Kind: NodeArrayTable,
-		Children: []*Node{
-			{Kind: NodeBracketOpen, Raw: []byte("[")},
-			{Kind: NodeBracketOpen, Raw: []byte("[")},
-			{Kind: NodeKey, Raw: []byte(key)},
-			{Kind: NodeBracketClose, Raw: []byte("]")},
-			{Kind: NodeBracketClose, Raw: []byte("]")},
-			{Kind: NodeNewline, Raw: []byte("\n")},
-		},
+		Kind:     NodeArrayTable,
+		Children: tableHeaderChildren(strings.Split(key, "."), true),
 	}
 
 	lastIdx := -1
@@ -1022,8 +1084,16 @@ func FindChildArrayTableNodes(root, parent *Node, key string) []*Node {
 // FindChildSubTables returns the immediate [parentKey.field.<k>] sub-tables (one
 // segment under field) scoped to parent — the map[string]struct entries for a
 // map field nested inside an array-table entry.
+//
+// Matching is structural (per-segment), not joined-string: a child qualifies iff
+// its header has exactly len(parent segments)+2 segments, its leading segments
+// equal parent's, and the next segment is field. The final segment is the map
+// key, which may itself contain dots or spaces (`[parent.field."k.0"]`) — the
+// old joined-prefix + Contains(".") test wrongly dropped those and could admit a
+// deeper sibling whose joined header coincidentally shared the prefix (#103).
 func FindChildSubTables(root, parent *Node, field string) []*Node {
-	prefix := qualifiedKey(parent, field) + "."
+	parentSegs := TableHeaderSegments(parent)
+	want := len(parentSegs) + 2 // parent's segments + field + the map-key leaf
 	start, end := ChildScope(root, parent)
 	var out []*Node
 	for i := start; i < end; i++ {
@@ -1031,11 +1101,11 @@ func FindChildSubTables(root, parent *Node, field string) []*Node {
 		if child.Kind != NodeTable {
 			continue
 		}
-		hdr := TableHeaderKey(child)
-		if !strings.HasPrefix(hdr, prefix) {
+		segs := TableHeaderSegments(child)
+		if len(segs) != want {
 			continue
 		}
-		if strings.Contains(hdr[len(prefix):], ".") {
+		if !segmentsHavePrefix(segs, parentSegs) || segs[len(parentSegs)] != field {
 			continue
 		}
 		out = append(out, child)
@@ -1050,15 +1120,8 @@ func FindChildSubTables(root, parent *Node, field string) []*Node {
 func AppendChildArrayTableEntry(root, parent *Node, key string) *Node {
 	fullKey := qualifiedKey(parent, key)
 	newNode := &Node{
-		Kind: NodeArrayTable,
-		Children: []*Node{
-			{Kind: NodeBracketOpen, Raw: []byte("[")},
-			{Kind: NodeBracketOpen, Raw: []byte("[")},
-			{Kind: NodeKey, Raw: []byte(fullKey)},
-			{Kind: NodeBracketClose, Raw: []byte("]")},
-			{Kind: NodeBracketClose, Raw: []byte("]")},
-			{Kind: NodeNewline, Raw: []byte("\n")},
-		},
+		Kind:     NodeArrayTable,
+		Children: tableHeaderChildren(append(TableHeaderSegments(parent), key), true),
 	}
 	blankLine := &Node{Kind: NodeNewline, Raw: []byte("\n")}
 

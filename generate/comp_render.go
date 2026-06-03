@@ -628,10 +628,17 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 		}
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
 			g.If(jen.Id("_ch").Dot("Kind").Op("!=").Qual(cstPkg, "NodeTable")).Block(jen.Continue())
+			// Identity: the header must sit under this map's (possibly dynamic)
+			// prefix. Depth: it must be exactly one segment deeper, counted
+			// structurally — n.TKey.SegmentCount() is known at codegen time and a
+			// dotted/spaced map key counts as one segment, unlike a runtime
+			// strings.Count of the joined header (#103). The map key is then the
+			// final segment, taken structurally so its own dots survive.
 			g.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch"))
 			g.If(jen.Op("!").Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), pf.Jen())).Block(jen.Continue())
-			g.Id(n.MapVar).Op(":=").Id("_hdr").Index(pf.JenLen().Op(":"))
-			g.If(jen.Qual("strings", "Contains").Call(jen.Id(n.MapVar), jen.Lit("."))).Block(jen.Continue())
+			g.Id("_segs").Op(":=").Qual(cstPkg, "TableHeaderSegments").Call(jen.Id("_ch"))
+			g.If(jen.Len(jen.Id("_segs")).Op("!=").Lit(n.TKey.SegmentCount()+1)).Block(jen.Continue())
+			g.Id(n.MapVar).Op(":=").Id("_segs").Index(jen.Len(jen.Id("_segs")).Op("-").Lit(1))
 			g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(n.TKey))
 				if n.SlicePtr {
@@ -741,10 +748,14 @@ func compDelMap(ctx jenCtx, n cdDelMap) []jen.Code {
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
 			g.If(jen.Id("_ch").Dot("Kind").Op("!=").Qual(cstPkg, "NodeTable")).Block(jen.Continue())
+			// Same structural depth/extraction as compMapStruct (#103): a dotted or
+			// spaced map key is one segment, so count segments rather than the joined
+			// header's dots, and take the key as the final segment.
 			g.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch"))
 			g.If(jen.Op("!").Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), pf.Jen())).Block(jen.Continue())
-			g.Id("_mk").Op(":=").Id("_hdr").Index(pf.JenLen().Op(":"))
-			g.If(jen.Qual("strings", "Contains").Call(jen.Id("_mk"), jen.Lit("."))).Block(jen.Continue())
+			g.Id("_segs").Op(":=").Qual(cstPkg, "TableHeaderSegments").Call(jen.Id("_ch"))
+			g.If(jen.Len(jen.Id("_segs")).Op("!=").Lit(n.TKey.SegmentCount()+1)).Block(jen.Continue())
+			g.Id("_mk").Op(":=").Id("_segs").Index(jen.Len(jen.Id("_segs")).Op("-").Lit(1))
 			g.If(n.Tgt.Jen().Clone().Op("==").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(n.TKey))
 				g.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Qual(n.ImportPath, st))
