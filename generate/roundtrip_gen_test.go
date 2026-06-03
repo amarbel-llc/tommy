@@ -41,6 +41,7 @@ type td struct {
 type tdField struct {
 	name, tomlKey string
 	t             *td
+	omitEmpty     bool
 }
 
 type shapeGen struct {
@@ -143,9 +144,22 @@ func (g *shapeGen) genFields(depth int) ([]tdField, string) {
 	var body strings.Builder
 	for i := 0; i < k; i++ {
 		ft := g.genType(depth - 1)
-		f := tdField{name: fmt.Sprintf("F%d", i), tomlKey: fmt.Sprintf("f%d", i), t: ft}
+		// #97: randomly tag fields with ,omitempty and (string scalars only)
+		// ,multiline. omitempty omits zero/nil/empty, so the value generator must
+		// not emit the empty-collection variant for an omitempty field (it would
+		// round-trip to nil, not empty) — tracked via tdField.omitEmpty.
+		omitEmpty := g.rng.Intn(3) == 0
+		multiline := ft.kind == "scalar" && ft.scalar == "string" && g.rng.Intn(3) == 0
+		opts := ""
+		if omitEmpty {
+			opts += ",omitempty"
+		}
+		if multiline {
+			opts += ",multiline"
+		}
+		f := tdField{name: fmt.Sprintf("F%d", i), tomlKey: fmt.Sprintf("f%d", i), t: ft, omitEmpty: omitEmpty}
 		fields = append(fields, f)
-		fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goType(ft), f.tomlKey)
+		fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goType(ft), f.tomlKey+opts)
 	}
 	return fields, body.String()
 }
@@ -233,6 +247,9 @@ func (g *shapeGen) genValue(t *td) string {
 			// present-empty TOML form (an array-of-tables exists only with ≥1 entry),
 			// so nil≡empty there — keep those populated. Nil collection ELEMENTS stay
 			// excluded (TOML has no null).
+			// An ,omitempty field omits empty AND nil → both decode nil, so the
+			// empty-collection variant (which would round-trip to nil, not empty) is
+			// suppressed for omitempty fields; nil and populated still round-trip.
 			switch f.t.kind {
 			case "mapmap", "ptr":
 				if g.rng.Intn(4) == 0 {
@@ -244,10 +261,10 @@ func (g *shapeGen) genValue(t *td) string {
 				// uses `[m.key]` sub-tables with no distinct empty representation, so it
 				// normalizes nil≡empty — only nil there.
 				if f.t.elem.kind == "scalar" {
-					switch g.rng.Intn(4) {
-					case 0:
+					switch r := g.rng.Intn(4); {
+					case r == 0:
 						fv = "nil"
-					case 1:
+					case r == 1 && !f.omitEmpty:
 						fv = g.goType(f.t) + "{}"
 					}
 				} else if g.rng.Intn(4) == 0 {
@@ -257,10 +274,10 @@ func (g *shapeGen) genValue(t *td) string {
 				primElem := f.t.elem.kind == "scalar" ||
 					(f.t.elem.kind == "ptr" && f.t.elem.elem.kind == "scalar")
 				if primElem {
-					switch g.rng.Intn(4) {
-					case 0:
+					switch r := g.rng.Intn(4); {
+					case r == 0:
 						fv = "nil"
-					case 1:
+					case r == 1 && !f.omitEmpty:
 						fv = g.goType(f.t) + "{}"
 					}
 				}
