@@ -378,8 +378,13 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 	switch n := c.(type) {
 	case cdInTable:
 		v := "_ct" + n.TKey.VarSuffix()
+		dv := "_dup" + n.TKey.VarSuffix()
 		g.BlockFunc(func(b *jen.Group) {
-			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			// Scope-relative lookup with duplicate detection (#102): a [scope.field]
+			// table defined twice within one scope is a TOML violation. Now that the
+			// scope is correct (#99) this guard is sound in the scoped context.
+			b.List(jen.Id(v), jen.Id(dv)).Op(":=").Qual(cstPkg, "FindChildTableDup").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			b.If(jen.Id(dv)).Block(ctx.retErr("duplicate table %q", jen.Lit(n.TKey.BareKey())))
 			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(ctx.mc(n.TKey))
 				compScopedBody(ctx, ib, n.Children, jen.Id(v), "")
@@ -393,8 +398,10 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 	case cdNilGuard:
 		lv := n.LocalVar
 		v := "_ct" + n.TKey.VarSuffix()
+		dv := "_dup" + n.TKey.VarSuffix()
 		g.BlockFunc(func(b *jen.Group) {
-			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			b.List(jen.Id(v), jen.Id(dv)).Op(":=").Qual(cstPkg, "FindChildTableDup").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			b.If(jen.Id(dv)).Block(ctx.retErr("duplicate table %q", jen.Lit(n.TKey.BareKey())))
 			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(ctx.mc(n.TKey))
 				ib.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()

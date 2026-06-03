@@ -983,6 +983,27 @@ func FindChildTable(root, parent *Node, key string) *Node {
 	return nil
 }
 
+// FindChildTableDup is FindChildTable plus a duplicate flag: it returns the first
+// matching [parentKey.key] table scoped to parent, and dup=true if a second one
+// exists in the same scope — a TOML "defining a table more than once" violation
+// (#92/#102) within an array-table entry or delegated container. dup lets the
+// generated scoped decoders error instead of silently taking the first, matching
+// the top-level receiver's duplicate-table guard now that scoping is correct (#99).
+func FindChildTableDup(root, parent *Node, key string) (match *Node, dup bool) {
+	fullKey := qualifiedKey(parent, key)
+	start, end := ChildScope(root, parent)
+	for i := start; i < end; i++ {
+		child := root.Children[i]
+		if child.Kind == NodeTable && TableHeaderKey(child) == fullKey {
+			if match != nil {
+				return match, true
+			}
+			match = child
+		}
+	}
+	return match, false
+}
+
 // FindChildArrayTableNodes returns the [[parentKey.key]] entries scoped to parent,
 // in document order. Scoped variant of FindArrayTableNodes for nested arrays.
 func FindChildArrayTableNodes(root, parent *Node, key string) []*Node {

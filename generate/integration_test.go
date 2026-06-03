@@ -352,6 +352,74 @@ func TestSlices98(t *testing.T) {
 // pointer-slice — must round-trip. Sized slices decode via the widest extractor
 // ([]int64/[]uint64/[]float64) narrowed per-element by the registry cast, and
 // encode by widening back through the base slice encoders.
+// Regression for #102: a sub-table defined twice within ONE array-table entry's
+// scope ([e.sub] appearing twice under one [[e]]) must error on decode, like the
+// top-level #92 duplicate-table guard — the scoped context is sound for this now
+// that #99 fixed its scoping. A duplicate across DIFFERENT entries is fine (each
+// entry is its own scope).
+func TestIntegrationScopedDuplicateTableErrors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/scopedup\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package scopedup
+
+type Sub struct {
+	V string `+"`"+`toml:"v"`+"`"+`
+}
+
+type Entry struct {
+	Sub *Sub `+"`"+`toml:"sub"`+"`"+`
+}
+
+//go:generate tommy generate
+type Config struct {
+	E []Entry `+"`"+`toml:"e"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "scopedup_test.go", `package scopedup
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestScopedDup(t *testing.T) {
+	// Two [e.sub] under the SAME [[e]] entry — a duplicate within one scope.
+	dup := "[[e]]\n\n[e.sub]\nv = \"a\"\n\n[e.sub]\nv = \"b\"\n"
+	if _, err := DecodeConfig([]byte(dup)); err == nil {
+		t.Fatal("expected error for duplicate [e.sub] in one entry, got nil")
+	} else if !strings.Contains(err.Error(), "duplicate table") {
+		t.Fatalf("error should mention the duplicate table, got: %v", err)
+	}
+
+	// Same header under DIFFERENT entries is fine — separate scopes.
+	ok := "[[e]]\n\n[e.sub]\nv = \"a\"\n\n[[e]]\n\n[e.sub]\nv = \"b\"\n"
+	d, err := DecodeConfig([]byte(ok))
+	if err != nil {
+		t.Fatalf("two entries each with one [e.sub] should decode, got: %v", err)
+	}
+	if g := d.Data(); len(g.E) != 2 || g.E[0].Sub == nil || g.E[1].Sub == nil || g.E[0].Sub.V != "a" || g.E[1].Sub.V != "b" {
+		t.Fatalf("unexpected decode: %#v", d.Data())
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestScopedDup", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 func TestIntegrationSizedScalarSlices(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
