@@ -50,16 +50,42 @@ type shapeGen struct {
 	subN     int
 }
 
+// fuzzableScalars is the fuzzer's scalar universe, DERIVED from the canonical
+// scalarTypes registry (scalars.go) rather than hardcoded — so adding a scalar to
+// the registry auto-expands fuzz coverage (#24). Restricted to the cast-free rows
+// for now: sized ints (int8/16/32, uint/8/16/32) and float32 also need a
+// per-element casting decode loop + encode conversion before they round-trip
+// (#96); once that lands this filter drops and every registry row is fuzzed.
+// Every name returned here must have a scalarValue case below.
+func fuzzableScalars() []string {
+	var out []string
+	for _, s := range scalarTypes {
+		if s.cast == "" {
+			out = append(out, s.goName)
+		}
+	}
+	return out
+}
+
 func (g *shapeGen) scalarType() string {
-	return []string{"string", "int", "bool", "float64"}[g.rng.Intn(4)]
+	fs := fuzzableScalars()
+	return fs[g.rng.Intn(len(fs))]
 }
 
 func (g *shapeGen) scalarValue(typ string) string {
+	// int/bool/float64/string emit a literal whose untyped-constant default type
+	// already matches the field, so `ptr(...)` infers correctly. int64/uint64 do
+	// NOT (an untyped int constant defaults to int), so they must be emitted as a
+	// typed conversion — else `*int64` / `[]*uint64` literals fail to compile.
 	switch typ {
 	case "string":
 		return strconv.Quote(fmt.Sprintf("s%d", g.rng.Intn(1_000_000)))
 	case "int":
 		return strconv.Itoa(g.rng.Intn(1_000_000) - 500_000)
+	case "int64":
+		return "int64(" + strconv.Itoa(g.rng.Intn(1_000_000)-500_000) + ")"
+	case "uint64":
+		return "uint64(" + strconv.Itoa(g.rng.Intn(1_000_000)) + ")"
 	case "bool":
 		return strconv.FormatBool(g.rng.Intn(2) == 1)
 	case "float64":
@@ -68,11 +94,11 @@ func (g *shapeGen) scalarValue(typ string) string {
 	return `""`
 }
 
-// sliceScalarType is the element type for []scalar / []*scalar. Covers the
-// element types with a direct (no-cast) cst slice extractor + encoder; sized
-// ints / float32 need a casting decode loop (tracked with #96) and are excluded.
+// sliceScalarType is the element type for []scalar / []*scalar — the same
+// registry-derived universe as scalarType (every cast-free row has a working
+// direct slice extractor + encoder).
 func (g *shapeGen) sliceScalarType() string {
-	return []string{"string", "int", "bool", "float64"}[g.rng.Intn(4)]
+	return g.scalarType()
 }
 
 // genType picks a random field shape from the surface the codegen actually
