@@ -35,7 +35,18 @@ type td struct {
 	scalar string // scalar: base type
 	elem   *td    // ptr/slice/map: element
 	stName string // struct: type name
+	pkg    string // struct: import qualifier ("" = local pkg, "dep" = cross-pkg)
 	fields []tdField
+}
+
+// qualify prefixes a type name with its package selector for a cross-package
+// reference (dep.Dep0). The type *definition* always uses the bare name; only
+// references from another package are qualified.
+func qualify(pkg, name string) string {
+	if pkg == "" {
+		return name
+	}
+	return pkg + "." + name
 }
 
 type tdField struct {
@@ -47,6 +58,7 @@ type tdField struct {
 type shapeGen struct {
 	rng      *rand.Rand
 	typeDefs *strings.Builder
+	depDefs  *strings.Builder // cross-package (dep) type defs, when fuzzing delegation
 	subN     int
 }
 
@@ -236,7 +248,7 @@ func (g *shapeGen) goType(t *td) string {
 	case "mapmap":
 		return "map[string]" + t.stName
 	case "struct":
-		return t.stName
+		return qualify(t.pkg, t.stName)
 	}
 	panic("bad td kind: " + t.kind)
 }
@@ -279,7 +291,7 @@ func (g *shapeGen) genValue(t *td) string {
 		return g.goType(t) + "{\"k.0\": " + inner() + ", \"k 1\": " + inner() + "}"
 	case "struct":
 		var b strings.Builder
-		b.WriteString(t.stName + "{")
+		b.WriteString(qualify(t.pkg, t.stName) + "{")
 		for i, f := range t.fields {
 			if i > 0 {
 				b.WriteString(", ")
@@ -433,30 +445,11 @@ func TestRoundTripFuzz(t *testing.T) {
 		fields, body := g.genFields(depth - 1)
 		fmt.Fprintf(g.typeDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body)
 		value := g.genValue(&td{kind: "struct", stName: name, fields: fields})
-		fmt.Fprintf(&testBodies, `	t.Run(%q, func(t *testing.T) {
-		want := %s
-		d, err := Decode%s([]byte(""))
-		if err != nil { t.Fatalf("decode empty: %%v", err) }
-		*d.Data() = want
-		out, err := d.Encode()
-		if err != nil { t.Fatalf("encode: %%v", err) }
-		d2, err := Decode%s(out)
-		if err != nil { t.Fatalf("re-decode: %%v\ntoml:\n%%s", err, out) }
-		if !reflect.DeepEqual(*d2.Data(), want) {
-			t.Fatalf("round-trip mismatch\nwant: %%s\ngot:  %%s\ntoml:\n%%s", dump(want), dump(*d2.Data()), out)
-		}
-		if u := d2.Undecoded(); len(u) != 0 {
-			t.Fatalf("undecoded keys %%v\ntoml:\n%%s", u, out)
-		}
-	})
-`, name, value, name, name)
+		testBodies.WriteString(roundTripCaseBody(name, value))
 	}
 
 	configSrc := "package fuzz\n\n" + g.typeDefs.String()
-	testSrc := "package fuzz\n\nimport (\n\t\"fmt\"\n\t\"reflect\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n)\n\n" +
-		"func ptr[T any](v T) *T { return &v }\n\n" +
-		dumpHelperSrc +
-		"func TestRoundTrip(t *testing.T) {\n" + testBodies.String() + "}\n"
+	testSrc := fuzzTestSource(testBodies.String())
 
 	dir := t.TempDir()
 	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
@@ -480,5 +473,176 @@ func TestRoundTripFuzz(t *testing.T) {
 	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("round-trip fuzz failed (seed=%d):\n%s\n--- config.go ---\n%s", seed, out, configSrc)
+	}
+}
+
+// roundTripCaseBody renders the per-case t.Run(...) block shared by both
+// fuzzers: build want, decode the empty doc, set, encode, re-decode, and assert
+// DeepEqual + no undecoded keys.
+func roundTripCaseBody(name, value string) string {
+	return fmt.Sprintf(`	t.Run(%q, func(t *testing.T) {
+		want := %s
+		d, err := Decode%s([]byte(""))
+		if err != nil { t.Fatalf("decode empty: %%v", err) }
+		*d.Data() = want
+		out, err := d.Encode()
+		if err != nil { t.Fatalf("encode: %%v", err) }
+		d2, err := Decode%s(out)
+		if err != nil { t.Fatalf("re-decode: %%v\ntoml:\n%%s", err, out) }
+		if !reflect.DeepEqual(*d2.Data(), want) {
+			t.Fatalf("round-trip mismatch\nwant: %%s\ngot:  %%s\ntoml:\n%%s", dump(want), dump(*d2.Data()), out)
+		}
+		if u := d2.Undecoded(); len(u) != 0 {
+			t.Fatalf("undecoded keys %%v\ntoml:\n%%s", u, out)
+		}
+	})
+`, name, value, name, name)
+}
+
+// fuzzTestSource wraps the accumulated t.Run case bodies into a complete
+// fuzz_test.go (package + imports + the ptr/dump helpers + TestRoundTrip).
+// extraImports adds non-stdlib imports the case bodies reference — the dep
+// subpackage for the delegation fuzzer, whose value literals name dep.DepN.
+func fuzzTestSource(testBodies string, extraImports ...string) string {
+	var imp strings.Builder
+	imp.WriteString("import (\n\t\"fmt\"\n\t\"reflect\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n")
+	for _, p := range extraImports {
+		fmt.Fprintf(&imp, "\t%q\n", p)
+	}
+	imp.WriteString(")\n\n")
+	return "package fuzz\n\n" + imp.String() +
+		"func ptr[T any](v T) *T { return &v }\n\n" +
+		dumpHelperSrc +
+		"func TestRoundTrip(t *testing.T) {\n" + testBodies + "}\n"
+}
+
+// --- Cross-package delegation fuzzing (#105) ---
+//
+// The same-package fuzzer never exercises the delegated codegen paths
+// (compDelStruct / compDelSlice / compDelMap and their compScopedDel* duals):
+// with every generated type in one package the classifier always picks the
+// inline kinds. This variant emits a `dep` SUBPACKAGE of
+// `//go:generate tommy generate` target structs and references them from the
+// main package as the delegated field shapes, forcing delegation. A subpackage
+// suffices — delegation triggers on the package (import-path) boundary, not the
+// module boundary. The #103 compDelMap dotted-key bug lived exactly here and was
+// invisible to the same-package sweep, which is what motivated this (#105).
+
+// depFieldType returns the restricted field shapes a delegated-target struct may
+// hold: a scalar, []scalar/[]*scalar, or map[string]string. None carries a
+// package-qualified nested type name, so a dep struct's value literal needs
+// qualification only at its own top level (dep.DepN{...}).
+func (g *shapeGen) depFieldType() *td {
+	switch g.rng.Intn(4) {
+	case 0:
+		return &td{kind: "slice", elem: &td{kind: "scalar", scalar: g.sliceScalarType()}}
+	case 1:
+		return &td{kind: "slice", elem: &td{kind: "ptr", elem: &td{kind: "scalar", scalar: g.sliceScalarType()}}}
+	case 2:
+		return &td{kind: "map", elem: &td{kind: "scalar", scalar: "string"}}
+	default:
+		return &td{kind: "scalar", scalar: g.scalarType()}
+	}
+}
+
+// genDepStruct emits a delegated-target struct into the dep package buffer and
+// returns its descriptor (pkg="dep", so references from the main package are
+// qualified dep.DepN while its own definition stays bare).
+func (g *shapeGen) genDepStruct() *td {
+	name := fmt.Sprintf("Dep%d", g.subN)
+	g.subN++
+	k := 1 + g.rng.Intn(3)
+	var fields []tdField
+	var body strings.Builder
+	for i := 0; i < k; i++ {
+		ft := g.depFieldType()
+		f := tdField{name: fmt.Sprintf("F%d", i), tomlKey: fmt.Sprintf("f%d", i), t: ft}
+		fields = append(fields, f)
+		fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goType(ft), f.tomlKey)
+	}
+	fmt.Fprintf(g.depDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body.String())
+	return &td{kind: "struct", stName: name, pkg: "dep", fields: fields}
+}
+
+// genDelegatedField wraps a freshly generated dep target struct in one of the
+// five delegated field shapes the codegen supports. map[string]*T is excluded:
+// the classifier rejects cross-package pointer-struct map values (analyze.go).
+func (g *shapeGen) genDelegatedField() *td {
+	dep := g.genDepStruct()
+	switch g.rng.Intn(5) {
+	case 0:
+		return dep
+	case 1:
+		return &td{kind: "ptr", elem: dep}
+	case 2:
+		return &td{kind: "slice", elem: dep}
+	case 3:
+		return &td{kind: "slice", elem: &td{kind: "ptr", elem: dep}}
+	default:
+		return &td{kind: "map", elem: dep}
+	}
+}
+
+func TestRoundTripFuzzDelegation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	seed := int64(fuzzEnvInt("TOMMY_FUZZ_SEED", 1))
+	cases := fuzzEnvInt("TOMMY_FUZZ_CASES", 48)
+	t.Logf("delegation round-trip fuzz: seed=%d cases=%d", seed, cases)
+
+	g := &shapeGen{rng: rand.New(rand.NewSource(seed)), typeDefs: &strings.Builder{}, depDefs: &strings.Builder{}}
+	var testBodies strings.Builder
+	for i := 0; i < cases; i++ {
+		name := fmt.Sprintf("Case%d", i)
+		nf := 1 + g.rng.Intn(2)
+		var fields []tdField
+		var body strings.Builder
+		for j := 0; j < nf; j++ {
+			ft := g.genDelegatedField()
+			f := tdField{name: fmt.Sprintf("F%d", j), tomlKey: fmt.Sprintf("f%d", j), t: ft}
+			fields = append(fields, f)
+			fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goType(ft), f.tomlKey)
+		}
+		fmt.Fprintf(g.typeDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body.String())
+		value := g.genValue(&td{kind: "struct", stName: name, fields: fields})
+		testBodies.WriteString(roundTripCaseBody(name, value))
+	}
+
+	configSrc := "package fuzz\n\nimport \"example.com/fuzz/dep\"\n\n" + g.typeDefs.String()
+	depSrc := "package dep\n\n" + g.depDefs.String()
+	testSrc := fuzzTestSource(testBodies.String(), "example.com/fuzz/dep")
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/fuzz", "", "go 1.26", "",
+		"require github.com/amarbel-llc/tommy v0.0.0", "",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+	}, "\n"))
+	writeFixture(t, dir, "config.go", configSrc)
+	writeFixture(t, filepath.Join(dir, "dep"), "dep.go", depSrc)
+	writeFixture(t, dir, "fuzz_test.go", testSrc)
+
+	// dep must be generated before the consumer compiles (its delegated
+	// Decode*Into/Encode*From are what config's generated code calls), but
+	// analysis order is irrelevant: the main package resolves dep's types from
+	// source, not its generated methods.
+	if err := Generate(filepath.Join(dir, "dep"), "dep.go"); err != nil {
+		t.Fatalf("Generate dep (seed=%d): %v\n--- dep.go ---\n%s", seed, err, depSrc)
+	}
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate (seed=%d): %v\n--- config.go ---\n%s", seed, err, configSrc)
+	}
+
+	cmd := exec.Command("go", "test", "-count=1", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("delegation round-trip fuzz failed (seed=%d):\n%s\n--- config.go ---\n%s\n--- dep.go ---\n%s", seed, out, configSrc, depSrc)
 	}
 }

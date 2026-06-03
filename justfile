@@ -165,9 +165,10 @@ debug-fuzz-one seed='1' cases='4':
     TOMMY_FUZZ_SEED={{seed}} TOMMY_FUZZ_CASES={{cases}} \
     go test -run '^TestRoundTripFuzz$' ./generate/ -v -count=1
 
-# Sweep the round-trip fuzzer across N seeds (each a different random shape set)
-# to flush codegen bugs in untested type-shape combinations. CI runs seed 1 only;
-# this is for local widening.
+# Sweep BOTH round-trip fuzzers (same-package TestRoundTripFuzz + cross-package
+# TestRoundTripFuzzDelegation, #105) across N seeds (each a different random shape
+# set) to flush codegen bugs in untested type-shape combinations. CI runs seed 1
+# only; this is for local widening. The unanchored -run matches both fuzzers.
 [group('debug')]
 debug-fuzz-sweep n='12':
   #!/usr/bin/env bash
@@ -175,7 +176,7 @@ debug-fuzz-sweep n='12':
   fail=0
   for s in $(seq 1 {{n}}); do
     out=$(GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 TOMMY_FUZZ_SEED=$s \
-      go test -run '^TestRoundTripFuzz$' ./generate/ -count=1 2>&1)
+      go test -run 'TestRoundTripFuzz' ./generate/ -count=1 2>&1)
     if echo "$out" | grep -q '^ok'; then echo "seed $s: PASS"; else echo "seed $s: FAIL"; echo "$out" | grep -E 'mismatch|undecoded|cannot use|Generate \(' | head -4; fail=1; fi
   done
   exit $fail
