@@ -7838,6 +7838,110 @@ func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
 // shadowed the outer, so the inner map's target expression (entry.Things)
 // rebound to the wrong type and the generated code failed to compile. Surfaced
 // by the cross-package round-trip fuzzer.
+// Regression #105 (bug #2): a nil *pointer-struct field whose own field is a
+// delegated slice, sitting beside a sibling delegated slice that DOES have
+// entries, must stay nil on decode — the sibling's array-table entries must not
+// be mis-scooped into the absent pointer-struct's slice (which would also flip
+// the nil-guard to non-nil). Surfaced by the cross-package round-trip fuzzer at
+// depth-4 nesting.
+func TestIntegrationNilPtrDelegatedSliceNoPhantom(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pkgaDir := filepath.Join(dir, "pkga")
+	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkga", "", "go 1.26", "",
+		"require github.com/amarbel-llc/tommy v0.0.0", "",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+	}, "\n"))
+	writeFixture(t, pkgaDir, "pkga.go", `package pkga
+
+//go:generate tommy generate
+type Thing struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+	if err := Generate(pkgaDir, "pkga.go"); err != nil {
+		t.Fatalf("Generate pkga: %v", err)
+	}
+
+	pkgbDir := filepath.Join(dir, "pkgb")
+	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
+		"module example.com/test/pkgb", "", "go 1.26", "",
+		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/pkga v0.0.0", ")", "",
+		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/pkga => ../pkga", ")", "",
+	}, "\n"))
+	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
+
+import "example.com/test/pkga"
+
+//go:generate tommy generate
+type Config struct {
+	Outers []Outer `+"`"+`toml:"outers"`+"`"+`
+}
+
+type Outer struct {
+	Items []pkga.Thing `+"`"+`toml:"items"`+"`"+`
+	Extra *Extra       `+"`"+`toml:"extra,omitempty"`+"`"+`
+}
+
+type Extra struct {
+	Items []pkga.Thing `+"`"+`toml:"items"`+"`"+`
+}
+`)
+	if err := Generate(pkgbDir, "pkgb.go"); err != nil {
+		t.Fatalf("Generate pkgb: %v", err)
+	}
+
+	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
+
+import (
+	"reflect"
+	"testing"
+
+	"example.com/test/pkga"
+)
+
+func TestNilPtrDelegatedSliceNoPhantom(t *testing.T) {
+	d, err := DecodeConfig([]byte(""))
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	want := []Outer{{
+		Items: []pkga.Thing{{Name: "a"}, {Name: "b"}},
+		Extra: nil,
+	}}
+	d.Data().Outers = want
+	out, err := d.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	d2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(d2.Data().Outers, want) {
+		t.Fatalf("round-trip mismatch:\ngot:  %#v\nwant: %#v\ntoml:\n%s", d2.Data().Outers, want, out)
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = pkgbDir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test failed:\n%s", output)
+	}
+}
+
 func TestIntegrationDelegatedMapInStructMap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

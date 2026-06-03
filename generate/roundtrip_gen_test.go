@@ -60,6 +60,12 @@ type shapeGen struct {
 	typeDefs *strings.Builder
 	depDefs  *strings.Builder // cross-package (dep) type defs, when fuzzing delegation
 	subN     int
+
+	// delegating, when set, lets genType inject delegated dep fields at any
+	// depth (the cross-package fuzzer, #105). A delegated field nested inside a
+	// same-package slice/map container decodes through compScopedBody → the
+	// compScopedDel* paths, which the flat top-level-only variant never reached.
+	delegating bool
 }
 
 // fuzzableScalars is the fuzzer's scalar universe, DERIVED from the canonical
@@ -136,6 +142,15 @@ func (g *shapeGen) sliceScalarType() string {
 // renderer and are excluded — see the tracked coverage gaps.) At depth<=0 only
 // non-struct shapes are produced so recursion terminates.
 func (g *shapeGen) genType(depth int) *td {
+	// Cross-package fuzzer (#105): with delegation enabled, ~1/3 of fields are a
+	// delegated dep target. dep structs are self-terminating (flat fields), so
+	// this adds no recursion; placing it before the depth gate lets delegated
+	// fields appear at leaf depth too. The other 2/3 keep producing same-package
+	// structs/slices/maps that WRAP these delegated fields, yielding the scoped
+	// delegation shapes (compScopedDel*).
+	if g.delegating && g.rng.Intn(3) == 0 {
+		return g.genDelegatedField()
+	}
 	const (
 		shScalar = iota
 		shPtrScalar
@@ -590,29 +605,35 @@ func TestRoundTripFuzzDelegation(t *testing.T) {
 
 	seed := int64(fuzzEnvInt("TOMMY_FUZZ_SEED", 1))
 	cases := fuzzEnvInt("TOMMY_FUZZ_CASES", 48)
-	t.Logf("delegation round-trip fuzz: seed=%d cases=%d", seed, cases)
+	const depth = 4
+	t.Logf("delegation round-trip fuzz: seed=%d cases=%d depth=%d", seed, cases, depth)
 
-	g := &shapeGen{rng: rand.New(rand.NewSource(seed)), typeDefs: &strings.Builder{}, depDefs: &strings.Builder{}}
+	// Same recursive generator as the same-package fuzzer, but with delegation
+	// enabled: fields may be delegated dep targets at any depth, so a delegated
+	// field can land inside a same-package slice/map and exercise the scoped
+	// delegation paths (compScopedDel*), not just the top-level compDel* ones.
+	g := &shapeGen{rng: rand.New(rand.NewSource(seed)), typeDefs: &strings.Builder{}, depDefs: &strings.Builder{}, delegating: true}
 	var testBodies strings.Builder
 	for i := 0; i < cases; i++ {
 		name := fmt.Sprintf("Case%d", i)
-		nf := 1 + g.rng.Intn(2)
-		var fields []tdField
-		var body strings.Builder
-		for j := 0; j < nf; j++ {
-			ft := g.genDelegatedField()
-			f := tdField{name: fmt.Sprintf("F%d", j), tomlKey: fmt.Sprintf("f%d", j), t: ft}
-			fields = append(fields, f)
-			fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goType(ft), f.tomlKey)
-		}
-		fmt.Fprintf(g.typeDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body.String())
+		fields, body := g.genFields(depth - 1)
+		fmt.Fprintf(g.typeDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body)
 		value := g.genValue(&td{kind: "struct", stName: name, fields: fields})
 		testBodies.WriteString(roundTripCaseBody(name, value))
 	}
 
-	configSrc := "package fuzz\n\nimport \"example.com/fuzz/dep\"\n\n" + g.typeDefs.String()
-	depSrc := "package dep\n\n" + g.depDefs.String()
-	testSrc := fuzzTestSource(testBodies.String(), "example.com/fuzz/dep")
+	// A seed may, in principle, generate no delegated field; only wire the dep
+	// subpackage + its import when one was actually emitted, so the fixture never
+	// carries an unused import.
+	hasDep := g.depDefs.Len() > 0
+	configHeader := "package fuzz\n\n"
+	var extraImports []string
+	if hasDep {
+		configHeader += "import \"example.com/fuzz/dep\"\n\n"
+		extraImports = []string{"example.com/fuzz/dep"}
+	}
+	configSrc := configHeader + g.typeDefs.String()
+	testSrc := fuzzTestSource(testBodies.String(), extraImports...)
 
 	dir := t.TempDir()
 	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
@@ -625,15 +646,18 @@ func TestRoundTripFuzzDelegation(t *testing.T) {
 		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, dir, "config.go", configSrc)
-	writeFixture(t, filepath.Join(dir, "dep"), "dep.go", depSrc)
 	writeFixture(t, dir, "fuzz_test.go", testSrc)
 
 	// dep must be generated before the consumer compiles (its delegated
 	// Decode*Into/Encode*From are what config's generated code calls), but
 	// analysis order is irrelevant: the main package resolves dep's types from
 	// source, not its generated methods.
-	if err := Generate(filepath.Join(dir, "dep"), "dep.go"); err != nil {
-		t.Fatalf("Generate dep (seed=%d): %v\n--- dep.go ---\n%s", seed, err, depSrc)
+	if hasDep {
+		depSrc := "package dep\n\n" + g.depDefs.String()
+		writeFixture(t, filepath.Join(dir, "dep"), "dep.go", depSrc)
+		if err := Generate(filepath.Join(dir, "dep"), "dep.go"); err != nil {
+			t.Fatalf("Generate dep (seed=%d): %v\n--- dep.go ---\n%s", seed, err, depSrc)
+		}
 	}
 	if err := Generate(dir, "config.go"); err != nil {
 		t.Fatalf("Generate (seed=%d): %v\n--- config.go ---\n%s", seed, err, configSrc)
@@ -643,6 +667,6 @@ func TestRoundTripFuzzDelegation(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("delegation round-trip fuzz failed (seed=%d):\n%s\n--- config.go ---\n%s\n--- dep.go ---\n%s", seed, out, configSrc, depSrc)
+		t.Fatalf("delegation round-trip fuzz failed (seed=%d):\n%s\n--- config.go ---\n%s\n--- dep.go ---\n%s", seed, out, configSrc, g.depDefs.String())
 	}
 }

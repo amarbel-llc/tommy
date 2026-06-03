@@ -418,8 +418,12 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 	case cdArrayTable:
 		nv := "_nodes" + n.TDottedKey.VarSuffix()
 		jt := jenType(n.TypeName, n.ImportPath)
+		lookupKey := n.TKey.BareKey()
+		if n.ScopedFlatKey != "" {
+			lookupKey = n.ScopedFlatKey // flat fallback: [[scope.struct.field]] (#105)
+		}
 		g.BlockFunc(func(b *jen.Group) {
-			b.Id(nv).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
+			b.Id(nv).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(rootNode(), scope.Clone(), jen.Lit(lookupKey))
 			if fv != "" {
 				b.If(jen.Len(jen.Id(nv)).Op(">").Lit(0)).Block(jen.Id(fv).Op("=").True())
 			}
@@ -573,6 +577,9 @@ func compScopedDelStruct(ctx jenCtx, g *jen.Group, n cdDelStruct, scope *jen.Sta
 func compScopedDelSlice(ctx jenCtx, g *jen.Group, n cdDelSlice, scope *jen.Statement, fv string) {
 	_, st := delegateParts(n.TypeName)
 	bk := n.TKey.BareKey()
+	if n.ScopedFlatKey != "" {
+		bk = n.ScopedFlatKey // flat fallback: search [[scope.struct.field]] (#105)
+	}
 	pk := n.TDottedKey.Lit(".")
 	decFn := "Decode" + st + "Into"
 	nv := "_nodes" + n.TDottedKey.VarSuffix()

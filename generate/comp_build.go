@@ -189,6 +189,23 @@ func compDecodeFlatChildren(inner *StructInfo, c compPos, tgt TargetPath, siblin
 			pos.tkey = c.tkey
 		}
 		if n := foldCompDecodeField(f, pos, false, nil); n != nil {
+			if isSliceOfStruct(f.Type) {
+				// Scoped flat fallback (#105): this struct's [header] is absent, so
+				// its array-table field is searched in the parent scope. Use the key
+				// qualified with this struct's own segment ("<struct>.<field>") so it
+				// resolves to [[parent.struct.field]] and can't claim a sibling's
+				// [[parent.field]]. The top-level fallback still uses the full dotted
+				// key from root (ScopedFlatKey is ignored there).
+				sfk := c.tkey.BareKey() + "." + f.TomlKey
+				switch nn := n.(type) {
+				case cdDelSlice:
+					nn.ScopedFlatKey = sfk
+					n = nn
+				case cdArrayTable:
+					nn.ScopedFlatKey = sfk
+					n = nn
+				}
+			}
 			flat = append(flat, n)
 		}
 	}

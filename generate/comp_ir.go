@@ -85,7 +85,14 @@ type cdArrayTable struct {
 	TrackHandles bool
 	IdxVar       string
 	EntryVar     string
-	Children     []cdNode
+	// ScopedFlatKey, when non-empty, is the lookup key the SCOPED renderer uses
+	// instead of TKey.BareKey() — the array-table field's key qualified with its
+	// owning struct's segment ("extra.items"). Set only on flat-fallback nodes
+	// (#105): when a struct's [header] is absent its slice-of-struct field is
+	// searched in the *parent* scope, where the bare key would collide with a
+	// sibling's array-tables.
+	ScopedFlatKey string
+	Children      []cdNode
 }
 
 // cdMapScalar is map[string]string: find [TKey], ExtractStringMap.
@@ -136,6 +143,8 @@ type cdDelSlice struct {
 	TypeName   string // full "pkg.Type"
 	SlicePtr   bool
 	IdxVar     string // depth-distinct loop index var
+	// ScopedFlatKey: see cdArrayTable.ScopedFlatKey (#105).
+	ScopedFlatKey string
 }
 
 // cdDelMap delegates per [TKey.<key>] sub-table. MapVar/EntryVar are unique per
