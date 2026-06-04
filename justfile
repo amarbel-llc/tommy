@@ -165,6 +165,15 @@ debug-fuzz-one seed='1' cases='4':
     TOMMY_FUZZ_SEED={{seed}} TOMMY_FUZZ_CASES={{cases}} \
     go test -run '^TestRoundTripFuzz$' ./generate/ -v -count=1
 
+# Drill-down companion for the cross-package delegation fuzzer (#105), same as
+# debug-fuzz-one but for TestRoundTripFuzzDelegation (delegated dep targets at
+# arbitrary nesting depth).
+[group('debug')]
+debug-fuzz-delegation-one seed='1' cases='4':
+  GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
+    TOMMY_FUZZ_SEED={{seed}} TOMMY_FUZZ_CASES={{cases}} \
+    go test -run '^TestRoundTripFuzzDelegation$' ./generate/ -v -count=1
+
 # Sweep BOTH round-trip fuzzers (same-package TestRoundTripFuzz + cross-package
 # TestRoundTripFuzzDelegation, #105) across N seeds (each a different random shape
 # set) to flush codegen bugs in untested type-shape combinations. CI runs seed 1

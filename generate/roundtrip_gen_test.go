@@ -250,19 +250,33 @@ func (g *shapeGen) genMapMap() *td {
 	return &td{kind: "mapmap", stName: name}
 }
 
+// goType renders a Go type as referenced from the MAIN package: a dep struct
+// becomes dep.DepN. For emitting a type INSIDE the dep package (where dep types
+// are bare), use goTypeIn(t, "dep").
 func (g *shapeGen) goType(t *td) string {
+	return g.goTypeIn(t, "")
+}
+
+// goTypeIn renders t's Go type as written from package cur ("" = main, "dep" =
+// the dep subpackage). A struct in a different package than cur is qualified
+// (dep.DepN); a struct in cur itself stays bare (DepN) — so a nested dep struct
+// is bare in dep.go but dep.-qualified in a main-package value literal (#105).
+func (g *shapeGen) goTypeIn(t *td, cur string) string {
 	switch t.kind {
 	case "scalar":
 		return t.scalar
 	case "ptr":
-		return "*" + g.goType(t.elem)
+		return "*" + g.goTypeIn(t.elem, cur)
 	case "slice":
-		return "[]" + g.goType(t.elem)
+		return "[]" + g.goTypeIn(t.elem, cur)
 	case "map":
-		return "map[string]" + g.goType(t.elem)
+		return "map[string]" + g.goTypeIn(t.elem, cur)
 	case "mapmap":
 		return "map[string]" + t.stName
 	case "struct":
+		if t.pkg == cur {
+			return t.stName
+		}
 		return qualify(t.pkg, t.stName)
 	}
 	panic("bad td kind: " + t.kind)
@@ -543,11 +557,26 @@ func fuzzTestSource(testBodies string, extraImports ...string) string {
 // module boundary. The #103 compDelMap dotted-key bug lived exactly here and was
 // invisible to the same-package sweep, which is what motivated this (#105).
 
-// depFieldType returns the restricted field shapes a delegated-target struct may
-// hold: a scalar, []scalar/[]*scalar, or map[string]string. None carries a
-// package-qualified nested type name, so a dep struct's value literal needs
-// qualification only at its own top level (dep.DepN{...}).
-func (g *shapeGen) depFieldType() *td {
+// depFieldType returns a field shape for a delegated-target struct. At
+// depth<=0 (or 2/3 of the time) it is a flat leaf (scalar, []scalar/[]*scalar,
+// map[string]string). Otherwise it nests another dep struct in one of the
+// supported shapes — exercising the delegated decoder's handling of its OWN
+// nested same-package structs/slices/maps (#105). All dep types stay in the dep
+// package, so a nested dep struct is inline within the delegated DecodeInto.
+func (g *shapeGen) depFieldType(depth int) *td {
+	if depth > 0 && g.rng.Intn(3) == 0 {
+		sub := g.genDepStruct(depth - 1)
+		switch g.rng.Intn(4) {
+		case 0:
+			return sub
+		case 1:
+			return &td{kind: "ptr", elem: sub}
+		case 2:
+			return &td{kind: "slice", elem: sub}
+		default:
+			return &td{kind: "map", elem: sub}
+		}
+	}
 	switch g.rng.Intn(4) {
 	case 0:
 		return &td{kind: "slice", elem: &td{kind: "scalar", scalar: g.sliceScalarType()}}
@@ -562,18 +591,20 @@ func (g *shapeGen) depFieldType() *td {
 
 // genDepStruct emits a delegated-target struct into the dep package buffer and
 // returns its descriptor (pkg="dep", so references from the main package are
-// qualified dep.DepN while its own definition stays bare).
-func (g *shapeGen) genDepStruct() *td {
+// qualified dep.DepN while its own definition stays bare). depth bounds nested
+// dep structs. Field types are rendered with the "dep" view so a nested dep
+// struct is bare (Dep5) in the definition, not dep.Dep5.
+func (g *shapeGen) genDepStruct(depth int) *td {
 	name := fmt.Sprintf("Dep%d", g.subN)
 	g.subN++
 	k := 1 + g.rng.Intn(3)
 	var fields []tdField
 	var body strings.Builder
 	for i := 0; i < k; i++ {
-		ft := g.depFieldType()
+		ft := g.depFieldType(depth)
 		f := tdField{name: fmt.Sprintf("F%d", i), tomlKey: fmt.Sprintf("f%d", i), t: ft}
 		fields = append(fields, f)
-		fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goType(ft), f.tomlKey)
+		fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goTypeIn(ft, "dep"), f.tomlKey)
 	}
 	fmt.Fprintf(g.depDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body.String())
 	return &td{kind: "struct", stName: name, pkg: "dep", fields: fields}
@@ -583,7 +614,8 @@ func (g *shapeGen) genDepStruct() *td {
 // five delegated field shapes the codegen supports. map[string]*T is excluded:
 // the classifier rejects cross-package pointer-struct map values (analyze.go).
 func (g *shapeGen) genDelegatedField() *td {
-	dep := g.genDepStruct()
+	const depDepth = 2
+	dep := g.genDepStruct(depDepth)
 	switch g.rng.Intn(5) {
 	case 0:
 		return dep
@@ -667,6 +699,10 @@ func TestRoundTripFuzzDelegation(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), testGoEnv()...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("delegation round-trip fuzz failed (seed=%d):\n%s\n--- config.go ---\n%s\n--- dep.go ---\n%s", seed, out, configSrc, g.depDefs.String())
+		// On a codegen *compile* failure the source alone isn't enough — dump the
+		// generated config_tommy.go too. (CI captures the full output; locally,
+		// reduce TOMMY_FUZZ_CASES to shrink it.)
+		gen, _ := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+		t.Fatalf("delegation round-trip fuzz failed (seed=%d):\n%s\n--- config.go ---\n%s\n--- config_tommy.go ---\n%s\n--- dep.go ---\n%s", seed, out, configSrc, gen, g.depDefs.String())
 	}
 }

@@ -283,6 +283,87 @@ func TestFF(t *testing.T) {
 	}
 }
 
+// Regression for #105 (bug #4): a struct (Outer) with both an array-table field
+// and a nested struct field whose own fields are ALL array-tables (Inner) must
+// not bind an unused `tableNode`. compEncodeNeedsContainer counted the nested
+// struct as needing the parent container, but a header-omitting all-array struct
+// (#89) references neither, so the parent's tableNode was bound-but-unused and
+// the generated code failed to compile. Same-package shape (no delegation).
+func TestIntegrationNestedAllArrayStructEncodes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "go.mod", "module example.com/naas\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "config.go", `package naas
+
+//go:generate tommy generate
+type Config struct {
+	Outer Outer `+"`"+`toml:"outer"`+"`"+`
+}
+
+type Outer struct {
+	Items []Item `+"`"+`toml:"items"`+"`"+`
+	Inner Inner  `+"`"+`toml:"inner"`+"`"+`
+}
+
+type Item struct {
+	N string `+"`"+`toml:"n"`+"`"+`
+}
+
+type Inner struct {
+	Things []Thing `+"`"+`toml:"things"`+"`"+`
+}
+
+type Thing struct {
+	M string `+"`"+`toml:"m"`+"`"+`
+}
+`)
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	writeFixture(t, dir, "naas_test.go", `package naas
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestNAAS(t *testing.T) {
+	d, err := DecodeConfig([]byte(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Outer{
+		Items: []Item{{N: "a"}, {N: "b"}},
+		Inner: Inner{Things: []Thing{{M: "x"}, {M: "y"}}},
+	}
+	d.Data().Outer = want
+	out, err := d.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	d2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(d2.Data().Outer, want) {
+		t.Fatalf("round-trip mismatch:\ngot:  %#v\nwant: %#v\ntoml:\n%s", d2.Data().Outer, want, out)
+	}
+}
+`)
+	cmd := exec.Command("go", "test", "-run", "TestNAAS", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed:\n%s", out)
+	}
+}
+
 // Regression for #98: primitive slices of element types beyond string/int
 // ([]bool, []float64, []int64, []uint64, and a pointer variant) must round-trip.
 // Before the fix cstSliceExtractFunc fell through to the string extractor and

@@ -808,11 +808,31 @@ func compEncodeNeedsContainer(children []ceNode) bool {
 			if n.Scoped {
 				return true
 			}
+		case ceTable:
+			if structRefsContainer(n.Children) {
+				return true
+			}
+		case ceNilGuard:
+			if structRefsContainer(n.Children) {
+				return true
+			}
 		default:
 			return true
 		}
 	}
 	return false
+}
+
+// structRefsContainer reports whether a nested struct's encode references its
+// parent container node. compEncTable/compEncNilGuard emit
+// EnsureChildTable(root, cv, key) — referencing cv — in both the needsTable and
+// the `_ =` branches, EXCEPT when the struct is an all-array-tables struct whose
+// header is omitted (#89): there neither branch fires, so cv is untouched.
+// Recursing here keeps compEncodeNeedsContainer's prediction in step with what's
+// rendered; without it a parent binds an unused `tableNode` when its only
+// container-needing child is such a header-omitting struct (#105).
+func structRefsContainer(children []ceNode) bool {
+	return compEncodeNeedsContainer(children) || !compEncodeAllArrayTables(children)
 }
 
 func compEncodeNode(ctx encCtx, c ceNode, cv *jen.Statement) []jen.Code {
@@ -1402,7 +1422,12 @@ func compEmitDecodeInto(f *jen.File, si StructInfo) {
 
 func compEmitEncodeFrom(f *jen.File, si StructInfo) {
 	ectx := freeEncCtx()
-	nodes := foldCompEncode(&si, compPos{tkey: StaticKey(""), tgt: LocalTarget("data")}, false)
+	// EncodeFrom writes relative to the passed container node (a delegated
+	// struct never owns the document root), so its array-tables must be scoped
+	// to the container — matching DecodeXInto's scoped decode. Without this a
+	// nested array-table encodes document-root-relative ([[f1.f0]]) while decode
+	// looks for it under the container ([[parent.f1.f0]]), losing it (#105).
+	nodes := foldCompEncode(&si, compPos{tkey: StaticKey(""), tgt: LocalTarget("data"), scoped: true}, false)
 	f.Func().Id("Encode"+si.Name+"From").Params(
 		jen.Id("data").Op("*").Id(si.Name),
 		jen.Id("doc").Op("*").Qual(docPkg, "Document"),
