@@ -174,6 +174,33 @@ debug-fuzz-delegation-one seed='1' cases='4':
     TOMMY_FUZZ_SEED={{seed}} TOMMY_FUZZ_CASES={{cases}} \
     go test -run '^TestRoundTripFuzzDelegation$' ./generate/ -v -count=1
 
+# Drill-down companion for the spelling-rewrite fuzzer (#107): re-spells the
+# canonical encoding into each equivalent TOML spelling and checks the decoder
+# round-trips it. A no-op respell (unchanged bytes) must round-trip; a changed
+# spelling is logged xfail/xpass and never fails. Default cases=32 so the
+# coverage guard (>=1 respell must fire) isn't tripped by a small all-deep-shape
+# sample; raise it to widen.
+[group('debug')]
+debug-fuzz-spelling-one seed='1' cases='32':
+  GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
+    TOMMY_FUZZ_SEED={{seed}} TOMMY_FUZZ_CASES={{cases}} \
+    go test -run '^TestRoundTripSpellingFuzz$' ./generate/ -v -count=1
+
+# Sweep the spelling-rewrite fuzzer (#107) across N seeds. CI runs seed 1 only;
+# this is for local widening — a certain XPASS on any seed (a decoder gap closed
+# for a shape seed 1 didn't cover) fails loudly here.
+[group('debug')]
+debug-fuzz-spelling-sweep n='12':
+  #!/usr/bin/env bash
+  set -uo pipefail
+  fail=0
+  for s in $(seq 1 {{n}}); do
+    out=$(GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 TOMMY_FUZZ_SEED=$s \
+      go test -run '^TestRoundTripSpellingFuzz$' ./generate/ -count=1 2>&1)
+    if echo "$out" | grep -q '^ok'; then echo "seed $s: PASS"; else echo "seed $s: FAIL"; echo "$out" | grep -E 'XPASS|mismatch|expected round-trip|Generate \(' | head -4; fail=1; fi
+  done
+  exit $fail
+
 # Sweep BOTH round-trip fuzzers (same-package TestRoundTripFuzz + cross-package
 # TestRoundTripFuzzDelegation, #105) across N seeds (each a different random shape
 # set) to flush codegen bugs in untested type-shape combinations. CI runs seed 1
