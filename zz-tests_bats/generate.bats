@@ -246,3 +246,44 @@ GOEOF
   assert_success
   assert_output --partial "PASS"
 }
+
+# #108 axis 1: a map[string]struct field written as a nested inline table
+# (`actions = { build = { command = "make" } }`) must decode and be consumed.
+function generate_inline_table_map_struct_decodes { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Actions map[string]ActionSpec `toml:"actions"`
+}
+
+type ActionSpec struct {
+	Command string `toml:"command"`
+	Timeout int    `toml:"timeout"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > inline_test.go <<'GOEOF'
+package batstest
+
+import "testing"
+
+func TestInlineMapStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("actions = { build = { command = \"make\", timeout = 30 } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Actions["build"].Command != "make" || d.Actions["build"].Timeout != 30 { t.Fatalf("build=%+v", d.Actions["build"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}

@@ -600,8 +600,18 @@ func compScopedMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, scope *jen.Sta
 				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
 			}
 		})
+		// Inline-table fallback (#108): scope-relative `field = { k = {...} }`.
+		b.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
+			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(scope.Clone(), jen.Lit(field)), compScopedRenderBody)
+		})
 		b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})
+}
+
+// compScopedRenderBody adapts compScopedBody to the func signature
+// compMapStructInlineBody expects (the scoped renderer).
+func compScopedRenderBody(ctx jenCtx, g *jen.Group, children []cdNode, cv *jen.Statement) {
+	compScopedBody(ctx, g, children, cv, "")
 }
 
 func compScopedDelStruct(ctx jenCtx, g *jen.Group, n cdDelStruct, scope *jen.Statement) {
@@ -717,8 +727,57 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 				g.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
 			}
 		})
+		// Inline-table fallback (#108): accept `field = { k = { ...fields... } }`
+		// when no [field.k] sub-tables were found. The outer inline table's entries
+		// are the map keys; each entry's value is an inner inline table holding the
+		// struct fields, decoded exactly like a sub-table body.
+		g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
+			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())), compRenderBody)
+		})
 		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})}
+}
+
+// compMapStructInlineBody emits the shared inline-table decode for a
+// map[string]struct: given an expression yielding the outer inline-table node,
+// iterate its entries, decode each inner inline table's struct fields, and build
+// _mr. decodeBody renders the struct field decode against a container var name
+// (compRenderBody for the top-level renderer, compScopedRenderBody for the
+// scoped one), so this is shared by compMapStruct and compScopedMapStruct.
+func compMapStructInlineBody(ctx jenCtx, g *jen.Group, n cdMapStruct, outerExpr *jen.Statement, decodeBody func(jenCtx, *jen.Group, []cdNode, *jen.Statement)) {
+	g.Id("_it").Op(":=").Add(outerExpr)
+	g.If(jen.Id("_it").Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+		ib.For(jen.List(jen.Id("_"), jen.Id("_okv")).Op(":=").Range().Id("_it").Dot("Children")).BlockFunc(func(lb *jen.Group) {
+			lb.If(jen.Id("_okv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeKeyValue")).Block(jen.Continue())
+			lb.Id("_iv").Op(":=").Qual(cstPkg, "KeyValueValue").Call(jen.Id("_okv"))
+			lb.If(jen.Id("_iv").Op("==").Nil().Op("||").Id("_iv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeInlineTable")).Block(jen.Continue())
+			lb.Id(n.MapVar).Op(":=").Qual(cstPkg, "KeyValueName").Call(jen.Id("_okv"))
+			lb.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(mb *jen.Group) {
+				mb.Add(ctx.mc(n.TKey))
+				if n.SlicePtr {
+					mb.Id("_mr").Op("=").Make(jen.Map(jen.String()).Op("*").Id(n.TypeName))
+				} else {
+					mb.Id("_mr").Op("=").Make(jen.Map(jen.String()).Id(n.TypeName))
+				}
+			})
+			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
+			lb.Var().Id(n.EntryVar).Id(n.TypeName)
+			decodeBody(ctx, lb, n.Children, jen.Id("_iv"))
+			if n.SlicePtr {
+				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id(n.EntryVar)
+			} else {
+				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
+			}
+		})
+	})
+}
+
+// compRenderBody adapts compRenderDecodeBody to the func signature
+// compMapStructInlineBody expects (the top-level renderer).
+func compRenderBody(ctx jenCtx, g *jen.Group, children []cdNode, cv *jen.Statement) {
+	for _, s := range compRenderDecodeBody(ctx, children, cv, "") {
+		g.Add(s)
+	}
 }
 
 func compDelStruct(ctx jenCtx, n cdDelStruct) []jen.Code {

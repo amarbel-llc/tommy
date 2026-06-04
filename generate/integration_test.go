@@ -10096,6 +10096,97 @@ func TestSubTableStructStillWorks(t *testing.T) {
 	}
 }
 
+// #108 axis 1: a map[string]struct field written as a nested inline table
+// (`actions = { build = { command = "make" } }`) must decode and be consumed,
+// exactly like the sub-table form (`[actions.build]`). Covers the top-level map
+// (compMapStruct) and a map nested in an array-table entry (compScopedMapStruct).
+func TestIntegrationInlineTableMapStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/inlinemapstruct",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package inlinemapstruct
+
+//go:generate tommy generate
+type Config struct {
+	Actions map[string]ActionSpec `+"`"+`toml:"actions"`+"`"+`
+	Hosts   []Host                `+"`"+`toml:"hosts"`+"`"+`
+}
+
+type ActionSpec struct {
+	Command string `+"`"+`toml:"command"`+"`"+`
+	Timeout int    `+"`"+`toml:"timeout"`+"`"+`
+}
+
+type Host struct {
+	Name  string                `+"`"+`toml:"name"`+"`"+`
+	Tasks map[string]ActionSpec `+"`"+`toml:"tasks"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "inlinemapstruct_test.go", `package inlinemapstruct
+
+import "testing"
+
+// Top-level map[string]struct, inline form.
+func TestInlineMapStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("actions = { build = { command = \"make\", timeout = 30 }, test = { command = \"go test\", timeout = 60 } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Actions["build"].Command != "make" || d.Actions["build"].Timeout != 30 { t.Fatalf("build=%+v", d.Actions["build"]) }
+	if d.Actions["test"].Command != "go test" || d.Actions["test"].Timeout != 60 { t.Fatalf("test=%+v", d.Actions["test"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// map[string]struct nested in an array-table entry (scoped), inline form.
+func TestInlineScopedMapStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[[hosts]]\nname = \"h\"\ntasks = { a = { command = \"x\", timeout = 1 } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Hosts) != 1 || d.Hosts[0].Name != "h" { t.Fatalf("hosts=%+v", d.Hosts) }
+	if d.Hosts[0].Tasks["a"].Command != "x" || d.Hosts[0].Tasks["a"].Timeout != 1 { t.Fatalf("tasks=%+v", d.Hosts[0].Tasks) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// The sub-table form must still work.
+func TestSubTableMapStructStillWorks(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[actions.build]\ncommand = \"make\"\ntimeout = 30\n"))
+	if err != nil { t.Fatal(err) }
+	if doc.Data().Actions["build"].Command != "make" { t.Fatalf("actions=%+v", doc.Data().Actions) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #106: a map[string]string field written as an inline table
 // (`dotenv = { FOO = "bar" }`) must decode and be marked consumed, exactly like
 // the semantically-equivalent sub-table form (`[parent.dotenv]`). Before the fix
