@@ -76,6 +76,24 @@ func TestRespellInlineTables(t *testing.T) {
 			"env = { K = \"a\\tb\" }\n",
 		)
 	})
+
+	t.Run("empty table -> empty inline table", func(t *testing.T) {
+		// An empty [env] is a leaf too; it inlines to `env = {}`. Empties must fire
+		// deterministically (an empty array-table entry is a runtime value property
+		// the shape-based fuzzer cannot foresee).
+		assertRespell(t, RespellInlineTables, "[env]\n", "env = {}\n")
+	})
+
+	t.Run("inlined root key-value is hoisted above table headers", func(t *testing.T) {
+		// A single-segment table appearing AFTER a sub-table must inline to a root
+		// key-value placed BEFORE the first header — otherwise the bare `env = {}`
+		// would bind to the preceding [other.sub] table, not the document (#107
+		// regression: the first 96-case run caught exactly this).
+		assertRespell(t, RespellInlineTables,
+			"[other]\n[other.sub]\nk = \"v\"\n[env]\nFOO = \"bar\"\n",
+			"env = { FOO = \"bar\" }\n[other]\nsub = { k = \"v\" }\n",
+		)
+	})
 }
 
 func TestRespellDottedKeys(t *testing.T) {
@@ -114,6 +132,16 @@ func TestRespellDottedKeys(t *testing.T) {
 			t.Fatalf("expected no-op, got %q", got)
 		}
 	})
+
+	t.Run("empty table left canonical (no keys to dot)", func(t *testing.T) {
+		// Dotted keys can't spell an empty table, so an empty [env] must stay
+		// canonical rather than vanish.
+		in := "[env]\n"
+		got, _ := RespellDottedKeys([]byte(in))
+		if !respellNoChange([]byte(in), got) {
+			t.Fatalf("expected no-op, got %q", got)
+		}
+	})
 }
 
 func TestRespellInlineArrays(t *testing.T) {
@@ -128,6 +156,15 @@ func TestRespellInlineArrays(t *testing.T) {
 		assertRespell(t, RespellInlineArrays,
 			"[[servers]]\nhost = \"a\"\n",
 			"servers = [ { host = \"a\" } ]\n",
+		)
+	})
+
+	t.Run("empty entry inlines to empty table", func(t *testing.T) {
+		// A zero-valued [[servers]] entry has no body; it must inline to `{}` so the
+		// array rewrite fires deterministically regardless of entry contents.
+		assertRespell(t, RespellInlineArrays,
+			"[[servers]]\n[[servers]]\nhost = \"b\"\n",
+			"servers = [ {}, { host = \"b\" } ]\n",
 		)
 	})
 

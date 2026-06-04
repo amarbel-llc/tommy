@@ -57,7 +57,11 @@ func tableBodyKVs(table *Node) []*Node {
 
 // tableIsLeaf reports whether a table's body is only key-values (and trivia) —
 // it contains no nested structural nodes. Inline tables may only hold key-value
-// pairs, so only leaf tables can be inlined in one step.
+// pairs, so only leaf tables can be inlined in one step. An EMPTY table (no
+// key-values) is a leaf too: it inlines to `key = {}`. Treating empty tables as
+// leaves matters because whether an array-of-tables entry is empty is a runtime
+// VALUE property (a zero-valued struct entry) the shape-based fuzzer predicate
+// cannot see — so the rewrite must fire deterministically on shape regardless.
 func tableIsLeaf(table *Node) bool {
 	for _, c := range table.Children {
 		switch c.Kind {
@@ -65,7 +69,7 @@ func tableIsLeaf(table *Node) bool {
 			return false
 		}
 	}
-	return len(tableBodyKVs(table)) > 0
+	return true
 }
 
 // inlineKV builds a fresh `key = value` NodeKeyValue from an existing kv's key
@@ -82,11 +86,15 @@ func inlineKV(key, value *Node) *Node {
 	}}
 }
 
-// buildInlineTable assembles a `{ k = v, k2 = v2 }` NodeInlineTable from a
-// table's body key-values. Returns nil if there are no key-values.
+// buildInlineTable assembles a NodeInlineTable from a table's body key-values:
+// `{ k = v, k2 = v2 }`, or `{}` when there are none. Returns nil only if a
+// key-value is malformed (missing key or value).
 func buildInlineTable(kvs []*Node) *Node {
 	if len(kvs) == 0 {
-		return nil
+		return &Node{Kind: NodeInlineTable, Children: []*Node{
+			{Kind: NodeBraceOpen, Raw: []byte("{")},
+			{Kind: NodeBraceClose, Raw: []byte("}")},
+		}}
 	}
 	children := []*Node{{Kind: NodeBraceOpen, Raw: []byte("{")}, inlineSpace()}
 	for i, kv := range kvs {
@@ -174,11 +182,26 @@ func findTableBySegments(nodes []*Node, segs []string) *Node {
 	return nil
 }
 
+// firstHeaderIndex returns the index of the first NodeTable/NodeArrayTable in
+// nodes, or len(nodes) if there is none. A root-level bare key-value is only
+// legal TOML before this point — after a table header it binds to that table.
+func firstHeaderIndex(nodes []*Node) int {
+	for i, c := range nodes {
+		if c.Kind == NodeTable || c.Kind == NodeArrayTable {
+			return i
+		}
+	}
+	return len(nodes)
+}
+
 // RespellInlineTables rewrites leaf header tables into inline-table key-values,
 // the inline-spelling dual of [a.b] sub-tables.
 //
-//   - A single-segment leaf table `[env]\nk = "v"` becomes `env = { k = "v" }`
-//     at the document root, in the table's position.
+//   - A single-segment leaf table `[env]\nk = "v"` becomes a root-level
+//     `env = { k = "v" }` key-value. It is hoisted ABOVE the first table header
+//     (a bare root key-value after a [table] would bind to that table, not the
+//     document), so the result is valid TOML regardless of the table's original
+//     position.
 //   - A two-segment leaf table `[direnv.dotenv]\nk = "v"` whose parent table
 //     `[direnv]` is present becomes `dotenv = { k = "v" }` appended into the
 //     parent's body, and the `[direnv.dotenv]` header is removed.
@@ -194,6 +217,7 @@ func RespellInlineTables(toml []byte) ([]byte, error) {
 	}
 	orig := root.Children
 	var out []*Node
+	var hoist []*Node // single-segment inlined key-values, emitted before any header
 	for _, node := range orig {
 		if node.Kind != NodeTable || !tableIsLeaf(node) || tableHasPrefixChild(orig, node) {
 			out = append(out, node)
@@ -207,8 +231,9 @@ func RespellInlineTables(toml []byte) ([]byte, error) {
 		}
 		switch len(segs) {
 		case 1:
-			// Replace the [env] table with `env = { ... }` at root.
-			out = append(out, topLevelKV(segs[0], inline))
+			// `env = { ... }` must precede any table header to bind to root; collect
+			// for hoisting rather than emitting in the table's (possibly late) slot.
+			hoist = append(hoist, topLevelKV(segs[0], inline))
 		case 2:
 			parent := findTableBySegments(orig, segs[:1])
 			if parent == nil {
@@ -220,6 +245,14 @@ func RespellInlineTables(toml []byte) ([]byte, error) {
 		default:
 			out = append(out, node) // deeper than two segments: deferred
 		}
+	}
+	if len(hoist) > 0 {
+		at := firstHeaderIndex(out)
+		spliced := make([]*Node, 0, len(out)+len(hoist))
+		spliced = append(spliced, out[:at]...)
+		spliced = append(spliced, hoist...)
+		spliced = append(spliced, out[at:]...)
+		out = spliced
 	}
 	root.Children = out
 	return root.Bytes(), nil
@@ -253,6 +286,10 @@ func RespellDottedKeys(toml []byte) ([]byte, error) {
 		}
 		prefix := segs[0]
 		kvs := tableBodyKVs(node)
+		if len(kvs) == 0 {
+			out = append(out, node) // empty table: no keys to dot, leave canonical
+			continue
+		}
 		ok := true
 		for _, kv := range kvs {
 			key, _ := kvKeyAndValue(kv)
