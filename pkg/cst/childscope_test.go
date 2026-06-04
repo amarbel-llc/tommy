@@ -178,3 +178,70 @@ func findKV(container *Node, name string) *Node {
 	}
 	return nil
 }
+
+// findTableNode returns the first NodeTable under root with the given header.
+func findTableNode(root *Node, header string) *Node {
+	for _, c := range root.Children {
+		if c.Kind == NodeTable && TableHeaderKey(c) == header {
+			return c
+		}
+	}
+	return nil
+}
+
+// FindChildInlineTable is the inline-spelling dual of FindChildTable (#106): a
+// map[string]string field may be written as `k = { ... }` instead of a
+// [parent.k] sub-table, and both must resolve.
+func TestFindChildInlineTable(t *testing.T) {
+	t.Run("top-level inline table", func(t *testing.T) {
+		root := mustParseRoot(t, "env = { FOO = \"bar\", BAZ = \"qux\" }\n")
+		it := FindChildInlineTable(root, "env")
+		if it == nil {
+			t.Fatal("env inline table not found")
+		}
+		if it.Kind != NodeInlineTable {
+			t.Fatalf("kind = %v, want NodeInlineTable", it.Kind)
+		}
+		m := ExtractStringMap(it)
+		if m["FOO"] != "bar" || m["BAZ"] != "qux" {
+			t.Fatalf("extracted %v", m)
+		}
+	})
+
+	t.Run("inline table nested under a parent table", func(t *testing.T) {
+		root := mustParseRoot(t, "[direnv]\ndotenv = { FOO = \"bar\" }\n")
+		direnv := findTableNode(root, "direnv")
+		if direnv == nil {
+			t.Fatal("[direnv] table not found")
+		}
+		// It must resolve relative to the parent table node, not the root: the
+		// inline kv is a child of [direnv], so a root lookup must miss it.
+		if FindChildInlineTable(root, "dotenv") != nil {
+			t.Fatal("dotenv must not resolve at root — it lives inside [direnv]")
+		}
+		it := FindChildInlineTable(direnv, "dotenv")
+		if it == nil {
+			t.Fatal("dotenv inline table not found under [direnv]")
+		}
+		if m := ExtractStringMap(it); m["FOO"] != "bar" {
+			t.Fatalf("extracted %v", m)
+		}
+	})
+
+	t.Run("absent key returns nil", func(t *testing.T) {
+		root := mustParseRoot(t, "other = { A = \"b\" }\n")
+		if FindChildInlineTable(root, "env") != nil {
+			t.Fatal("absent key should return nil")
+		}
+	})
+
+	t.Run("non-inline value returns nil", func(t *testing.T) {
+		// A scalar value with the matching key is not an inline table; the
+		// generated decoder relies on this returning nil so it does not mistake a
+		// plain key for a map.
+		root := mustParseRoot(t, "env = \"not-a-table\"\n")
+		if FindChildInlineTable(root, "env") != nil {
+			t.Fatal("scalar value must not match as an inline table")
+		}
+	})
+}

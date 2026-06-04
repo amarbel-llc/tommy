@@ -9993,3 +9993,97 @@ transport = "sftp"
 		t.Fatalf("go test failed: %v\n%s", err, output)
 	}
 }
+
+// Regression for #106: a map[string]string field written as an inline table
+// (`dotenv = { FOO = "bar" }`) must decode and be marked consumed, exactly like
+// the semantically-equivalent sub-table form (`[parent.dotenv]`). Before the fix
+// the generated decoder resolved the field only via FindChildTable (NodeTable
+// header match), so the inline-table NodeKeyValue child was never matched: the
+// field stayed nil and showed up in Undecoded(). Covers both a top-level map and
+// a map nested under a parent struct (the spinclass [direnv.dotenv] case).
+func TestIntegrationInlineTableMapStringString(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/inlinemap",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package inlinemap
+
+//go:generate tommy generate
+type Config struct {
+	Env    map[string]string `+"`"+`toml:"env"`+"`"+`
+	Direnv *Direnv           `+"`"+`toml:"direnv"`+"`"+`
+}
+
+type Direnv struct {
+	Dotenv map[string]string `+"`"+`toml:"dotenv"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "inlinemap_test.go", `package inlinemap
+
+import "testing"
+
+// Top-level map[string]string written inline.
+func TestInlineTopLevel(t *testing.T) {
+	input := []byte("env = { FOO = \"bar\", BAZ = \"qux\" }\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Env["FOO"] != "bar" { t.Fatalf("Env[FOO]=%q, want bar", d.Env["FOO"]) }
+	if d.Env["BAZ"] != "qux" { t.Fatalf("Env[BAZ]=%q, want qux", d.Env["BAZ"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// map[string]string nested under a parent struct, written inline. This is the
+// spinclass [direnv.dotenv] case from #106.
+func TestInlineNested(t *testing.T) {
+	input := []byte("[direnv]\ndotenv = { FOO = \"bar\" }\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Direnv == nil { t.Fatal("Direnv is nil") }
+	if d.Direnv.Dotenv["FOO"] != "bar" { t.Fatalf("Dotenv[FOO]=%q, want bar", d.Direnv.Dotenv["FOO"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// The sub-table form must still work — and produce the same decoded value as
+// the inline form.
+func TestSubTableStillWorks(t *testing.T) {
+	input := []byte("[direnv]\n[direnv.dotenv]\nFOO = \"bar\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Direnv == nil || d.Direnv.Dotenv["FOO"] != "bar" { t.Fatalf("sub-table form lost data: %+v", d.Direnv) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}

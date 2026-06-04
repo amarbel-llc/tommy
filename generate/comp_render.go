@@ -169,7 +169,7 @@ func compLeafCase(ctx jenCtx, l cdLeaf, fv string) []jen.Code {
 func compContNode(ctx jenCtx, c cdNode, cv *jen.Statement, fv string) []jen.Code {
 	switch n := c.(type) {
 	case cdMapScalar:
-		return compMapScalar(ctx, n, fv)
+		return compMapScalar(ctx, n, cv, fv)
 	case cdMapMap:
 		return compMapMap(ctx, n)
 	case cdInTable:
@@ -190,21 +190,38 @@ func compContNode(ctx jenCtx, c cdNode, cv *jen.Statement, fv string) []jen.Code
 	return nil
 }
 
-func compMapScalar(ctx jenCtx, n cdMapScalar, fv string) []jen.Code {
-	return []jen.Code{jen.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
+func compMapScalar(ctx jenCtx, n cdMapScalar, cv *jen.Statement, fv string) []jen.Code {
+	assignFromContainer := func(g *jen.Group, container *jen.Statement) {
+		g.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(container)
+		// Faithful nil/empty (#21): a present-but-empty [table] extracts to a
+		// nil map; keep it non-nil so it round-trips as empty, not absent.
+		g.If(n.Tgt.Jen().Clone().Op("==").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Map(jen.String()).String().Values())
+		if fv != "" {
+			g.Id(fv).Op("=").True()
+		}
+		g.Add(ctx.mc(n.TKey))
+		g.For(jen.Id("_ik").Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_ik")))
+	}
+	tableScan := jen.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
 		jen.If(tableMatch(n.TKey)).BlockFunc(func(g *jen.Group) {
-			g.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_ch"))
-			// Faithful nil/empty (#21): a present-but-empty [table] extracts to a
-			// nil map; keep it non-nil so it round-trips as empty, not absent.
-			g.If(n.Tgt.Jen().Clone().Op("==").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Map(jen.String()).String().Values())
-			if fv != "" {
-				g.Id(fv).Op("=").True()
-			}
-			g.Add(ctx.mc(n.TKey))
-			g.For(jen.Id("_ik").Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_ik")))
+			assignFromContainer(g, jen.Id("_ch"))
 			g.Break()
 		}),
-	)}
+	)
+	// Inline-table fallback (#106): `key = { ... }` parses to an inline-table
+	// NodeKeyValue child of its container, never a [key] NodeTable, so tableScan
+	// (which matches NodeTable headers at the document root) misses it. The inline
+	// table lives inside the field's container — the document root for a top-level
+	// field, the found parent table node (cv) for a nested one — so resolve it
+	// relative to cv, matching the bare (last-segment) key. Only consult it when
+	// the sub-table form was absent (target still nil).
+	inlineFallback := jen.If(n.Tgt.Jen().Clone().Op("==").Nil()).BlockFunc(func(g *jen.Group) {
+		g.Id("_it").Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(cv.Clone(), jen.Lit(n.TKey.BareKey()))
+		g.If(jen.Id("_it").Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+			assignFromContainer(ib, jen.Id("_it"))
+		})
+	})
+	return []jen.Code{tableScan, inlineFallback}
 }
 
 func compMapMap(ctx jenCtx, n cdMapMap) []jen.Code {
@@ -443,17 +460,29 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 
 	case cdMapScalar:
 		v := "_ct" + n.TKey.VarSuffix()
+		assignFromContainer := func(ib *jen.Group, container *jen.Statement) {
+			ib.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(container)
+			// Faithful nil/empty (#21): present-but-empty [table] -> non-nil.
+			ib.If(n.Tgt.Jen().Clone().Op("==").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Map(jen.String()).String().Values())
+			if fv != "" {
+				ib.Id(fv).Op("=").True()
+			}
+			ib.Add(ctx.mc(n.TKey))
+			ib.For(jen.Id("_ik").Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_ik")))
+		}
 		g.BlockFunc(func(b *jen.Group) {
 			b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
 			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
-				ib.Add(n.Tgt.Jen().Clone()).Op("=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id(v))
-				// Faithful nil/empty (#21): present-but-empty [table] -> non-nil.
-				ib.If(n.Tgt.Jen().Clone().Op("==").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Map(jen.String()).String().Values())
-				if fv != "" {
-					ib.Id(fv).Op("=").True()
-				}
-				ib.Add(ctx.mc(n.TKey))
-				ib.For(jen.Id("_ik").Op(":=").Range().Add(n.Tgt.Jen().Clone())).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_ik")))
+				assignFromContainer(ib, jen.Id(v))
+			}).Else().BlockFunc(func(eb *jen.Group) {
+				// Inline-table fallback (#106): a nested map written as
+				// `key = { ... }` is an inline-table NodeKeyValue child of the
+				// scope node, not a [scope.key] sub-table, so FindChildTable
+				// misses it. Resolve it relative to the scope container.
+				eb.Id("_it").Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(scope.Clone(), jen.Lit(n.TKey.BareKey()))
+				eb.If(jen.Id("_it").Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+					assignFromContainer(ib, jen.Id("_it"))
+				})
 			})
 		})
 

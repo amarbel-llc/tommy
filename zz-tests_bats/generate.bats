@@ -145,3 +145,54 @@ function generate_is_idempotent { # @test
   run diff "$BATS_TEST_TMPDIR/first.go" config_tommy.go
   assert_success
 }
+
+# Regression for #106: a map[string]string field written as an inline table
+# (`k = { ... }`) must decode and be marked consumed, exactly like the
+# sub-table form (`[parent.k]`). Covers the top-level map and a map nested
+# under a parent struct (the spinclass [direnv.dotenv] case).
+function generate_inline_table_map_string_string_decodes { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Env    map[string]string `toml:"env"`
+	Direnv *Direnv           `toml:"direnv"`
+}
+
+type Direnv struct {
+	Dotenv map[string]string `toml:"dotenv"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > inline_test.go <<'GOEOF'
+package batstest
+
+import "testing"
+
+func TestInlineTopLevel(t *testing.T) {
+	doc, err := DecodeConfig([]byte("env = { FOO = \"bar\" }\n"))
+	if err != nil { t.Fatal(err) }
+	if doc.Data().Env["FOO"] != "bar" { t.Fatalf("Env[FOO]=%q", doc.Data().Env["FOO"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+func TestInlineNested(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[direnv]\ndotenv = { FOO = \"bar\" }\n"))
+	if err != nil { t.Fatal(err) }
+	if doc.Data().Direnv == nil || doc.Data().Direnv.Dotenv["FOO"] != "bar" {
+		t.Fatalf("Direnv=%+v", doc.Data().Direnv)
+	}
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}

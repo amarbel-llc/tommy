@@ -1045,6 +1045,31 @@ func FindChildTable(root, parent *Node, key string) *Node {
 	return nil
 }
 
+// FindChildInlineTable returns the NodeInlineTable value of a `key = { ... }`
+// inline-table key-value that is a direct child of parent, or nil. It is the
+// inline-spelling dual of FindChildTable: a map[string]string (or table-typed)
+// field may be written either as a [parent.key] sub-table header (FindChildTable)
+// or as an inline table nested under parent (this), and both are valid TOML
+// encodings of the same data (#106). Unlike FindChildTable, this scans parent's
+// own children directly — an inline table lives inside its parent table node, not
+// at the document root — so parent is the actual container node (root for a
+// top-level field, the [parent] NodeTable for a nested one), not a root+parent
+// pair fed through ChildScope.
+//
+// The returned node is itself a container of NodeKeyValue children, so it can be
+// passed straight to ExtractStringMap.
+func FindChildInlineTable(parent *Node, key string) *Node {
+	for _, child := range parent.Children {
+		if child.Kind != NodeKeyValue || KeyValueName(child) != key {
+			continue
+		}
+		if v := KeyValueValue(child); v != nil && v.Kind == NodeInlineTable {
+			return v
+		}
+	}
+	return nil
+}
+
 // FindChildTableDup is FindChildTable plus a duplicate flag: it returns the first
 // matching [parentKey.key] table scoped to parent, and dup=true if a second one
 // exists in the same scope — a TOML "defining a table more than once" violation
