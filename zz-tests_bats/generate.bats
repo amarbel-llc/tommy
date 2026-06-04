@@ -324,3 +324,49 @@ GOEOF
   assert_success
   assert_output --partial "PASS"
 }
+
+# #108 axis 1: a FULLY-inline nested struct (`val = { name = "a", inner = { x = 5 } }`)
+# must decode the nested struct field too — the inline body is decoded
+# scope-relative so deeper inline tables resolve within it.
+function generate_inline_table_nested_struct_decodes { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Val Outer `toml:"val"`
+}
+
+type Outer struct {
+	Name  string `toml:"name"`
+	Inner Inner  `toml:"inner"`
+}
+
+type Inner struct {
+	X int `toml:"x"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > inline_test.go <<'GOEOF'
+package batstest
+
+import "testing"
+
+func TestInlineNestedStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("val = { name = \"a\", inner = { x = 5 } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Val.Name != "a" || d.Val.Inner.X != 5 { t.Fatalf("Val=%+v", d.Val) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}

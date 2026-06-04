@@ -10275,6 +10275,99 @@ func TestSubTableMapMapStillWorks(t *testing.T) {
 	}
 }
 
+// #108 axis 1: a FULLY-inline nested struct (`val = { name = "a", inner = { x = 5 } }`)
+// must decode the nested struct field too, not just the leaf fields. The body of
+// an inline-table fallback is decoded scope-relative to the inline node, so a
+// nested struct/map field resolves WITHIN the inline node via the scoped inline
+// fallback — composing recursively. Before this, the nested field was searched at
+// the document root, silently dropped, and not even flagged by Undecoded().
+func TestIntegrationInlineTableNestedStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/inlinenest",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package inlinenest
+
+//go:generate tommy generate
+type Config struct {
+	Val Outer  `+"`"+`toml:"val"`+"`"+`
+	Ptr *Outer `+"`"+`toml:"ptr"`+"`"+`
+}
+
+type Outer struct {
+	Name  string `+"`"+`toml:"name"`+"`"+`
+	Inner Inner  `+"`"+`toml:"inner"`+"`"+`
+	Env   map[string]string `+"`"+`toml:"env"`+"`"+`
+}
+
+type Inner struct {
+	X int `+"`"+`toml:"x"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "inlinenest_test.go", `package inlinenest
+
+import "testing"
+
+// Fully-inline value struct with a nested struct and a nested map.
+func TestInlineNestedValue(t *testing.T) {
+	doc, err := DecodeConfig([]byte("val = { name = \"a\", inner = { x = 5 }, env = { K = \"v\" } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Val.Name != "a" || d.Val.Inner.X != 5 || d.Val.Env["K"] != "v" { t.Fatalf("Val=%+v", d.Val) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Fully-inline pointer struct with a nested struct.
+func TestInlineNestedPtr(t *testing.T) {
+	doc, err := DecodeConfig([]byte("ptr = { name = \"b\", inner = { x = 9 } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Ptr == nil || d.Ptr.Name != "b" || d.Ptr.Inner.X != 9 { t.Fatalf("Ptr=%+v", d.Ptr) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Mixed: outer inline, inner as a sub-table — the inner [val.inner] still works
+// when val itself is a header table (canonical path unchanged).
+func TestSubTableNestedStillWorks(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[val]\nname = \"a\"\n\n[val.inner]\nx = 5\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Val.Name != "a" || d.Val.Inner.X != 5 { t.Fatalf("Val=%+v", d.Val) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #106: a map[string]string field written as an inline table
 // (`dotenv = { FOO = "bar" }`) must decode and be marked consumed, exactly like
 // the semantically-equivalent sub-table form (`[parent.dotenv]`). Before the fix

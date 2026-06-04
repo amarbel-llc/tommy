@@ -313,6 +313,28 @@ func compDupTableGuard(ctx jenCtx, ftv, bareKey string) []jen.Code {
 	}
 }
 
+// compInlineOrFlatFallback emits the header-absent branch for a struct field:
+// first try the inline form `field = { ... }` (#108), else the #89 flat-key
+// fallback. The inline node's body is decoded SCOPE-RELATIVE (compScopedBody)
+// so a nested struct/map field resolves WITHIN the inline node — the scoped
+// container renderers' own inline fallbacks (FindChildInlineTable(scope, ...))
+// then handle deeper inlining recursively. container is the node to search for
+// the inline key (document root at top level, the parent scope when nested).
+func compInlineOrFlatFallback(ctx jenCtx, g *jen.Group, key TOMLKey, children, flatChildren []cdNode, container *jen.Statement) {
+	itv := "_it" + key.VarSuffix()
+	g.Id(itv).Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(container.Clone(), jen.Lit(key.BareKey()))
+	g.If(jen.Id(itv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+		ib.Add(ctx.mc(key))
+		compScopedBody(ctx, ib, children, jen.Id(itv), "")
+	}).Else().BlockFunc(func(eb *jen.Group) {
+		// Header and inline both absent (#89): decode root-relative array-table /
+		// delegated children against the container anyway.
+		for _, s := range compRenderDecodeBody(ctx, flatChildren, container.Clone(), "") {
+			eb.Add(s)
+		}
+	})
+}
+
 func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
 	ftv := "_ft" + n.TKey.VarSuffix()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
@@ -320,24 +342,15 @@ func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
 			jen.If(tableMatch(n.TKey)).Block(compDupTableGuard(ctx, ftv, n.TKey.BareKey())...),
 		)
-		// Inline-table fallback (#108): when no [field] header exists, accept the
-		// inline form `field = { ... }`. FindChildInlineTable returns the
-		// NodeInlineTable whose inner key-values the body decode reads exactly like
-		// a table body, so assigning it to ftv reuses the header path unchanged.
-		g.If(jen.Id(ftv).Op("==").Nil()).Block(
-			jen.Id(ftv).Op("=").Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())),
-		)
 		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+			// Header found: its body fields live at the document root ([field.sub]),
+			// so decode them root-relative.
 			ib.Add(ctx.mc(n.TKey))
 			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id(ftv), "") {
 				ib.Add(s)
 			}
 		}).Else().BlockFunc(func(eb *jen.Group) {
-			// Header absent (#89): decode document-root-relative children (array
-			// tables / delegated slices) against the root node anyway.
-			for _, s := range compRenderDecodeBody(ctx, n.FlatChildren, ctx.docVar.Clone().Dot("Root").Call(), "") {
-				eb.Add(s)
-			}
+			compInlineOrFlatFallback(ctx, eb, n.TKey, n.Children, n.FlatChildren, ctx.docVar.Clone().Dot("Root").Call())
 		})
 	})}
 }
@@ -345,17 +358,14 @@ func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
 func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
 	lv := n.LocalVar
 	ftv := "_ft" + n.TKey.VarSuffix()
+	itv := "_it" + n.TKey.VarSuffix()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
 			jen.If(tableMatch(n.TKey)).Block(compDupTableGuard(ctx, ftv, n.TKey.BareKey())...),
 		)
-		// Inline-table fallback (#108): accept `field = { ... }` when the [field]
-		// header is absent (see compInTable).
-		g.If(jen.Id(ftv).Op("==").Nil()).Block(
-			jen.Id(ftv).Op("=").Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())),
-		)
 		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
+			// Header found: body fields are root-relative ([field.sub]).
 			g.Add(ctx.mc(n.TKey))
 			g.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
 			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id(ftv), "") {
@@ -363,12 +373,23 @@ func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
 			}
 			g.Add(n.Tgt.Jen().Clone()).Op("=").Id(lv)
 		}).Else().BlockFunc(func(g *jen.Group) {
-			g.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
-			g.Id("_found").Op(":=").False()
-			for _, s := range compRenderDecodeBody(ctx, n.FlatChildren, cv.Clone(), "_found") {
-				g.Add(s)
-			}
-			g.If(jen.Id("_found")).Block(n.Tgt.Jen().Clone().Op("=").Id(lv))
+			// Inline-table fallback (#108): `field = { ... }`, decoded scope-relative
+			// to the inline node so nested fields resolve within it (see compInTable).
+			g.Id(itv).Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey()))
+			g.If(jen.Id(itv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+				ib.Add(ctx.mc(n.TKey))
+				ib.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
+				compScopedBody(ctx, ib, n.Children, jen.Id(itv), "")
+				ib.Add(n.Tgt.Jen().Clone()).Op("=").Id(lv)
+			}).Else().BlockFunc(func(eb *jen.Group) {
+				// #55 flat-key fallback.
+				eb.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
+				eb.Id("_found").Op(":=").False()
+				for _, s := range compRenderDecodeBody(ctx, n.FlatChildren, cv.Clone(), "_found") {
+					eb.Add(s)
+				}
+				eb.If(jen.Id("_found")).Block(n.Tgt.Jen().Clone().Op("=").Id(lv))
+			})
 		})
 	})}
 }
@@ -642,16 +663,10 @@ func compScopedMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, scope *jen.Sta
 		})
 		// Inline-table fallback (#108): scope-relative `field = { k = {...} }`.
 		b.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
-			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(scope.Clone(), jen.Lit(field)), compScopedRenderBody)
+			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(scope.Clone(), jen.Lit(field)))
 		})
 		b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})
-}
-
-// compScopedRenderBody adapts compScopedBody to the func signature
-// compMapStructInlineBody expects (the scoped renderer).
-func compScopedRenderBody(ctx jenCtx, g *jen.Group, children []cdNode, cv *jen.Statement) {
-	compScopedBody(ctx, g, children, cv, "")
 }
 
 func compScopedDelStruct(ctx jenCtx, g *jen.Group, n cdDelStruct, scope *jen.Statement) {
@@ -772,7 +787,7 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 		// are the map keys; each entry's value is an inner inline table holding the
 		// struct fields, decoded exactly like a sub-table body.
 		g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
-			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())), compRenderBody)
+			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())))
 		})
 		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})}
@@ -781,10 +796,10 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 // compMapStructInlineBody emits the shared inline-table decode for a
 // map[string]struct: given an expression yielding the outer inline-table node,
 // iterate its entries, decode each inner inline table's struct fields, and build
-// _mr. decodeBody renders the struct field decode against a container var name
-// (compRenderBody for the top-level renderer, compScopedRenderBody for the
-// scoped one), so this is shared by compMapStruct and compScopedMapStruct.
-func compMapStructInlineBody(ctx jenCtx, g *jen.Group, n cdMapStruct, outerExpr *jen.Statement, decodeBody func(jenCtx, *jen.Group, []cdNode, *jen.Statement)) {
+// _mr. Each entry's struct fields are decoded SCOPE-RELATIVE to the inner inline
+// node (compScopedBody) so a nested struct/map field resolves within it; shared
+// by compMapStruct (top-level) and compScopedMapStruct.
+func compMapStructInlineBody(ctx jenCtx, g *jen.Group, n cdMapStruct, outerExpr *jen.Statement) {
 	g.Id("_it").Op(":=").Add(outerExpr)
 	g.If(jen.Id("_it").Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 		ib.For(jen.List(jen.Id("_"), jen.Id("_okv")).Op(":=").Range().Id("_it").Dot("Children")).BlockFunc(func(lb *jen.Group) {
@@ -802,7 +817,7 @@ func compMapStructInlineBody(ctx jenCtx, g *jen.Group, n cdMapStruct, outerExpr 
 			})
 			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id(n.MapVar)))
 			lb.Var().Id(n.EntryVar).Id(n.TypeName)
-			decodeBody(ctx, lb, n.Children, jen.Id("_iv"))
+			compScopedBody(ctx, lb, n.Children, jen.Id("_iv"), "")
 			if n.SlicePtr {
 				lb.Id("_mr").Index(jen.Id(n.MapVar)).Op("=").Op("&").Id(n.EntryVar)
 			} else {
@@ -810,14 +825,6 @@ func compMapStructInlineBody(ctx jenCtx, g *jen.Group, n cdMapStruct, outerExpr 
 			}
 		})
 	})
-}
-
-// compRenderBody adapts compRenderDecodeBody to the func signature
-// compMapStructInlineBody expects (the top-level renderer).
-func compRenderBody(ctx jenCtx, g *jen.Group, children []cdNode, cv *jen.Statement) {
-	for _, s := range compRenderDecodeBody(ctx, children, cv, "") {
-		g.Add(s)
-	}
 }
 
 func compDelStruct(ctx jenCtx, n cdDelStruct) []jen.Code {
