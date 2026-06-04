@@ -15,11 +15,12 @@ Decode/Encode methods from struct annotations.
 ``` sh
 just                    # default: validate + build + test (the full nix lane)
 just validate           # nix flake check — builds every check (bats lanes +
-                        #   go-generate) + library unit tests
+                        #   go-generate + fuzz-sweep) + library unit tests
 just build              # nix build (the tommy binary)
 just test               # nix lanes: bats (CLI e2e) + the offline Go ./generate suite
 just test-bats-nix      # the bats lane (bats-default)
 just test-go-generate-nix    # the Go ./generate suite offline in nix
+just test-fuzz-sweep-nix     # multi-seed fuzz sweep (all 3 fuzzers) offline in nix
 just test-bats-nix-tag fmt   # a single tagged lane
 
 # Local fast iteration on the Go test suite (needs network for go/packages):
@@ -30,13 +31,17 @@ just debug-test TestName               # one Go test, verbose
 **Codegen renderer & wire-format coverage.** The generator has a single renderer,
 `RenderFile` (jennifer-based, `generate/comp_render.go`), walking the compositional
 IR (`comp_ir.go`) built by the folds in `comp_build.go` over the `TypeExpr` algebra
-(`typeexpr.go`); shared jennifer helpers live in `comp_support.go`. CI covers it two
+(`typeexpr.go`); shared jennifer helpers live in `comp_support.go`. CI covers it three
 ways: the bats lane (`bats-default`) exercises
-`tommy generate` end-to-end against the installed binary, and the `go-generate`
+`tommy generate` end-to-end against the installed binary; the `go-generate`
 flake check runs the rich Go `./generate/...` integration suite (100+ cases,
 incl. the #81/#82 regression tests) offline against a pinned module cache
 (`goModCache` in `flake.nix`, `TOMMY_TEST_OFFLINE=1`; the synthetic modules can't
-hit the network in the sandbox). When adding an emission edge case, add both a
+hit the network in the sandbox); and the `fuzz-sweep` flake check loops the three
+generative fuzzers (`TestRoundTripFuzz`, `TestRoundTripFuzzDelegation`,
+`TestRoundTripSpellingFuzz`) over many seeds (`fuzzSweepSeeds` in `flake.nix`) —
+the `go-generate` check runs them at seed 1 only, the sweep widens shape coverage
+per merge. When adding an emission edge case, add both a
 bats test under `zz-tests_bats/` (tagged `generate`, e.g. `encode_wire_format.bats`)
 and a Go integration test for depth.
 

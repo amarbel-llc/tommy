@@ -193,12 +193,44 @@
           go test ./generate/...
           touch $out
         '';
+
+        # Multi-seed fuzz sweep. The go-generate check above runs the three
+        # generative fuzzers (TestRoundTripFuzz, TestRoundTripFuzzDelegation,
+        # TestRoundTripSpellingFuzz) at seed 1 only; this check loops the seed so
+        # CI fuzzes many random type-shape sets per merge, not just seed 1 —
+        # catching codegen/decoder bugs in shape combinations seed 1 misses (the
+        # #105/#107/#108 class). Same offline env as go-generate. Seed count is a
+        # build-time constant here; for ad-hoc local widening past it use the
+        # network-mode debug-fuzz-*-sweep just recipes (which take an n= arg).
+        fuzzSweepSeeds = 10;
+        goFuzzSweep = pkgs-master.runCommand "tommy-fuzz-sweep" {
+          nativeBuildInputs = [ pkgs-master.go ];
+        } ''
+          export HOME=$TMPDIR
+          export GOPATH=$TMPDIR/gopath
+          export GOCACHE=$TMPDIR/gocache
+          cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
+          export GOMODCACHE=$TMPDIR/modcache
+          export GOFLAGS=-mod=mod
+          export GOPROXY=off
+          export GOSUMDB=off
+          export GOTOOLCHAIN=local
+          export TOMMY_TEST_OFFLINE=1
+          cp -r --no-preserve=mode ${go-pkgs-test} ./src
+          cd ./src
+          for s in $(seq 1 ${toString fuzzSweepSeeds}); do
+            echo "=== fuzz seed $s ==="
+            TOMMY_FUZZ_SEED=$s go test -run '^TestRoundTrip' ./generate/ -count=1
+          done
+          touch $out
+        '';
       in
       {
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
           inherit go-pkgs go-pkgs-test;
           go-generate = goGenerateCheck;
+          fuzz-sweep = goFuzzSweep;
         };
 
         # Every bats lane is a check, so `nix flake check` (the merge-hook
@@ -208,6 +240,7 @@
         # through on the default backend. See #83.
         checks = batsLib.batsLaneOutputs // {
           go-generate = goGenerateCheck;
+          fuzz-sweep = goFuzzSweep;
         };
 
         devShells.default = pkgs-master.mkShell {

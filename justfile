@@ -53,6 +53,15 @@ test-bats-nix-tag tag:
 test-go-generate-nix:
   nix build .#go-generate --no-link --print-build-logs
 
+# Multi-seed fuzz sweep in the nix sandbox: runs all three generative fuzzers
+# (TestRoundTripFuzz, TestRoundTripFuzzDelegation, TestRoundTripSpellingFuzz)
+# across the seed range baked into the flake's fuzz-sweep check. Already part of
+# `just validate` (it is a flake check); this runs it in isolation. For ad-hoc
+# local widening past the baked-in seed count use the debug-fuzz-*-sweep recipes.
+[group('post-build')]
+test-fuzz-sweep-nix:
+  nix build .#fuzz-sweep --no-link --print-build-logs
+
 # === maintenance ===
 
 # Regenerate gomod2nix.toml. Run after changing go.mod.
