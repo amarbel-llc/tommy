@@ -20,7 +20,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "fmt":
-		os.Exit(runFmt(os.Args[2:]))
+		os.Exit(stats.Timed("fmt", func() int { return runFmt(os.Args[2:]) }))
 	case "generate":
 		os.Exit(stats.Timed("generate", func() int { return runGenerate(os.Args[2:]) }))
 	case "version":

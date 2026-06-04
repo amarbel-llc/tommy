@@ -51,12 +51,12 @@ The `tommy` binary has two subcommands:
   struct. Reads `$GOFILE` from the environment. Produces `*_tommy.go` with
   type-safe `Decode<Name>`/`Encode` methods.
 
-`tommy generate` emits best-effort stats-me/statsd telemetry (`internal/stats`,
-mirroring piggy's `crates/piggy/src/stats.rs`): a `tommy.generate.{success,
-failure}` counter plus a `tommy.generate.duration` timer per invocation. It is
-fire-and-forget UDP, gated on the presence of `STATSD_HOST`/`STATSD_PORT` (a
-no-op when neither is set), so it never perturbs codegen. See
-`stats-me-clients(7)`.
+Both subcommands emit best-effort stats-me/statsd telemetry (`internal/stats`,
+mirroring piggy's `crates/piggy/src/stats.rs`): a `tommy.<cmd>.{success,failure}`
+counter plus a `tommy.<cmd>.duration` timer per invocation (`<cmd>` is `generate`
+or `fmt`), wrapped via `stats.Timed`. It is fire-and-forget UDP, gated on the
+presence of `STATSD_HOST`/`STATSD_PORT` (a no-op when neither is set), so it
+never perturbs codegen or formatting. See `stats-me-clients(7)`.
 
 ## Architecture
 
