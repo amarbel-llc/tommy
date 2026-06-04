@@ -84,6 +84,20 @@ func TestRespellInlineTables(t *testing.T) {
 		)
 	})
 
+	t.Run("multiline-string value left canonical (newline invalid in inline table)", func(t *testing.T) {
+		// A multiline basic string carries literal newlines in its Raw bytes;
+		// inlining it would put a newline inside `{ }`, which TOML 1.0 forbids. The
+		// rewrite must decline and leave the table canonical.
+		in := "[hooks]\ncreate = \"\"\"line1\nline2\"\"\"\n"
+		got, err := RespellInlineTables([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !respellNoChange([]byte(in), got) {
+			t.Fatalf("expected no-op (multiline value), got %q", got)
+		}
+	})
+
 	t.Run("empty table -> empty inline table", func(t *testing.T) {
 		// An empty [env] is a leaf too; it inlines to `env = {}`. Empties must fire
 		// deterministically (an empty array-table entry is a runtime value property
@@ -173,6 +187,19 @@ func TestRespellInlineArrays(t *testing.T) {
 			"[[servers]]\n[[servers]]\nhost = \"b\"\n",
 			"servers = [ {}, { host = \"b\" } ]\n",
 		)
+	})
+
+	t.Run("entry with multiline value left canonical", func(t *testing.T) {
+		// A multiline string in an entry can't go inside an inline table; the whole
+		// array rewrite must decline.
+		in := "[[servers]]\nscript = \"\"\"a\nb\"\"\"\n"
+		got, err := RespellInlineArrays([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !respellNoChange([]byte(in), got) {
+			t.Fatalf("expected no-op (multiline entry value), got %q", got)
+		}
 	})
 
 	t.Run("entry with nested sub-table left canonical", func(t *testing.T) {

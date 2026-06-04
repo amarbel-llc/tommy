@@ -23,6 +23,17 @@ package cst
 // text. A partial transform still yields valid TOML representing the same
 // value — it just exercises fewer decoder paths. Deeper nesting and quoted
 // dotted-key segments are deferred.
+//
+// VALUE-preserving, not formatting-preserving: these reshuffle structure to a
+// different spelling, so they intentionally do NOT round-trip comments or
+// incidental whitespace inside a rewritten table body — a comment on a key-value
+// that gets folded into an inline table is dropped. They are a fuzz/equivalence
+// tool over the canonical (comment-free) encoder output, not a general
+// comment-preserving editing API; reach for the document API for that. A table
+// whose body holds a multiline-string value is left canonical (a newline cannot
+// appear inside an inline table).
+
+import "bytes"
 
 // inlineSpace is the single-space whitespace node used to pad synthesized
 // inline tables/arrays (`{ a = 1 }`, `[ {...} ]`) the way the formatter would.
@@ -84,9 +95,20 @@ func inlineKV(key, value *Node) *Node {
 	}}
 }
 
+// valueIsInlineSafe reports whether a value node can sit inside an inline table.
+// TOML 1.0 forbids newlines inside an inline table, so a multiline string (whose
+// Raw bytes carry literal newlines) cannot be inlined — the rewrite must decline
+// and leave such a table canonical rather than emit invalid TOML.
+func valueIsInlineSafe(value *Node) bool {
+	return !bytes.ContainsRune(value.Bytes(), '\n')
+}
+
 // buildInlineTable assembles a NodeInlineTable from a table's body key-values:
-// `{ k = v, k2 = v2 }`, or `{}` when there are none. Returns nil only if a
-// key-value is malformed (missing key or value).
+// `{ k = v, k2 = v2 }`, or `{}` when there are none. Returns nil when the table
+// cannot be inlined: a malformed key-value (missing key or value), or a value
+// that contains a newline (a multiline string would make the inline table span
+// lines, which is invalid TOML). A nil result tells callers to leave the table
+// canonical.
 func buildInlineTable(kvs []*Node) *Node {
 	if len(kvs) == 0 {
 		return &Node{Kind: NodeInlineTable, Children: []*Node{
@@ -97,7 +119,7 @@ func buildInlineTable(kvs []*Node) *Node {
 	children := []*Node{{Kind: NodeBraceOpen, Raw: []byte("{")}, inlineSpace()}
 	for i, kv := range kvs {
 		key, value := kvKeyAndValue(kv)
-		if key == nil || value == nil {
+		if key == nil || value == nil || !valueIsInlineSafe(value) {
 			return nil
 		}
 		if i > 0 {
@@ -238,8 +260,12 @@ func RespellInlineTables(toml []byte) ([]byte, error) {
 				out = append(out, node) // parent header absent: leave canonical
 				continue
 			}
-			// Append `dotenv = { ... }` into the parent table's body, drop header.
-			parent.Children = append(parent.Children, topLevelKV(segs[1], inline))
+			// Insert `dotenv = { ... }` into the parent table's body, dropping the
+			// header. kvInsertIndex places it after the parent's existing key-values
+			// and before any trailing blank line, matching the encoder's placement.
+			kv := topLevelKV(segs[1], inline)
+			at := kvInsertIndex(parent)
+			parent.Children = append(parent.Children[:at:at], append([]*Node{kv}, parent.Children[at:]...)...)
 		default:
 			out = append(out, node) // deeper than two segments: deferred
 		}
