@@ -287,3 +287,40 @@ GOEOF
   assert_success
   assert_output --partial "PASS"
 }
+
+# #108 axis 1: a map[string]NamedMap field written as a nested inline table
+# (`groups = { editors = { vim = "x" } }`) must decode and be consumed.
+function generate_inline_table_map_map_decodes { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+type Group map[string]string
+
+//go:generate tommy generate
+type Config struct {
+	Groups map[string]Group `toml:"groups"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > inline_test.go <<'GOEOF'
+package batstest
+
+import "testing"
+
+func TestInlineMapMap(t *testing.T) {
+	doc, err := DecodeConfig([]byte("groups = { editors = { vim = \"text/plain\" } }\n"))
+	if err != nil { t.Fatal(err) }
+	if doc.Data().Groups["editors"]["vim"] != "text/plain" { t.Fatalf("groups=%+v", doc.Data().Groups) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}

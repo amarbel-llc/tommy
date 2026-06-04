@@ -10187,6 +10187,94 @@ func TestSubTableMapStructStillWorks(t *testing.T) {
 	}
 }
 
+// #108 axis 1: a map[string]NamedMap field (map of a named map[string]string
+// alias) written as a nested inline table (`groups = { editors = { vim = "x" } }`)
+// must decode and be consumed, like the sub-table form (`[groups.editors]`).
+// Covers top-level (compMapMap) and scoped (compScopedMapMap, in a [[hosts]] entry).
+func TestIntegrationInlineTableMapMap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/inlinemapmap",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package inlinemapmap
+
+type Group map[string]string
+
+//go:generate tommy generate
+type Config struct {
+	Groups map[string]Group `+"`"+`toml:"groups"`+"`"+`
+	Hosts  []Host           `+"`"+`toml:"hosts"`+"`"+`
+}
+
+type Host struct {
+	Name string           `+"`"+`toml:"name"`+"`"+`
+	Tags map[string]Group `+"`"+`toml:"tags"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "inlinemapmap_test.go", `package inlinemapmap
+
+import "testing"
+
+// Top-level map[string]NamedMap, inline form.
+func TestInlineMapMap(t *testing.T) {
+	doc, err := DecodeConfig([]byte("groups = { editors = { vim = \"text/plain\", emacs = \"text/plain\" }, compilers = { gcc = \"x\" } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Groups["editors"]["vim"] != "text/plain" || d.Groups["editors"]["emacs"] != "text/plain" { t.Fatalf("editors=%+v", d.Groups["editors"]) }
+	if d.Groups["compilers"]["gcc"] != "x" { t.Fatalf("compilers=%+v", d.Groups["compilers"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// map[string]NamedMap nested in an array-table entry (scoped), inline form.
+func TestInlineScopedMapMap(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[[hosts]]\nname = \"h\"\ntags = { env = { region = \"us\" } }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Hosts) != 1 || d.Hosts[0].Name != "h" { t.Fatalf("hosts=%+v", d.Hosts) }
+	if d.Hosts[0].Tags["env"]["region"] != "us" { t.Fatalf("tags=%+v", d.Hosts[0].Tags) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// The sub-table form must still work.
+func TestSubTableMapMapStillWorks(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[groups.editors]\nvim = \"text/plain\"\n"))
+	if err != nil { t.Fatal(err) }
+	if doc.Data().Groups["editors"]["vim"] != "text/plain" { t.Fatalf("groups=%+v", doc.Data().Groups) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #106: a map[string]string field written as an inline table
 // (`dotenv = { FOO = "bar" }`) must decode and be marked consumed, exactly like
 // the semantically-equivalent sub-table form (`[parent.dotenv]`). Before the fix

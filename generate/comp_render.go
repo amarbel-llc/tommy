@@ -254,8 +254,44 @@ func compMapMap(ctx jenCtx, n cdMapMap) []jen.Code {
 				g.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("_inner")
 			}
 		})
+		// Inline-table fallback (#108): `field = { k = { ik = "v" } }`.
+		g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
+			compMapMapInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())))
+		})
 		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})}
+}
+
+// compMapMapInlineBody emits the shared inline-table decode for a
+// map[string]NamedMap (map of string-maps): given an expression yielding the
+// outer inline-table node, iterate its entries, ExtractStringMap each inner
+// inline table, and build _mr. Shared by compMapMap and compScopedMapMap.
+func compMapMapInlineBody(ctx jenCtx, g *jen.Group, n cdMapMap, outerExpr *jen.Statement) {
+	g.Id("_it").Op(":=").Add(outerExpr)
+	g.If(jen.Id("_it").Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
+		ib.For(jen.List(jen.Id("_"), jen.Id("_okv")).Op(":=").Range().Id("_it").Dot("Children")).BlockFunc(func(lb *jen.Group) {
+			lb.If(jen.Id("_okv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeKeyValue")).Block(jen.Continue())
+			lb.Id("_iv").Op(":=").Qual(cstPkg, "KeyValueValue").Call(jen.Id("_okv"))
+			lb.If(jen.Id("_iv").Op("==").Nil().Op("||").Id("_iv").Dot("Kind").Op("!=").Qual(cstPkg, "NodeInlineTable")).Block(jen.Continue())
+			lb.Id("_mk").Op(":=").Qual(cstPkg, "KeyValueName").Call(jen.Id("_okv"))
+			lb.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(mb *jen.Group) {
+				mb.Add(ctx.mc(n.TKey))
+				if n.TypeName != "" {
+					mb.Id("_mr").Op("=").Make(jen.Map(jen.String()).Add(jenType(n.TypeName, n.ImportPath)))
+				} else {
+					mb.Id("_mr").Op("=").Make(jen.Map(jen.String()).Map(jen.String()).String())
+				}
+			})
+			lb.Add(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk")))
+			lb.Id("_inner").Op(":=").Qual(cstPkg, "ExtractStringMap").Call(jen.Id("_iv"))
+			lb.For(jen.Id("_ik").Op(":=").Range().Id("_inner")).Block(ctx.mcExpr(n.TKey.Jen().Op("+").Lit(".").Op("+").Id("_mk").Op("+").Lit(".").Op("+").Id("_ik")))
+			if n.TypeName != "" {
+				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Add(jenType(n.TypeName, n.ImportPath)).Call(jen.Id("_inner"))
+			} else {
+				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("_inner")
+			}
+		})
+	})
 }
 
 // compDupTableGuard is the body of the root-scan match for a struct field's
@@ -555,6 +591,10 @@ func compScopedMapMap(ctx jenCtx, g *jen.Group, n cdMapMap, scope *jen.Statement
 			} else {
 				lb.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("_inner")
 			}
+		})
+		// Inline-table fallback (#108): scope-relative `field = { k = { ik = "v" } }`.
+		b.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
+			compMapMapInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(scope.Clone(), jen.Lit(field)))
 		})
 		b.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})
