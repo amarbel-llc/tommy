@@ -9994,6 +9994,108 @@ transport = "sftp"
 	}
 }
 
+// #108 axis 1: a nested struct / *struct field written as an inline table
+// (`inner = { name = "a" }`) must decode and be marked consumed, exactly like the
+// sub-table form (`[inner]`). Covers a value struct (cdInTable), a pointer struct
+// (cdNilGuard) at the top level, and a struct nested inside an array-table entry
+// (the scoped cdInTable/compScopedBody path). Leaf structs only.
+func TestIntegrationInlineTableStruct(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/inlinestruct",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package inlinestruct
+
+//go:generate tommy generate
+type Config struct {
+	Val      Inner     `+"`"+`toml:"val"`+"`"+`
+	Ptr      *Inner    `+"`"+`toml:"ptr"`+"`"+`
+	Services []Service `+"`"+`toml:"services"`+"`"+`
+}
+
+type Inner struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+	Port int    `+"`"+`toml:"port"`+"`"+`
+}
+
+type Service struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+	Meta Inner  `+"`"+`toml:"meta"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "inlinestruct_test.go", `package inlinestruct
+
+import "testing"
+
+// Value struct (cdInTable), inline form.
+func TestInlineValueStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("val = { name = \"a\", port = 8080 }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Val.Name != "a" || d.Val.Port != 8080 { t.Fatalf("Val=%+v", d.Val) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Pointer struct (cdNilGuard), inline form.
+func TestInlinePtrStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("ptr = { name = \"b\", port = 90 }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Ptr == nil || d.Ptr.Name != "b" || d.Ptr.Port != 90 { t.Fatalf("Ptr=%+v", d.Ptr) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Struct nested in an array-table entry (scoped path), inline form.
+func TestInlineScopedStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[[services]]\nhost = \"h\"\nmeta = { name = \"m\", port = 1 }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Services) != 1 { t.Fatalf("services=%+v", d.Services) }
+	if d.Services[0].Host != "h" || d.Services[0].Meta.Name != "m" || d.Services[0].Meta.Port != 1 { t.Fatalf("svc=%+v", d.Services[0]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// The sub-table form must still work and produce the same value.
+func TestSubTableStructStillWorks(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[val]\nname = \"a\"\nport = 8080\n\n[ptr]\nname = \"b\"\nport = 90\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Val.Name != "a" || d.Ptr == nil || d.Ptr.Name != "b" { t.Fatalf("d=%+v", d) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #106: a map[string]string field written as an inline table
 // (`dotenv = { FOO = "bar" }`) must decode and be marked consumed, exactly like
 // the semantically-equivalent sub-table form (`[parent.dotenv]`). Before the fix

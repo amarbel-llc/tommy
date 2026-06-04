@@ -284,6 +284,13 @@ func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
 			jen.If(tableMatch(n.TKey)).Block(compDupTableGuard(ctx, ftv, n.TKey.BareKey())...),
 		)
+		// Inline-table fallback (#108): when no [field] header exists, accept the
+		// inline form `field = { ... }`. FindChildInlineTable returns the
+		// NodeInlineTable whose inner key-values the body decode reads exactly like
+		// a table body, so assigning it to ftv reuses the header path unchanged.
+		g.If(jen.Id(ftv).Op("==").Nil()).Block(
+			jen.Id(ftv).Op("=").Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())),
+		)
 		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 			ib.Add(ctx.mc(n.TKey))
 			for _, s := range compRenderDecodeBody(ctx, n.Children, jen.Id(ftv), "") {
@@ -306,6 +313,11 @@ func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
 			jen.If(tableMatch(n.TKey)).Block(compDupTableGuard(ctx, ftv, n.TKey.BareKey())...),
+		)
+		// Inline-table fallback (#108): accept `field = { ... }` when the [field]
+		// header is absent (see compInTable).
+		g.If(jen.Id(ftv).Op("==").Nil()).Block(
+			jen.Id(ftv).Op("=").Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())),
 		)
 		g.If(jen.Id(ftv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 			g.Add(ctx.mc(n.TKey))
@@ -402,6 +414,12 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 			// scope is correct (#99) this guard is sound in the scoped context.
 			b.List(jen.Id(v), jen.Id(dv)).Op(":=").Qual(cstPkg, "FindChildTableDup").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
 			b.If(jen.Id(dv)).Block(ctx.retErr("duplicate table %q", jen.Lit(n.TKey.BareKey())))
+			// Inline-table fallback (#108): scope-relative `field = { ... }` when the
+			// [scope.field] header is absent. The inline node is a child of the scope
+			// node, so search scope, and the body decode reads it like a table body.
+			b.If(jen.Id(v).Op("==").Nil()).Block(
+				jen.Id(v).Op("=").Qual(cstPkg, "FindChildInlineTable").Call(scope.Clone(), jen.Lit(n.TKey.BareKey())),
+			)
 			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(ctx.mc(n.TKey))
 				compScopedBody(ctx, ib, n.Children, jen.Id(v), "")
@@ -419,6 +437,11 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 		g.BlockFunc(func(b *jen.Group) {
 			b.List(jen.Id(v), jen.Id(dv)).Op(":=").Qual(cstPkg, "FindChildTableDup").Call(rootNode(), scope.Clone(), jen.Lit(n.TKey.BareKey()))
 			b.If(jen.Id(dv)).Block(ctx.retErr("duplicate table %q", jen.Lit(n.TKey.BareKey())))
+			// Inline-table fallback (#108): scope-relative `field = { ... }` (see the
+			// cdInTable case above).
+			b.If(jen.Id(v).Op("==").Nil()).Block(
+				jen.Id(v).Op("=").Qual(cstPkg, "FindChildInlineTable").Call(scope.Clone(), jen.Lit(n.TKey.BareKey())),
+			)
 			b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(ctx.mc(n.TKey))
 				ib.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()

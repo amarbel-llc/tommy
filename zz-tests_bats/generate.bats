@@ -196,3 +196,53 @@ GOEOF
   assert_success
   assert_output --partial "PASS"
 }
+
+# #108 axis 1: a nested struct / *struct field written as an inline table
+# (`inner = { name = "a" }`) must decode and be consumed, like the sub-table form.
+function generate_inline_table_struct_decodes { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Val Inner  `toml:"val"`
+	Ptr *Inner `toml:"ptr"`
+}
+
+type Inner struct {
+	Name string `toml:"name"`
+	Port int    `toml:"port"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > inline_test.go <<'GOEOF'
+package batstest
+
+import "testing"
+
+func TestInlineValueStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("val = { name = \"a\", port = 8080 }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Val.Name != "a" || d.Val.Port != 8080 { t.Fatalf("Val=%+v", d.Val) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+func TestInlinePtrStruct(t *testing.T) {
+	doc, err := DecodeConfig([]byte("ptr = { name = \"b\", port = 90 }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Ptr == nil || d.Ptr.Name != "b" { t.Fatalf("Ptr=%+v", d.Ptr) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}
