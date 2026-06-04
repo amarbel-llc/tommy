@@ -1,6 +1,13 @@
 package cst
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
+
+// respellNoChange reports whether respelling produced byte-identical output —
+// used to assert a transform was a no-op on inapplicable input.
+func respellNoChange(in, out []byte) bool { return bytes.Equal(in, out) }
 
 // respell asserts a Respell* function turns `in` into exactly `want`, that the
 // output re-parses, and (implicitly) that it is valid TOML (Parse succeeds).

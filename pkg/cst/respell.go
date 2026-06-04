@@ -24,8 +24,6 @@ package cst
 // value — it just exercises fewer decoder paths. Deeper nesting and quoted
 // dotted-key segments are deferred.
 
-import "bytes"
-
 // inlineSpace is the single-space whitespace node used to pad synthesized
 // inline tables/arrays (`{ a = 1 }`, `[ {...} ]`) the way the formatter would.
 func inlineSpace() *Node { return &Node{Kind: NodeWhitespace, Raw: []byte(" ")} }
@@ -415,7 +413,3 @@ func RespellInlineArrays(toml []byte) ([]byte, error) {
 	root.Children = out
 	return root.Bytes(), nil
 }
-
-// respellNoChange reports whether respelling produced byte-identical output —
-// used by tests to assert a transform was a no-op on inapplicable input.
-func respellNoChange(in, out []byte) bool { return bytes.Equal(in, out) }
