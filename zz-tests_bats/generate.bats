@@ -28,6 +28,17 @@ function generate_creates_companion_file { # @test
   assert [ -f config_tommy.go ]
 }
 
+# With stats-me opt-in (STATSD_* set) generation must still succeed: telemetry is
+# fire-and-forget UDP, so a port with nothing listening must not perturb it.
+function generate_with_stats_me_enabled_still_succeeds { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+  export STATSD_HOST=127.0.0.1
+  export STATSD_PORT=18125
+  run go generate ./...
+  assert_success
+  assert [ -f config_tommy.go ]
+}
+
 function generate_output_contains_decode_function { # @test
   cd "$BATS_TEST_TMPDIR/proj"
   run go generate ./...

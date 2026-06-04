@@ -6344,11 +6344,15 @@ type App struct {
 	leafIndividual, _ := os.ReadFile(filepath.Join(leafDir, "config_tommy.go"))
 	consumerIndividual, _ := os.ReadFile(filepath.Join(consumerDir, "app_tommy.go"))
 
-	// Build tommy binary from current source
+	// Build tommy binary from current source. CGO_ENABLED=0: cmd/tommy imports
+	// net (internal/stats UDP telemetry), which pulls in net's cgo DNS resolver
+	// under the default CGO_ENABLED=1; the offline go-generate sandbox has no C
+	// compiler, so a cgo build fails. tommy needs no cgo (statsd is pure-Go UDP),
+	// so force the pure-Go build.
 	tommyBin := filepath.Join(t.TempDir(), "tommy")
 	buildCmd := exec.Command("go", "build", "-o", tommyBin, "./cmd/tommy")
 	buildCmd.Dir = repoRoot
-	buildCmd.Env = append(os.Environ(), testGoEnv()...)
+	buildCmd.Env = append(append(os.Environ(), testGoEnv()...), "CGO_ENABLED=0")
 	if buildOut, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build tommy: %v\n%s", err, buildOut)
 	}

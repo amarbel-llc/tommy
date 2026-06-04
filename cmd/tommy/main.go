@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/amarbel-llc/tommy/internal/stats"
 )
 
 var (
@@ -20,7 +22,7 @@ func main() {
 	case "fmt":
 		os.Exit(runFmt(os.Args[2:]))
 	case "generate":
-		os.Exit(runGenerate(os.Args[2:]))
+		os.Exit(stats.Timed("generate", func() int { return runGenerate(os.Args[2:]) }))
 	case "version":
 		fmt.Printf("tommy %s (%s)\n", version, commit)
 	default:
