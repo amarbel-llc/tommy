@@ -49,6 +49,18 @@ func qualify(pkg, name string) string {
 	return pkg + "." + name
 }
 
+// maybeEmitValidate appends a no-op Validate() to a generated type ~1/3 of the
+// time. A struct implementing Validate() gets the call injected into its
+// generated receiver Decode/Encode (the Validatable path); returning nil keeps
+// the round-trip green while exercising that call site. Only types with a
+// //go:generate directive (Case structs, dep structs) get a receiver
+// Decode/Encode, so only those are passed here.
+func (g *shapeGen) maybeEmitValidate(buf *strings.Builder, name string) {
+	if g.rng.Intn(3) == 0 {
+		fmt.Fprintf(buf, "func (%s) Validate() error { return nil }\n\n", name)
+	}
+}
+
 type tdField struct {
 	name, tomlKey string
 	t             *td
@@ -151,6 +163,15 @@ func (g *shapeGen) genType(depth int) *td {
 	if g.delegating && g.rng.Intn(3) == 0 {
 		return g.genDelegatedField()
 	}
+	// Same-package TextMarshaler coverage (a leaf): ~1/8 of fields are a
+	// TextMarshaler value or a []TextMarshaler slice.
+	if g.rng.Intn(8) == 0 {
+		txt := g.genTextType(g.typeDefs, "")
+		if g.rng.Intn(2) == 0 {
+			return txt
+		}
+		return &td{kind: "slice", elem: txt}
+	}
 	const (
 		shScalar = iota
 		shPtrScalar
@@ -250,6 +271,20 @@ func (g *shapeGen) genMapMap() *td {
 	return &td{kind: "mapmap", stName: name}
 }
 
+// genTextType emits a TextMarshaler/TextUnmarshaler type (a string newtype with
+// an identity text codec, so it round-trips) into buf, and returns it as a
+// "text" shape in package pkg. Covers FieldTextMarshaler (and, as a slice
+// element, FieldSliceTextMarshaler) — including the cross-package import paths
+// when pkg="dep". The type needs no //go:generate (it has no Decode/Encode).
+func (g *shapeGen) genTextType(buf *strings.Builder, pkg string) *td {
+	name := fmt.Sprintf("Text%d", g.subN)
+	g.subN++
+	fmt.Fprintf(buf, "type %s string\n\n", name)
+	fmt.Fprintf(buf, "func (t %s) MarshalText() ([]byte, error) { return []byte(t), nil }\n\n", name)
+	fmt.Fprintf(buf, "func (t *%s) UnmarshalText(b []byte) error { *t = %s(b); return nil }\n\n", name, name)
+	return &td{kind: "text", stName: name, pkg: pkg}
+}
+
 // goType renders a Go type as referenced from the MAIN package: a dep struct
 // becomes dep.DepN. For emitting a type INSIDE the dep package (where dep types
 // are bare), use goTypeIn(t, "dep").
@@ -276,9 +311,10 @@ func (g *shapeGen) goTypeIn(t *td, cur string) string {
 			return "map[string]" + t.stName
 		}
 		return "map[string]" + qualify(t.pkg, t.stName)
-	case "struct", "namedmapstruct":
-		// Both render as a (possibly qualified) type name: a struct type, or a
-		// named map[string]struct alias used as a direct field (#105).
+	case "struct", "namedmapstruct", "text":
+		// All render as a (possibly qualified) named type: a struct, a named
+		// map[string]struct alias used as a direct field (#105), or a
+		// TextMarshaler type.
 		if t.pkg == cur {
 			return t.stName
 		}
@@ -328,6 +364,10 @@ func (g *shapeGen) genValue(t *td) string {
 		// requiring keys, each a struct value, so a swap/mis-scope is caught (#105).
 		lit := qualify(t.pkg, t.stName)
 		return lit + "{\"k.0\": " + g.genValue(t.elem) + ", \"k 1\": " + g.genValue(t.elem) + "}"
+	case "text":
+		// A TextMarshaler value: a typed conversion from an (alphanumeric, so
+		// escape-safe) string literal that round-trips through MarshalText.
+		return qualify(t.pkg, t.stName) + "(" + g.scalarValue("string") + ")"
 	case "struct":
 		var b strings.Builder
 		b.WriteString(qualify(t.pkg, t.stName) + "{")
@@ -485,6 +525,7 @@ func TestRoundTripFuzz(t *testing.T) {
 		name := fmt.Sprintf("Case%d", i)
 		fields, body := g.genFields(depth - 1)
 		fmt.Fprintf(g.typeDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body)
+		g.maybeEmitValidate(g.typeDefs, name)
 		value := g.genValue(&td{kind: "struct", stName: name, fields: fields})
 		testBodies.WriteString(roundTripCaseBody(name, value))
 	}
@@ -619,6 +660,7 @@ func (g *shapeGen) genDepStruct(depth int) *td {
 		fmt.Fprintf(&body, "\t%s %s `toml:%q`\n", f.name, g.goTypeIn(ft, "dep"), f.tomlKey)
 	}
 	fmt.Fprintf(g.depDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body.String())
+	g.maybeEmitValidate(g.depDefs, name)
 	return &td{kind: "struct", stName: name, pkg: "dep", fields: fields}
 }
 
@@ -656,11 +698,19 @@ func (g *shapeGen) genDepNamedMapStruct() *td {
 // shapes the codegen supports. map[string]*T is excluded: the classifier rejects
 // cross-package pointer-struct map values (analyze.go).
 func (g *shapeGen) genDelegatedField() *td {
-	switch g.rng.Intn(6) {
+	switch g.rng.Intn(7) {
 	case 0:
 		return g.genDepMapMap()
 	case 1:
 		return g.genDepNamedMapStruct()
+	case 2:
+		// cross-package TextMarshaler value or []TextMarshaler slice (import +
+		// codec edge cases the hand fixtures cover heavily).
+		txt := g.genTextType(g.depDefs, "dep")
+		if g.rng.Intn(2) == 0 {
+			return txt
+		}
+		return &td{kind: "slice", elem: txt}
 	}
 	const depDepth = 2
 	dep := g.genDepStruct(depDepth)
@@ -698,6 +748,7 @@ func TestRoundTripFuzzDelegation(t *testing.T) {
 		name := fmt.Sprintf("Case%d", i)
 		fields, body := g.genFields(depth - 1)
 		fmt.Fprintf(g.typeDefs, "//go:generate tommy generate\ntype %s struct {\n%s}\n\n", name, body)
+		g.maybeEmitValidate(g.typeDefs, name)
 		value := g.genValue(&td{kind: "struct", stName: name, fields: fields})
 		testBodies.WriteString(roundTripCaseBody(name, value))
 	}
