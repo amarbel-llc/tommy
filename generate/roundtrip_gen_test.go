@@ -276,7 +276,9 @@ func (g *shapeGen) goTypeIn(t *td, cur string) string {
 			return "map[string]" + t.stName
 		}
 		return "map[string]" + qualify(t.pkg, t.stName)
-	case "struct":
+	case "struct", "namedmapstruct":
+		// Both render as a (possibly qualified) type name: a struct type, or a
+		// named map[string]struct alias used as a direct field (#105).
 		if t.pkg == cur {
 			return t.stName
 		}
@@ -321,6 +323,11 @@ func (g *shapeGen) genValue(t *td) string {
 			return qualify(t.pkg, t.stName) + "{\"ik.0\": " + g.scalarValue("string") + ", \"ik 1\": " + g.scalarValue("string") + "}"
 		}
 		return g.goType(t) + "{\"k.0\": " + inner() + ", \"k 1\": " + inner() + "}"
+	case "namedmapstruct":
+		// A named map[string]struct alias (dep.NamedMapStructN). Two quote-
+		// requiring keys, each a struct value, so a swap/mis-scope is caught (#105).
+		lit := qualify(t.pkg, t.stName)
+		return lit + "{\"k.0\": " + g.genValue(t.elem) + ", \"k 1\": " + g.genValue(t.elem) + "}"
 	case "struct":
 		var b strings.Builder
 		b.WriteString(qualify(t.pkg, t.stName) + "{")
@@ -340,7 +347,9 @@ func (g *shapeGen) genValue(t *td) string {
 			// empty-collection variant (which would round-trip to nil, not empty) is
 			// suppressed for omitempty fields; nil and populated still round-trip.
 			switch f.t.kind {
-			case "mapmap", "ptr":
+			case "mapmap", "ptr", "namedmapstruct":
+				// namedmapstruct is a map[string]struct alias — no present-empty
+				// form (like map[string]Struct), so nil-only, never `{}`.
 				if g.rng.Intn(4) == 0 {
 					fv = "nil"
 				}
@@ -626,14 +635,32 @@ func (g *shapeGen) genDepMapMap() *td {
 	return &td{kind: "mapmap", stName: name, pkg: "dep"}
 }
 
-// genDelegatedField returns a cross-package field shape: ~1/5 of the time a
-// map[string]dep.NamedMap (cross-package named-map alias), otherwise a dep target
-// struct wrapped in one of the five delegated shapes the codegen supports.
-// map[string]*T is excluded: the classifier rejects cross-package pointer-struct
-// map values (analyze.go).
+// genDepNamedMapStruct emits a named map[string]<dep struct> alias into the dep
+// package and returns it as a direct-field shape (Actions dep.NamedMapStructN).
+// This is the hand-fixture shape (type ScriptMap map[string]Script used directly)
+// the algebra previously couldn't generate (#105): a named map alias whose value
+// is a struct, classified as a delegated map carrying the alias type name. The
+// alias itself needs no //go:generate; its value struct (emitted by genDepStruct)
+// does.
+func (g *shapeGen) genDepNamedMapStruct() *td {
+	val := g.genDepStruct(1)
+	name := fmt.Sprintf("NamedMapStruct%d", g.subN)
+	g.subN++
+	fmt.Fprintf(g.depDefs, "type %s map[string]%s\n\n", name, g.goTypeIn(val, "dep"))
+	return &td{kind: "namedmapstruct", stName: name, pkg: "dep", elem: val}
+}
+
+// genDelegatedField returns a cross-package field shape: a map[string]dep.NamedMap
+// (named string-map alias), a dep.NamedMapStructN (named struct-map alias used as
+// a direct field), or a dep target struct wrapped in one of the five delegated
+// shapes the codegen supports. map[string]*T is excluded: the classifier rejects
+// cross-package pointer-struct map values (analyze.go).
 func (g *shapeGen) genDelegatedField() *td {
-	if g.rng.Intn(5) == 0 {
+	switch g.rng.Intn(6) {
+	case 0:
 		return g.genDepMapMap()
+	case 1:
+		return g.genDepNamedMapStruct()
 	}
 	const depDepth = 2
 	dep := g.genDepStruct(depDepth)
