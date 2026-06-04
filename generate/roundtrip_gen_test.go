@@ -272,7 +272,10 @@ func (g *shapeGen) goTypeIn(t *td, cur string) string {
 	case "map":
 		return "map[string]" + g.goTypeIn(t.elem, cur)
 	case "mapmap":
-		return "map[string]" + t.stName
+		if t.pkg == cur {
+			return "map[string]" + t.stName
+		}
+		return "map[string]" + qualify(t.pkg, t.stName)
 	case "struct":
 		if t.pkg == cur {
 			return t.stName
@@ -315,7 +318,7 @@ func (g *shapeGen) genValue(t *td) string {
 		// entry is caught by DeepEqual. Values are random, so they differ. Keys
 		// require quoting (#103 canary).
 		inner := func() string {
-			return t.stName + "{\"ik.0\": " + g.scalarValue("string") + ", \"ik 1\": " + g.scalarValue("string") + "}"
+			return qualify(t.pkg, t.stName) + "{\"ik.0\": " + g.scalarValue("string") + ", \"ik 1\": " + g.scalarValue("string") + "}"
 		}
 		return g.goType(t) + "{\"k.0\": " + inner() + ", \"k 1\": " + inner() + "}"
 	case "struct":
@@ -610,10 +613,28 @@ func (g *shapeGen) genDepStruct(depth int) *td {
 	return &td{kind: "struct", stName: name, pkg: "dep", fields: fields}
 }
 
-// genDelegatedField wraps a freshly generated dep target struct in one of the
-// five delegated field shapes the codegen supports. map[string]*T is excluded:
-// the classifier rejects cross-package pointer-struct map values (analyze.go).
+// genDepMapMap emits a named map[string]string alias into the dep package and
+// returns a map[string]<alias> shape qualified to dep (map[string]dep.NamedMapN).
+// This is the FieldMapStringMapStringString kind reached through a CROSS-package
+// alias — classified as a nested-string-map with an import, decoded/encoded via
+// compMapMap/compScopedMapMap casting to the dep alias (#105). The alias needs no
+// //go:generate (a bare map type has no Decode/Encode), only to exist in dep.
+func (g *shapeGen) genDepMapMap() *td {
+	name := fmt.Sprintf("NamedMap%d", g.subN)
+	g.subN++
+	fmt.Fprintf(g.depDefs, "type %s map[string]string\n\n", name)
+	return &td{kind: "mapmap", stName: name, pkg: "dep"}
+}
+
+// genDelegatedField returns a cross-package field shape: ~1/5 of the time a
+// map[string]dep.NamedMap (cross-package named-map alias), otherwise a dep target
+// struct wrapped in one of the five delegated shapes the codegen supports.
+// map[string]*T is excluded: the classifier rejects cross-package pointer-struct
+// map values (analyze.go).
 func (g *shapeGen) genDelegatedField() *td {
+	if g.rng.Intn(5) == 0 {
+		return g.genDepMapMap()
+	}
 	const depDepth = 2
 	dep := g.genDepStruct(depDepth)
 	switch g.rng.Intn(5) {
