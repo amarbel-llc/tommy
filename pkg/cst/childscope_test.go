@@ -169,6 +169,103 @@ name = "o1"
 	}
 }
 
+// FindImplicitChildTable synthesizes the implicit parent a standalone dotted
+// header defines ([direnv.dotenv] with no bare [direnv], #113); the scoped
+// finders then resolve against the synthetic node via ChildScope's
+// implicitScope fallback.
+func TestFindImplicitChildTable(t *testing.T) {
+	t.Run("standalone dotted header at root", func(t *testing.T) {
+		root := mustParseRoot(t, "[direnv.dotenv]\nFOO = \"bar\"\n")
+		imp := FindImplicitChildTable(root, root, "direnv")
+		if imp == nil {
+			t.Fatal("implicit [direnv] not synthesized")
+		}
+		if got := TableHeaderKey(imp); got != "direnv" {
+			t.Fatalf("synthetic header = %q, want direnv", got)
+		}
+		dotenv := FindChildTable(root, imp, "dotenv")
+		if dotenv == nil {
+			t.Fatal("dotenv not found under the synthetic parent")
+		}
+		if m := ExtractStringMap(dotenv); m["FOO"] != "bar" {
+			t.Fatalf("extracted %v", m)
+		}
+		// The synthetic node is inert for leaf/inline lookups.
+		if FindChildInlineTable(imp, "dotenv") != nil {
+			t.Fatal("synthetic node must not match inline lookups")
+		}
+	})
+
+	t.Run("no evidence returns nil", func(t *testing.T) {
+		root := mustParseRoot(t, "[other]\nx = 1\n")
+		if FindImplicitChildTable(root, root, "direnv") != nil {
+			t.Fatal("no dotted evidence — want nil")
+		}
+	})
+
+	t.Run("bare header alone is not evidence", func(t *testing.T) {
+		// [direnv] itself does not carry the "direnv." prefix; the explicit
+		// header is the caller's job to find first.
+		root := mustParseRoot(t, "[direnv]\nx = 1\n")
+		if FindImplicitChildTable(root, root, "direnv") != nil {
+			t.Fatal("bare [direnv] is not dotted evidence — want nil")
+		}
+	})
+
+	t.Run("scoped to array-table entries without cross-entry leak", func(t *testing.T) {
+		// Each [[apps]] entry defines its direnv only via the dotted header. The
+		// synthetic parent for entry i must resolve entry i's sub-table — the
+		// evidence anchor bounds the scope to the entry it was found in.
+		root := mustParseRoot(t, `[[apps]]
+name = "a0"
+
+[apps.direnv.dotenv]
+K = "v0"
+
+[[apps]]
+name = "a1"
+
+[apps.direnv.dotenv]
+K = "v1"
+`)
+		for i, want := range []string{"v0", "v1"} {
+			entry := nthArrayTable(root, "apps", i)
+			imp := FindImplicitChildTable(root, entry, "direnv")
+			if imp == nil {
+				t.Fatalf("entry %d: implicit [apps.direnv] not synthesized", i)
+			}
+			if got := TableHeaderKey(imp); got != "apps.direnv" {
+				t.Fatalf("entry %d: synthetic header = %q", i, got)
+			}
+			dotenv := FindChildTable(root, imp, "dotenv")
+			if dotenv == nil {
+				t.Fatalf("entry %d: dotenv not found", i)
+			}
+			if m := ExtractStringMap(dotenv); m["K"] != want {
+				t.Fatalf("entry %d: K = %q, want %q (cross-entry leak)", i, m["K"], want)
+			}
+		}
+	})
+
+	t.Run("entry without evidence yields nil even when a sibling has some", func(t *testing.T) {
+		root := mustParseRoot(t, `[[apps]]
+name = "a0"
+
+[[apps]]
+name = "a1"
+
+[apps.direnv.dotenv]
+K = "v1"
+`)
+		if FindImplicitChildTable(root, nthArrayTable(root, "apps", 0), "direnv") != nil {
+			t.Fatal("entry 0 has no dotted evidence — want nil (leaked from entry 1)")
+		}
+		if FindImplicitChildTable(root, nthArrayTable(root, "apps", 1), "direnv") == nil {
+			t.Fatal("entry 1 evidence not found")
+		}
+	})
+}
+
 // findKV returns the NodeKeyValue with the given name under container.
 func findKV(container *Node, name string) *Node {
 	for _, c := range container.Children {

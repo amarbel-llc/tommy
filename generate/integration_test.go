@@ -10368,6 +10368,181 @@ func TestSubTableNestedStillWorks(t *testing.T) {
 	}
 }
 
+// Regression for #113: a standalone dotted sub-table header ([direnv.dotenv]
+// with no bare [direnv] header) is valid TOML — the parent table is implicit —
+// but the generated decoder only ran the dotted-header consumption scan inside
+// the branch entered when the bare parent header was found. A document
+// containing ONLY the dotted form left the header unconsumed: Undecoded()
+// reported it and the struct field stayed nil. Covers both parent shapes
+// (pointer struct / value struct) and both generated codepaths (the receiver
+// DecodeConfig and the keyPrefix-parameterized DecodeConfigInto).
+func TestIntegrationStandaloneDottedHeader(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/dottedhdr",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package dottedhdr
+
+//go:generate tommy generate
+type Config struct {
+	Direnv *Direnv `+"`"+`toml:"direnv"`+"`"+`
+	Tools  Tools   `+"`"+`toml:"tools"`+"`"+`
+	Apps   []App   `+"`"+`toml:"apps"`+"`"+`
+	Exec   *Exec   `+"`"+`toml:"exec"`+"`"+`
+}
+
+type Exec struct {
+	Session *Session `+"`"+`toml:"session"`+"`"+`
+}
+
+type Session struct {
+	Env string `+"`"+`toml:"env"`+"`"+`
+}
+
+type Direnv struct {
+	Dotenv map[string]string `+"`"+`toml:"dotenv"`+"`"+`
+}
+
+type Tools struct {
+	Env map[string]string `+"`"+`toml:"env"`+"`"+`
+}
+
+type App struct {
+	Name   string  `+"`"+`toml:"name"`+"`"+`
+	Direnv *Direnv `+"`"+`toml:"direnv"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "dottedhdr_test.go", `package dottedhdr
+
+import (
+	"testing"
+
+	"github.com/amarbel-llc/tommy/pkg/document"
+)
+
+// Pointer-struct parent (cdNilGuard), standalone dotted header — the spinclass
+// [direnv.dotenv] case from #113.
+func TestStandaloneDottedPointerStruct(t *testing.T) {
+	input := []byte("[direnv.dotenv]\nFOO = \"bar\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Direnv == nil { t.Fatal("Direnv is nil") }
+	if d.Direnv.Dotenv["FOO"] != "bar" { t.Fatalf("Dotenv[FOO]=%q, want bar", d.Direnv.Dotenv["FOO"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Value-struct parent (cdInTable), standalone dotted header.
+func TestStandaloneDottedValueStruct(t *testing.T) {
+	input := []byte("[tools.env]\nPATH = \"/bin\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Tools.Env["PATH"] != "/bin" { t.Fatalf("Env[PATH]=%q, want /bin", d.Tools.Env["PATH"]) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// The keyPrefix-parameterized Into variant must consume the standalone dotted
+// header the same way.
+func TestStandaloneDottedDecodeInto(t *testing.T) {
+	input := []byte("[direnv.dotenv]\nFOO = \"bar\"\n")
+	doc, err := document.Parse(input)
+	if err != nil { t.Fatal(err) }
+	var data Config
+	consumed := make(map[string]bool)
+	if err := DecodeConfigInto(&data, doc, doc.Root(), consumed, ""); err != nil {
+		t.Fatalf("DecodeConfigInto: %v", err)
+	}
+	if data.Direnv == nil { t.Fatal("Direnv is nil") }
+	if data.Direnv.Dotenv["FOO"] != "bar" { t.Fatalf("Dotenv[FOO]=%q, want bar", data.Direnv.Dotenv["FOO"]) }
+	if !consumed["direnv.dotenv"] { t.Fatalf("direnv.dotenv not consumed: %v", consumed) }
+	if !consumed["direnv.dotenv.FOO"] { t.Fatalf("direnv.dotenv.FOO not consumed: %v", consumed) }
+}
+
+// The explicit-parent spelling must keep working and produce the same value.
+func TestExplicitParentStillWorks(t *testing.T) {
+	input := []byte("[direnv]\n[direnv.dotenv]\nFOO = \"bar\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Direnv == nil || d.Direnv.Dotenv["FOO"] != "bar" { t.Fatalf("explicit form lost data: %+v", d.Direnv) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// An absent field must stay nil — the implicit-parent synthesis must not
+// materialize a pointer struct out of nothing (#101 still holds).
+func TestAbsentStaysNil(t *testing.T) {
+	input := []byte("[tools.env]\nPATH = \"/bin\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	if doc.Data().Direnv != nil { t.Fatalf("Direnv = %+v, want nil", doc.Data().Direnv) }
+}
+
+// The #64 repro: a pointer-struct chain where the inner struct's table is
+// spelled with a standalone dotted header ([exec.session] with no [exec]) and
+// carries a scalar leaf. The implicit parent materializes Exec; the inner
+// [exec.session] header is explicit, so Session decodes its leaves normally.
+func TestStandaloneDottedPointerChain(t *testing.T) {
+	input := []byte("[exec.session]\nenv = \"MY_SESSION\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Exec == nil { t.Fatal("Exec is nil") }
+	if d.Exec.Session == nil { t.Fatal("Session is nil") }
+	if d.Exec.Session.Env != "MY_SESSION" { t.Fatalf("Env = %q", d.Exec.Session.Env) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Standalone dotted headers inside array-table entries: each entry's implicit
+// [apps.direnv] must resolve its own sub-table, not a sibling entry's
+// identically-headed one (the evidence anchor bounds the scope per entry).
+func TestStandaloneDottedInArrayEntries(t *testing.T) {
+	input := []byte("[[apps]]\nname = \"a0\"\n\n[apps.direnv.dotenv]\nK = \"v0\"\n\n[[apps]]\nname = \"a1\"\n\n[apps.direnv.dotenv]\nK = \"v1\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if len(d.Apps) != 2 { t.Fatalf("apps = %d, want 2", len(d.Apps)) }
+	for i, want := range []string{"v0", "v1"} {
+		if d.Apps[i].Direnv == nil { t.Fatalf("apps[%d].Direnv is nil", i) }
+		if got := d.Apps[i].Direnv.Dotenv["K"]; got != want {
+			t.Fatalf("apps[%d].Dotenv[K] = %q, want %q (cross-entry leak)", i, got, want)
+		}
+	}
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #106: a map[string]string field written as an inline table
 // (`dotenv = { FOO = "bar" }`) must decode and be marked consumed, exactly like
 // the semantically-equivalent sub-table form (`[parent.dotenv]`). Before the fix

@@ -313,13 +313,62 @@ func compDupTableGuard(ctx jenCtx, ftv, bareKey string) []jen.Code {
 	}
 }
 
+// dottedOnlyChildren filters a struct's decode children to those that resolve
+// via dotted table headers — the complement of the #55/#89 flat fallback set:
+// leaves are dropped (they have no header to consume) and array-table /
+// delegated-slice children are dropped (FlatChildren already decodes them;
+// re-emitting would double-decode). What remains — maps, nested structs,
+// delegated structs/maps — are the children a standalone dotted header can
+// still define when the struct's own bare [table] header is absent (#113).
+func dottedOnlyChildren(children []cdNode) []cdNode {
+	var out []cdNode
+	for _, c := range children {
+		switch c.(type) {
+		case cdLeaf, cdArrayTable, cdDelSlice:
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// compImplicitParentDecode emits the #113 implicit-parent branch appended to a
+// header-absent fallback: when a standalone dotted sub-header ([key.x] with no
+// bare [key]) exists, FindImplicitChildTable returns a detached synthetic node
+// and the dotted-scanning children (dottedOnlyChildren of the given set)
+// decode anchored to it; with no such children, nothing is emitted. The
+// synthetic node has no key-value children, so leaf scans and inline fallbacks
+// against it are inert. parent/keyExpr are the FindImplicitChildTable
+// arguments (document root + full dotted key at top level; the scope node +
+// bare key in scoped context). onFound runs first inside the evidence branch
+// (the pointer-struct callers set their _found materialization guard there).
+// body renders the filtered children against the synthetic node
+// (root-relative at top level, scoped otherwise).
+func compImplicitParentDecode(ctx jenCtx, g *jen.Group, key TOMLKey, parent *jen.Statement, keyExpr jen.Code, children []cdNode, onFound func(*jen.Group), body func(*jen.Group, *jen.Statement, []cdNode)) {
+	dotted := dottedOnlyChildren(children)
+	if len(dotted) == 0 {
+		return
+	}
+	impv := "_imp" + key.VarSuffix()
+	g.Id(impv).Op(":=").Qual(cstPkg, "FindImplicitChildTable").Call(ctx.docVar.Clone().Dot("Root").Call(), parent.Clone(), keyExpr)
+	g.If(jen.Id(impv).Op("!=").Nil()).BlockFunc(func(db *jen.Group) {
+		if onFound != nil {
+			onFound(db)
+		}
+		db.Add(ctx.mc(key))
+		body(db, jen.Id(impv), dotted)
+	})
+}
+
 // compInlineOrFlatFallback emits the header-absent branch for a struct field:
 // first try the inline form `field = { ... }` (#108), else the #89 flat-key
-// fallback. The inline node's body is decoded SCOPE-RELATIVE (compScopedBody)
+// fallback plus the #113 implicit-parent decode for dotted-header children.
+// The inline node's body is decoded SCOPE-RELATIVE (compScopedBody)
 // so a nested struct/map field resolves WITHIN the inline node — the scoped
 // container renderers' own inline fallbacks (FindChildInlineTable(scope, ...))
 // then handle deeper inlining recursively. container is the node to search for
-// the inline key (document root at top level, the parent scope when nested).
+// the inline key (the document root — the sole caller is the root-relative
+// compInTable, and the #113 lookup relies on that).
 func compInlineOrFlatFallback(ctx jenCtx, g *jen.Group, key TOMLKey, children, flatChildren []cdNode, container *jen.Statement) {
 	itv := "_it" + key.VarSuffix()
 	g.Id(itv).Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(container.Clone(), jen.Lit(key.BareKey()))
@@ -332,6 +381,13 @@ func compInlineOrFlatFallback(ctx jenCtx, g *jen.Group, key TOMLKey, children, f
 		for _, s := range compRenderDecodeBody(ctx, flatChildren, container.Clone(), "") {
 			eb.Add(s)
 		}
+		// Standalone dotted sub-headers (#113): [key.x] with no bare [key] still
+		// defines the table implicitly; consume those children too.
+		compImplicitParentDecode(ctx, eb, key, container, key.Jen(), children, nil, func(db *jen.Group, imp *jen.Statement, dotted []cdNode) {
+			for _, s := range compRenderDecodeBody(ctx, dotted, imp, "") {
+				db.Add(s)
+			}
+		})
 	})
 }
 
@@ -388,6 +444,17 @@ func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
 				for _, s := range compRenderDecodeBody(ctx, n.FlatChildren, cv.Clone(), "_found") {
 					eb.Add(s)
 				}
+				// Standalone dotted sub-headers (#113): [key.x] with no bare [key]
+				// defines the table implicitly — decode those children and
+				// materialize the pointer.
+				root := ctx.docVar.Clone().Dot("Root").Call()
+				compImplicitParentDecode(ctx, eb, n.TKey, root, n.TKey.Jen(), n.Children, func(db *jen.Group) {
+					db.Id("_found").Op("=").True()
+				}, func(db *jen.Group, imp *jen.Statement, dotted []cdNode) {
+					for _, s := range compRenderDecodeBody(ctx, dotted, imp, "") {
+						db.Add(s)
+					}
+				})
 				eb.If(jen.Id("_found")).Block(n.Tgt.Jen().Clone().Op("=").Id(lv))
 			})
 		})
@@ -484,6 +551,11 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 				// Header absent (#89): decode scope-relative array-table/delegated
 				// children within the parent scope anyway.
 				compScopedBody(ctx, eb, n.FlatChildren, scope.Clone(), "")
+				// Standalone dotted sub-headers (#113): [scope.key.x] with no bare
+				// [scope.key] defines the table implicitly.
+				compImplicitParentDecode(ctx, eb, n.TKey, scope, jen.Lit(n.TKey.BareKey()), n.Children, nil, func(db *jen.Group, imp *jen.Statement, dotted []cdNode) {
+					compScopedBody(ctx, db, dotted, imp, "")
+				})
 			})
 		})
 
@@ -508,6 +580,14 @@ func compScopedContainer(ctx jenCtx, g *jen.Group, c cdNode, scope *jen.Statemen
 				eb.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
 				eb.Id("_found").Op(":=").False()
 				compScopedBody(ctx, eb, n.FlatChildren, scope.Clone(), "_found")
+				// Standalone dotted sub-headers (#113): [scope.key.x] with no bare
+				// [scope.key] defines the table implicitly — decode those children
+				// and materialize the pointer.
+				compImplicitParentDecode(ctx, eb, n.TKey, scope, jen.Lit(n.TKey.BareKey()), n.Children, func(db *jen.Group) {
+					db.Id("_found").Op("=").True()
+				}, func(db *jen.Group, imp *jen.Statement, dotted []cdNode) {
+					compScopedBody(ctx, db, dotted, imp, "")
+				})
 				eb.If(jen.Id("_found")).Block(n.Tgt.Jen().Clone().Op("=").Id(lv))
 			})
 		})
