@@ -10488,6 +10488,100 @@ func TestSubTableInnerUnderHeaderStillWorks(t *testing.T) {
 	}
 }
 
+// Regression for #110: a key defined twice in the inline-table spelling
+// (`mytable = { ... }` twice) must be rejected, like the header form
+// (`[mytable]` twice, #92). The localized decoder guards missed it — the second
+// inline key was silently dropped. The generated decoder now runs
+// cst.CheckNoDuplicateKeys after parse, rejecting duplicate keys in every
+// spelling. Verifies both the outer container-key case and that the canonical
+// single-spelling decode still succeeds.
+func TestIntegrationDuplicateInlineKeyRejected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/dupinline",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package dupinline
+
+//go:generate tommy generate
+type Config struct {
+	Sess *Sess             `+"`"+`toml:"sess"`+"`"+`
+	Env  map[string]string `+"`"+`toml:"env"`+"`"+`
+}
+
+type Sess struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "dupinline_test.go", `package dupinline
+
+import (
+	"strings"
+	"testing"
+)
+
+// Duplicate outer inline key -> error (the #110 gap).
+func TestDuplicateInlineOuterKey(t *testing.T) {
+	_, err := DecodeConfig([]byte("sess = { name = \"a\" }\nsess = { name = \"b\" }\n"))
+	if err == nil {
+		t.Fatal("expected error for duplicate inline key, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate key") {
+		t.Fatalf("error should mention duplicate key, got: %v", err)
+	}
+}
+
+// Duplicate inner inline key -> error.
+func TestDuplicateInlineInnerKey(t *testing.T) {
+	_, err := DecodeConfig([]byte("env = { FOO = \"a\", FOO = \"b\" }\n"))
+	if err == nil {
+		t.Fatal("expected error for duplicate inner inline key, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate key") {
+		t.Fatalf("error should mention duplicate key, got: %v", err)
+	}
+}
+
+// A single, valid spelling still decodes.
+func TestDuplicateGuardAllowsValid(t *testing.T) {
+	doc, err := DecodeConfig([]byte("sess = { name = \"a\" }\nenv = { FOO = \"x\" }\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Sess == nil || d.Sess.Name != "a" || d.Env["FOO"] != "x" { t.Fatalf("data=%+v", d) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #113: a standalone dotted sub-table header ([direnv.dotenv]
 // with no bare [direnv] header) is valid TOML — the parent table is implicit —
 // but the generated decoder only ran the dotted-header consumption scan inside

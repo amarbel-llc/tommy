@@ -1616,6 +1616,10 @@ func compEmitDecode(f *jen.File, si StructInfo, dt string) {
 	f.Func().Id("Decode"+si.Name).Params(jen.Id("input").Index().Byte()).Params(jen.Op("*").Id(dt), jen.Error()).BlockFunc(func(g *jen.Group) {
 		g.List(jen.Id("doc"), jen.Err()).Op(":=").Qual(docPkg, "Parse").Call(jen.Id("input"))
 		g.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
+		// Reject a key defined more than once in any scope, in every spelling
+		// (#110): the distributed guards miss a duplicate inline-table outer key
+		// (`mytable = { ... }` twice) and a duplicate container field generally.
+		g.If(jen.Err().Op(":=").Qual(cstPkg, "CheckNoDuplicateKeys").Call(jen.Id("doc").Dot("Root").Call()), jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
 		g.Empty()
 		g.Id("d").Op(":=").Op("&").Id(dt).Values(jen.Dict{
 			jen.Id("cstDoc"):   jen.Id("doc"),

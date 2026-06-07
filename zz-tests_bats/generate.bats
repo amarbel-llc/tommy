@@ -440,3 +440,54 @@ GOEOF
   assert_success
   assert_output --partial "PASS"
 }
+
+# Regression for #110: a key defined twice in the inline-table spelling
+# (`sess = { ... }` twice, or a duplicate inner inline key) must be rejected
+# like the header form (`[sess]` twice, #92) — the generated decoder runs
+# cst.CheckNoDuplicateKeys after parse. Before this the second inline key was
+# silently dropped.
+function generate_duplicate_inline_key_rejected { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Sess *Sess             `toml:"sess"`
+	Env  map[string]string `toml:"env"`
+}
+
+type Sess struct {
+	Name string `toml:"name"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > inline_test.go <<'GOEOF'
+package batstest
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestDuplicateInlineKeyRejected(t *testing.T) {
+	if _, err := DecodeConfig([]byte("sess = { name = \"a\" }\nsess = { name = \"b\" }\n")); err == nil || !strings.Contains(err.Error(), "duplicate key") {
+		t.Fatalf("outer: want duplicate key error, got %v", err)
+	}
+	if _, err := DecodeConfig([]byte("env = { FOO = \"a\", FOO = \"b\" }\n")); err == nil || !strings.Contains(err.Error(), "duplicate key") {
+		t.Fatalf("inner: want duplicate key error, got %v", err)
+	}
+	doc, err := DecodeConfig([]byte("sess = { name = \"a\" }\nenv = { FOO = \"x\" }\n"))
+	if err != nil { t.Fatal(err) }
+	if doc.Data().Sess.Name != "a" || doc.Data().Env["FOO"] != "x" { t.Fatalf("data=%+v", doc.Data()) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}
