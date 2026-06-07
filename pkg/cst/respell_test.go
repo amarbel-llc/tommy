@@ -33,28 +33,49 @@ func TestRespellInlineTables(t *testing.T) {
 		)
 	})
 
-	t.Run("two-segment leaf table -> inline into parent body", func(t *testing.T) {
-		// [direnv] then [direnv.dotenv] -> dotenv = {...} appended into [direnv].
+	t.Run("two-level subtree -> nested inline value", func(t *testing.T) {
+		// [direnv] + [direnv.dotenv] folds into the whole subtree as one nested
+		// inline value (#111 deep-inline), not a partial header + inline-inner.
 		assertRespell(t, RespellInlineTables,
 			"[direnv]\n[direnv.dotenv]\nFOO = \"bar\"\n",
-			"[direnv]\ndotenv = { FOO = \"bar\" }\n",
+			"direnv = { dotenv = { FOO = \"bar\" } }\n",
 		)
 	})
 
-	t.Run("preserves a leading scalar field on the parent", func(t *testing.T) {
+	t.Run("leading scalar field folds before the sub-table", func(t *testing.T) {
 		assertRespell(t, RespellInlineTables,
 			"[direnv]\nname = \"x\"\n[direnv.dotenv]\nFOO = \"bar\"\n",
-			"[direnv]\nname = \"x\"\ndotenv = { FOO = \"bar\" }\n",
+			"direnv = { name = \"x\", dotenv = { FOO = \"bar\" } }\n",
 		)
 	})
 
-	t.Run("non-leaf super-table left canonical", func(t *testing.T) {
-		// [a] owns [a.b], so [a] cannot be inlined; [a.b] is a leaf two-segment
-		// table whose parent [a] IS present, so it inlines into [a].
+	t.Run("three-level subtree -> fully nested inline value", func(t *testing.T) {
+		// The #111 target: deep nesting reaches a fully-inline nested struct.
+		assertRespell(t, RespellInlineTables,
+			"[a]\n[a.b]\n[a.b.c]\nk = \"v\"\n",
+			"a = { b = { c = { k = \"v\" } } }\n",
+		)
+	})
+
+	t.Run("non-leaf super-table deep-inlined", func(t *testing.T) {
+		// [a] owns [a.b]: the whole subtree folds into one nested inline value.
 		assertRespell(t, RespellInlineTables,
 			"[a]\n[a.b]\nk = \"v\"\n",
-			"[a]\nb = { k = \"v\" }\n",
+			"a = { b = { k = \"v\" } }\n",
 		)
+	})
+
+	t.Run("subtree with an array-table descendant left canonical", func(t *testing.T) {
+		// [[a.xs]] cannot sit inside an inline table (that is RespellInlineArrays'
+		// dual), so the whole [a] subtree declines and stays canonical.
+		in := "[a]\nname = \"x\"\n[[a.xs]]\nh = \"1\"\n"
+		got, err := RespellInlineTables([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !respellNoChange([]byte(in), got) {
+			t.Fatalf("expected no-op (array-table descendant), got %q", got)
+		}
 	})
 
 	t.Run("top-level map[string]struct (no parent header) left canonical", func(t *testing.T) {
@@ -105,14 +126,14 @@ func TestRespellInlineTables(t *testing.T) {
 		assertRespell(t, RespellInlineTables, "[env]\n", "env = {}\n")
 	})
 
-	t.Run("inlined root key-value is hoisted above table headers", func(t *testing.T) {
-		// A single-segment table appearing AFTER a sub-table must inline to a root
-		// key-value placed BEFORE the first header — otherwise the bare `env = {}`
-		// would bind to the preceding [other.sub] table, not the document (#107
-		// regression: the first 96-case run caught exactly this).
+	t.Run("inlined subtrees fold to root key-values in leader order", func(t *testing.T) {
+		// Both [other] (with its [other.sub]) and [env] fold to root key-values;
+		// each is hoisted before any remaining header (here none remain), so a bare
+		// root key-value never binds to a preceding table (#107 regression). Order
+		// follows the single-segment leaders' document order.
 		assertRespell(t, RespellInlineTables,
 			"[other]\n[other.sub]\nk = \"v\"\n[env]\nFOO = \"bar\"\n",
-			"env = { FOO = \"bar\" }\n[other]\nsub = { k = \"v\" }\n",
+			"other = { sub = { k = \"v\" } }\nenv = { FOO = \"bar\" }\n",
 		)
 	})
 }
@@ -159,6 +180,56 @@ func TestRespellDottedKeys(t *testing.T) {
 		// canonical rather than vanish.
 		in := "[env]\n"
 		got, _ := RespellDottedKeys([]byte(in))
+		if !respellNoChange([]byte(in), got) {
+			t.Fatalf("expected no-op, got %q", got)
+		}
+	})
+}
+
+func TestRespellImplicitParents(t *testing.T) {
+	t.Run("empty parent of a sub-table is dropped", func(t *testing.T) {
+		assertRespell(t, RespellImplicitParents,
+			"[direnv]\n[direnv.dotenv]\nFOO = \"bar\"\n",
+			"[direnv.dotenv]\nFOO = \"bar\"\n",
+		)
+	})
+
+	t.Run("empty parent of an array-table is dropped", func(t *testing.T) {
+		assertRespell(t, RespellImplicitParents,
+			"[srv]\n[[srv.hosts]]\nname = \"a\"\n",
+			"[[srv.hosts]]\nname = \"a\"\n",
+		)
+	})
+
+	t.Run("chain of empty parents collapses", func(t *testing.T) {
+		assertRespell(t, RespellImplicitParents,
+			"[a]\n[a.b]\n[a.b.c]\nk = \"v\"\n",
+			"[a.b.c]\nk = \"v\"\n",
+		)
+	})
+
+	t.Run("parent with its own key-values is kept", func(t *testing.T) {
+		in := "[direnv]\nname = \"x\"\n[direnv.dotenv]\nFOO = \"bar\"\n"
+		got, err := RespellImplicitParents([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !respellNoChange([]byte(in), got) {
+			t.Fatalf("expected no-op (parent has key-values), got %q", got)
+		}
+	})
+
+	t.Run("leaf table with no children left canonical", func(t *testing.T) {
+		in := "[env]\nFOO = \"bar\"\n"
+		got, _ := RespellImplicitParents([]byte(in))
+		if !respellNoChange([]byte(in), got) {
+			t.Fatalf("expected no-op (no sub-tables), got %q", got)
+		}
+	})
+
+	t.Run("no tables -> no-op", func(t *testing.T) {
+		in := "name = \"x\"\n"
+		got, _ := RespellImplicitParents([]byte(in))
 		if !respellNoChange([]byte(in), got) {
 			t.Fatalf("expected no-op, got %q", got)
 		}

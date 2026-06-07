@@ -46,9 +46,10 @@ var spellingVariants = []struct {
 	respell string // cst.Respell* function name, or "" for identity
 }{
 	{"canonical", ""},
-	{"inline-table-leaf", "RespellInlineTables"},
+	{"inline-table-deep", "RespellInlineTables"},
 	{"dotted-key", "RespellDottedKeys"},
 	{"inline-array-of-tables", "RespellInlineArrays"},
+	{"implicit-parents", "RespellImplicitParents"},
 }
 
 // respellHelperSrc is injected into the generated fuzz_test.go. checkSpelling

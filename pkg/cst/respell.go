@@ -214,71 +214,98 @@ func firstHeaderIndex(nodes []*Node) int {
 	return len(nodes)
 }
 
-// RespellInlineTables rewrites leaf header tables into inline-table key-values,
-// the inline-spelling dual of [a.b] sub-tables.
+// deepInlineTable folds the table headed by segs — and EVERYTHING under it —
+// into one nested inline-table value: its direct leaf key-values followed by
+// each immediate child sub-table inlined recursively, so `[a]`,`[a.b]`,`[a.b.c]`
+// collapse to `{ b = { c = { ... } } }`. It returns nil (decline — caller leaves
+// the whole subtree canonical) when the subtree cannot be a single inline value:
+// a descendant array-table (that is RespellInlineArrays' dual, and `[[..]]`
+// cannot sit in an inline table) or a leaf value carrying a newline (a multiline
+// string, invalid inside `{ }`). An empty subtree folds to `{}`. Child key/value
+// leaf nodes are reused verbatim, preserving quoting/escaping.
+func deepInlineTable(segs []string, table *Node, nodes []*Node) *Node {
+	parts := append([]*Node(nil), tableBodyKVs(table)...)
+	for _, c := range nodes {
+		cs := TableHeaderSegments(c)
+		switch c.Kind {
+		case NodeArrayTable:
+			if len(cs) > len(segs) && segmentsHavePrefix(cs, segs) {
+				return nil // array-table descendant: not foldable into an inline table
+			}
+		case NodeTable:
+			if len(cs) == len(segs)+1 && segmentsHavePrefix(cs, segs) {
+				inner := deepInlineTable(cs, c, nodes)
+				if inner == nil {
+					return nil
+				}
+				keyNode := &Node{Kind: NodeKey, Raw: []byte(QuoteKey(cs[len(cs)-1]))}
+				parts = append(parts, inlineKV(keyNode, inner))
+			}
+		}
+	}
+	return buildInlineTable(parts)
+}
+
+// RespellInlineTables rewrites a header-table subtree into a single nested
+// inline-table key-value, the inline-spelling dual of `[a.b]` sub-tables. For
+// each single-segment table `[a]` it folds `[a]` AND every `[a.…]` sub-table
+// under it into one root-level `a = { … }` value (#111): `[env]\nk = "v"`
+// becomes `env = { k = "v" }`; `[a]\n[a.b]\nk = "v"` becomes
+// `a = { b = { k = "v" } }`; deeper nesting folds the same way. The inlined
+// key-value is hoisted ABOVE the first remaining table header (a bare root
+// key-value after a `[table]` would bind to that table, not the document), and
+// the folded headers are removed.
 //
-//   - A single-segment leaf table `[env]\nk = "v"` becomes a root-level
-//     `env = { k = "v" }` key-value. It is hoisted ABOVE the first table header
-//     (a bare root key-value after a [table] would bind to that table, not the
-//     document), so the result is valid TOML regardless of the table's original
-//     position.
-//   - A two-segment leaf table `[direnv.dotenv]\nk = "v"` whose parent table
-//     `[direnv]` is present becomes `dotenv = { k = "v" }` appended into the
-//     parent's body, and the `[direnv.dotenv]` header is removed.
-//
-// Tables that own sub-tables (non-leaf), or whose parent header is absent (e.g.
-// a top-level map[string]struct's `[actions.build]` with no `[actions]`), or
-// that are deeper than two segments, are left as canonical text. This is a
-// no-op when nothing qualifies.
+// A subtree is left fully canonical when it cannot become one inline value: it
+// contains a descendant array-table, or a leaf carries a multiline string (a
+// newline is invalid inside `{ }`). A multi-segment table with no single-segment
+// root (e.g. a top-level map[string]struct's `[actions.build]` with no
+// `[actions]`) has no leader and is left canonical too. No-op when nothing
+// qualifies.
 func RespellInlineTables(toml []byte) ([]byte, error) {
 	root, err := Parse(toml)
 	if err != nil {
 		return nil, err
 	}
 	orig := root.Children
-	var out []*Node
-	var hoist []*Node // single-segment inlined key-values, emitted before any header
+	consumed := map[*Node]bool{}
+	var hoist []*Node // inlined root key-values, emitted before any header
 	for _, node := range orig {
-		if node.Kind != NodeTable || !tableIsLeaf(node) || tableHasPrefixChild(orig, node) {
-			out = append(out, node)
+		if node.Kind != NodeTable || consumed[node] {
 			continue
 		}
 		segs := TableHeaderSegments(node)
-		inline := buildInlineTable(tableBodyKVs(node))
+		if len(segs) != 1 {
+			continue // only a single-segment table roots an inlineable subtree
+		}
+		inline := deepInlineTable(segs, node, orig)
 		if inline == nil {
-			out = append(out, node)
+			continue // decline: leave the whole subtree canonical
+		}
+		// Consume [a] and every [a.…] sub-table; they are now folded into `inline`.
+		for _, t := range orig {
+			if t.Kind == NodeTable && segmentsHavePrefix(TableHeaderSegments(t), segs) {
+				consumed[t] = true
+			}
+		}
+		hoist = append(hoist, topLevelKV(segs[0], inline))
+	}
+	if len(hoist) == 0 {
+		return root.Bytes(), nil // no-op: nothing qualified
+	}
+	var out []*Node
+	for _, node := range orig {
+		if consumed[node] {
 			continue
 		}
-		switch len(segs) {
-		case 1:
-			// `env = { ... }` must precede any table header to bind to root; collect
-			// for hoisting rather than emitting in the table's (possibly late) slot.
-			hoist = append(hoist, topLevelKV(segs[0], inline))
-		case 2:
-			parent := findTableBySegments(orig, segs[:1])
-			if parent == nil {
-				out = append(out, node) // parent header absent: leave canonical
-				continue
-			}
-			// Insert `dotenv = { ... }` into the parent table's body, dropping the
-			// header. kvInsertIndex places it after the parent's existing key-values
-			// and before any trailing blank line, matching the encoder's placement.
-			kv := topLevelKV(segs[1], inline)
-			at := kvInsertIndex(parent)
-			parent.Children = append(parent.Children[:at:at], append([]*Node{kv}, parent.Children[at:]...)...)
-		default:
-			out = append(out, node) // deeper than two segments: deferred
-		}
+		out = append(out, node)
 	}
-	if len(hoist) > 0 {
-		at := firstHeaderIndex(out)
-		spliced := make([]*Node, 0, len(out)+len(hoist))
-		spliced = append(spliced, out[:at]...)
-		spliced = append(spliced, hoist...)
-		spliced = append(spliced, out[at:]...)
-		out = spliced
-	}
-	root.Children = out
+	at := firstHeaderIndex(out)
+	spliced := make([]*Node, 0, len(out)+len(hoist))
+	spliced = append(spliced, out[:at]...)
+	spliced = append(spliced, hoist...)
+	spliced = append(spliced, out[at:]...)
+	root.Children = spliced
 	return root.Bytes(), nil
 }
 
@@ -331,6 +358,32 @@ func RespellDottedKeys(toml []byte) ([]byte, error) {
 			leaf := StripQuotes(string(key.Raw))
 			out = append(out, dottedKeyKV([]string{prefix, leaf}, value))
 		}
+	}
+	root.Children = out
+	return root.Bytes(), nil
+}
+
+// RespellImplicitParents removes a bare `[parent]` header whose body is empty
+// when at least one deeper `[parent.x]` / `[[parent.x]]` header exists — the
+// standalone-dotted spelling (#113/#64/#117). Per the TOML spec a dotted header
+// defines its parent tables implicitly, so an empty `[parent]` is redundant and
+// may be dropped; the encoder never produces this form (it always emits the bare
+// parent), so the round-trip fuzzers never reach it. Only EMPTY-bodied parents
+// are removed — one carrying its own key-values would lose them. Chains collapse
+// (`[a]` then `[a.b]`, both empty, both drop, leaving `[a.b.c]`). A no-op when
+// nothing qualifies.
+func RespellImplicitParents(toml []byte) ([]byte, error) {
+	root, err := Parse(toml)
+	if err != nil {
+		return nil, err
+	}
+	orig := root.Children
+	var out []*Node
+	for _, node := range orig {
+		if node.Kind == NodeTable && len(tableBodyKVs(node)) == 0 && tableHasPrefixChild(orig, node) {
+			continue // empty parent of a deeper header: defined implicitly, drop it
+		}
+		out = append(out, node)
 	}
 	root.Children = out
 	return root.Bytes(), nil
