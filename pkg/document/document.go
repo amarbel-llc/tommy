@@ -1065,27 +1065,29 @@ func DeleteAllInContainer(container *cst.Node) {
 // UndecodedKeys walks the CST and returns all key paths not present in
 // the consumed set. Table headers are prefixed to their children
 // (e.g. "hooks.create"). Keys under consumed tables are skipped entirely.
+//
+// It descends into inline-table values (#109): a key-value whose value is an
+// inline table is treated like a sub-table — if its dotted key is consumed, its
+// entries are walked recursively (`field.k`, `field.k.ik`) so an unconsumed
+// inner entry surfaces, matching how an unconsumed [field.k] sub-table does;
+// if the dotted key itself is unconsumed the whole inline table is reported as
+// one key (its entries are not enumerated, mirroring an unknown table header).
 func UndecodedKeys(root *cst.Node, consumed map[string]bool) []string {
 	var result []string
 	for _, child := range root.Children {
 		switch child.Kind {
 		case cst.NodeKeyValue:
-			key := keyValueName(child)
-			if !consumed[key] {
-				result = append(result, key)
-			}
+			result = append(result, undecodedKV(child, keyValueName(child), consumed)...)
 		case cst.NodeTable:
 			tableName := tableHeaderKey(child)
 			if consumed[tableName] {
-				// Table was consumed (e.g. map field) — check inner keys
+				// Table was consumed (e.g. map field) — check inner keys, descending
+				// inline-table values just as at the document root.
 				for _, inner := range child.Children {
 					if inner.Kind != cst.NodeKeyValue {
 						continue
 					}
-					qualifiedKey := tableName + "." + keyValueName(inner)
-					if !consumed[qualifiedKey] {
-						result = append(result, qualifiedKey)
-					}
+					result = append(result, undecodedKV(inner, tableName+"."+keyValueName(inner), consumed)...)
 				}
 			} else {
 				// Table itself is unknown
@@ -1094,6 +1096,32 @@ func UndecodedKeys(root *cst.Node, consumed map[string]bool) []string {
 		}
 	}
 	return result
+}
+
+// undecodedKV reports the undecoded dotted key paths for a single key-value at
+// dotted path key. A scalar leaf yields {key} when unconsumed (else nothing). An
+// inline-table value mirrors a sub-table: when key is consumed its entries are
+// recursed into (so a dropped/type-mismatched inner entry is reported at its
+// full path); when key is unconsumed the inline table is reported as the single
+// key without enumerating entries. Recurses to any inline-nesting depth.
+func undecodedKV(kv *cst.Node, key string, consumed map[string]bool) []string {
+	if v := keyValueValueNode(kv); v != nil && v.Kind == cst.NodeInlineTable {
+		if !consumed[key] {
+			return []string{key}
+		}
+		var result []string
+		for _, inner := range v.Children {
+			if inner.Kind != cst.NodeKeyValue {
+				continue
+			}
+			result = append(result, undecodedKV(inner, key+"."+keyValueName(inner), consumed)...)
+		}
+		return result
+	}
+	if !consumed[key] {
+		return []string{key}
+	}
+	return nil
 }
 
 // MarkAllConsumed marks all key-value children in a table as consumed,
