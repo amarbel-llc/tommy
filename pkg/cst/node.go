@@ -38,6 +38,16 @@ type Node struct {
 	Kind     NodeKind
 	Raw      []byte
 	Children []*Node
+
+	// Synthetic marks a node fabricated by an accessor rather than produced by
+	// the parser or an encode build. It is set only by FindImplicitChildTable on
+	// the detached implicit-parent node it returns (#113/#116); implicitScope
+	// keys its ChildScope fallback off this flag rather than recognizing the
+	// node's shape structurally, so a future Node-building site cannot
+	// accidentally divert real nodes into the implicit path. A synthetic node is
+	// never part of the document tree — it must not be mutated or serialized
+	// (Bytes ignores the flag, concatenating Raw/Children as usual).
+	Synthetic bool
 }
 
 func (n *Node) Bytes() []byte {

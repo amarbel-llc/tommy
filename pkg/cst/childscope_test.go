@@ -342,3 +342,49 @@ func TestFindChildInlineTable(t *testing.T) {
 		}
 	})
 }
+
+// #116: the synthetic implicit-parent node carries an explicit Synthetic marker,
+// and implicitScope keys off that flag rather than a structural predicate. This
+// guards against drift: no parser- or encoder-built node should ever be flagged
+// synthetic or be mistaken for one by implicitScope.
+func TestSyntheticImplicitParentMarker(t *testing.T) {
+	root := mustParseRoot(t, "[a.b]\nx = 1\n")
+
+	// FindImplicitChildTable returns a flagged synthetic node...
+	synth := FindImplicitChildTable(root, root, "a")
+	if synth == nil {
+		t.Fatal("FindImplicitChildTable returned nil for [a.b] with no [a]")
+	}
+	if !synth.Synthetic {
+		t.Fatal("implicit-parent node must have Synthetic set")
+	}
+	if _, _, ok := implicitScope(root, synth); !ok {
+		t.Fatal("implicitScope must resolve the synthetic node")
+	}
+
+	// ...and no parsed node is ever flagged synthetic or accepted by implicitScope.
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n.Synthetic {
+			t.Fatalf("parser produced a Synthetic node (kind=%d)", n.Kind)
+		}
+		if _, _, ok := implicitScope(root, n); ok {
+			t.Fatalf("implicitScope accepted a non-synthetic parsed node (kind=%d)", n.Kind)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+
+	// A hand-built node that mimics the OLD structural shape (NodeKey first, a
+	// table last) but is NOT flagged must be rejected — the flag, not the shape,
+	// is authoritative.
+	lookalike := &Node{Kind: NodeTable, Children: []*Node{
+		{Kind: NodeKey, Raw: []byte("a")},
+		root.Children[0], // a real table as the trailing "anchor"
+	}}
+	if _, _, ok := implicitScope(root, lookalike); ok {
+		t.Fatal("implicitScope accepted a non-synthetic look-alike node")
+	}
+}

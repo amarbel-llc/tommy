@@ -1043,13 +1043,14 @@ func ChildScope(root, parent *Node) (int, int) {
 // "evidence"); if none exists it returns nil.
 //
 // The synthetic node carries only the header key segments plus the evidence
-// node appended last as a scope anchor. That shape makes it inert everywhere a
-// real table node could over-match: it has no NodeKeyValue children (leaf scans
-// and FindChildInlineTable find nothing) and is not part of the document tree
-// (it must never be mutated or serialized). The scoped finders resolve its
-// range via ChildScope's implicitScope fallback, which locates the evidence by
-// identity — bounding the scope to the entry the evidence was found in, so
-// identically-headed sub-tables of a sibling array-table entry are not claimed.
+// node appended last as a scope anchor, and is flagged Synthetic (#116). That
+// shape makes it inert everywhere a real table node could over-match: it has no
+// NodeKeyValue children (leaf scans and FindChildInlineTable find nothing) and
+// is not part of the document tree (it must never be mutated or serialized).
+// The scoped finders resolve its range via ChildScope's implicitScope fallback,
+// which keys off the Synthetic flag and then locates the evidence by identity —
+// bounding the scope to the entry the evidence was found in, so identically-
+// headed sub-tables of a sibling array-table entry are not claimed.
 //
 // Like FindChildTable, matching is joined-key (TableHeaderKey), so a quoted
 // dot-containing segment is indistinguishable from nesting (#103 caveat).
@@ -1066,7 +1067,7 @@ func FindImplicitChildTable(root, parent *Node, key string) *Node {
 			continue
 		}
 		segs := append(TableHeaderSegments(parent), strings.Split(key, ".")...)
-		synthetic := &Node{Kind: NodeTable, Children: headerKeyNodes(segs)}
+		synthetic := &Node{Kind: NodeTable, Synthetic: true, Children: headerKeyNodes(segs)}
 		synthetic.Children = append(synthetic.Children, child)
 		return synthetic
 	}
@@ -1074,17 +1075,14 @@ func FindImplicitChildTable(root, parent *Node, key string) *Node {
 }
 
 // implicitScope resolves the [start, end) scope of a synthetic implicit-parent
-// node built by FindImplicitChildTable. The node is recognized structurally: a
-// NodeTable whose first child is a bare NodeKey (a parsed or encode-built table
-// always starts with its `[` bracket leaf) and whose last child is the evidence
-// table/array-table. The scope starts at the evidence — the first sub-table of
-// the implicit parent within the scope it was found in — and extends while
+// node built by FindImplicitChildTable. The node is identified by its Synthetic
+// flag (#116) — an explicit marker rather than a fragile structural predicate,
+// so no parser/encoder-built node can be mistaken for one. Its last child is
+// the evidence table/array-table; the scope starts there — the first sub-table
+// of the implicit parent within the scope it was found in — and extends while
 // headers stay prefixed, mirroring ChildScope's contiguity convention.
 func implicitScope(root, parent *Node) (start, end int, ok bool) {
-	if parent.Kind != NodeTable || len(parent.Children) < 2 {
-		return 0, 0, false
-	}
-	if parent.Children[0].Kind != NodeKey {
+	if !parent.Synthetic || parent.Kind != NodeTable || len(parent.Children) < 2 {
 		return 0, 0, false
 	}
 	anchor := parent.Children[len(parent.Children)-1]
