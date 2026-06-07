@@ -65,6 +65,16 @@ func TestRespellInlineTables(t *testing.T) {
 		)
 	})
 
+	t.Run("folds an implicit-intermediate map field (value-preserving)", func(t *testing.T) {
+		// A map field's entries appear as deeper headers ([a.m.key]) with no bare
+		// [a.m] header. Deep-inlining [a] must FOLD them (group by the implicit
+		// "m" segment), not drop them — the rewrite is value-preserving.
+		assertRespell(t, RespellInlineTables,
+			"[a]\nname = \"x\"\n[a.m.k1]\nik = \"v1\"\n[a.m.k2]\nik = \"v2\"\n",
+			"a = { name = \"x\", m = { k1 = { ik = \"v1\" }, k2 = { ik = \"v2\" } } }\n",
+		)
+	})
+
 	t.Run("subtree with an array-table descendant left canonical", func(t *testing.T) {
 		// [[a.xs]] cannot sit inside an inline table (that is RespellInlineArrays'
 		// dual), so the whole [a] subtree declines and stays canonical.

@@ -214,34 +214,51 @@ func firstHeaderIndex(nodes []*Node) int {
 	return len(nodes)
 }
 
-// deepInlineTable folds the table headed by segs — and EVERYTHING under it —
-// into one nested inline-table value: its direct leaf key-values followed by
-// each immediate child sub-table inlined recursively, so `[a]`,`[a.b]`,`[a.b.c]`
-// collapse to `{ b = { c = { ... } } }`. It returns nil (decline — caller leaves
-// the whole subtree canonical) when the subtree cannot be a single inline value:
-// a descendant array-table (that is RespellInlineArrays' dual, and `[[..]]`
-// cannot sit in an inline table) or a leaf value carrying a newline (a multiline
-// string, invalid inside `{ }`). An empty subtree folds to `{}`. Child key/value
-// leaf nodes are reused verbatim, preserving quoting/escaping.
-func deepInlineTable(segs []string, table *Node, nodes []*Node) *Node {
-	parts := append([]*Node(nil), tableBodyKVs(table)...)
+// deepInlineSubtree folds the table headed by segs — and EVERYTHING under it —
+// into one nested inline-table value. It reconstructs the subtree from ALL
+// descendant headers (not just an exact [segs.x] child): a map field whose
+// entries appear as deeper headers like [a.m.key] with no bare [a.m] header is
+// an IMPLICIT intermediate, grouped by its next segment and folded as
+// `m = { key = { … } }` — so the rewrite stays value-preserving. The exact
+// [segs] table's own leaf key-values (if that header is present) come first,
+// then each distinct next-segment child in document order.
+//
+// Returns nil (decline — caller leaves the whole subtree canonical) when the
+// subtree cannot be one inline value: a descendant array-table (`[[..]]` can't
+// sit in an inline table — that is RespellInlineArrays' dual) or a leaf value
+// carrying a newline (a multiline string, invalid inside `{ }`). An empty
+// subtree folds to `{}`. Leaf nodes are reused verbatim (quoting/escaping kept).
+func deepInlineSubtree(segs []string, nodes []*Node) *Node {
+	var parts []*Node
+	if exact := findTableBySegments(nodes, segs); exact != nil {
+		parts = append(parts, tableBodyKVs(exact)...)
+	}
+	var order []string
+	seen := map[string]bool{}
 	for _, c := range nodes {
-		cs := TableHeaderSegments(c)
-		switch c.Kind {
-		case NodeArrayTable:
-			if len(cs) > len(segs) && segmentsHavePrefix(cs, segs) {
-				return nil // array-table descendant: not foldable into an inline table
-			}
-		case NodeTable:
-			if len(cs) == len(segs)+1 && segmentsHavePrefix(cs, segs) {
-				inner := deepInlineTable(cs, c, nodes)
-				if inner == nil {
-					return nil
-				}
-				keyNode := &Node{Kind: NodeKey, Raw: []byte(QuoteKey(cs[len(cs)-1]))}
-				parts = append(parts, inlineKV(keyNode, inner))
-			}
+		if c.Kind != NodeTable && c.Kind != NodeArrayTable {
+			continue
 		}
+		cs := TableHeaderSegments(c)
+		if len(cs) <= len(segs) || !segmentsHavePrefix(cs, segs) {
+			continue
+		}
+		if c.Kind == NodeArrayTable {
+			return nil // array-table descendant: not foldable into an inline table
+		}
+		next := cs[len(segs)]
+		if !seen[next] {
+			seen[next] = true
+			order = append(order, next)
+		}
+	}
+	for _, next := range order {
+		child := deepInlineSubtree(append(append([]string{}, segs...), next), nodes)
+		if child == nil {
+			return nil
+		}
+		keyNode := &Node{Kind: NodeKey, Raw: []byte(QuoteKey(next))}
+		parts = append(parts, inlineKV(keyNode, child))
 	}
 	return buildInlineTable(parts)
 }
@@ -278,7 +295,7 @@ func RespellInlineTables(toml []byte) ([]byte, error) {
 		if len(segs) != 1 {
 			continue // only a single-segment table roots an inlineable subtree
 		}
-		inline := deepInlineTable(segs, node, orig)
+		inline := deepInlineSubtree(segs, orig)
 		if inline == nil {
 			continue // decline: leave the whole subtree canonical
 		}
