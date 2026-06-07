@@ -10368,6 +10368,126 @@ func TestSubTableNestedStillWorks(t *testing.T) {
 	}
 }
 
+// Regression for #115: the "header-outer + inline-inner" spelling. A child field
+// of a struct that DOES have its bare [parent] header, written as an inline table
+// (`session = { ... }` under `[exec]`), parses to a NodeKeyValue child of the
+// [exec] table node — not the document root. The root-relative container
+// renderers (compNilGuard / compInTable / compMapStruct / compMapMap) ran their
+// #106/#108 inline fallback against doc.Root() rather than the found parent node
+// (cv), so every inline-inner child was missed: the field stayed zero AND the
+// drop was silent (also see #109). compMapScalar (map[string]string) already
+// searched cv (#106); this aligns the other three plus the nested-struct paths.
+func TestIntegrationInlineUnderHeader(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/inlineunderheader",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package inlineunderheader
+
+type Labels map[string]string
+
+//go:generate tommy generate
+type Config struct {
+	Exec *Exec `+"`"+`toml:"exec"`+"`"+`
+}
+
+type Exec struct {
+	Session *Session          `+"`"+`toml:"session"`+"`"+` // *struct -> compNilGuard
+	Window  Window            `+"`"+`toml:"window"`+"`"+`  // struct  -> compInTable
+	Actions map[string]Action `+"`"+`toml:"actions"`+"`"+` // map[string]struct -> compMapStruct
+	Groups  map[string]Labels `+"`"+`toml:"groups"`+"`"+`  // map[string]NamedMap -> compMapMap
+	Env     map[string]string `+"`"+`toml:"env"`+"`"+`     // map[string]string -> compMapScalar (#106 baseline)
+}
+
+type Session struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+
+type Window struct {
+	Title string `+"`"+`toml:"title"`+"`"+`
+}
+
+type Action struct {
+	Command string `+"`"+`toml:"command"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "inlineunderheader_test.go", `package inlineunderheader
+
+import "testing"
+
+// All five field kinds, written as inline-inner tables under the bare [exec]
+// header. Before #115 every one of these was silently dropped except env
+// (map[string]string, fixed by #106).
+func TestInlineInnerUnderHeader(t *testing.T) {
+	const in = "[exec]\n" +
+		"session = { name = \"sess\" }\n" +
+		"window = { title = \"win\" }\n" +
+		"actions = { build = { command = \"make\" } }\n" +
+		"groups = { editors = { vim = \"on\" } }\n" +
+		"env = { FOO = \"bar\" }\n"
+	doc, err := DecodeConfig([]byte(in))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Exec == nil { t.Fatal("Exec is nil") }
+	if d.Exec.Session == nil || d.Exec.Session.Name != "sess" { t.Fatalf("Session=%+v", d.Exec.Session) }
+	if d.Exec.Window.Title != "win" { t.Fatalf("Window=%+v", d.Exec.Window) }
+	if d.Exec.Actions["build"].Command != "make" { t.Fatalf("Actions=%+v", d.Exec.Actions) }
+	if d.Exec.Groups["editors"]["vim"] != "on" { t.Fatalf("Groups=%+v", d.Exec.Groups) }
+	if d.Exec.Env["FOO"] != "bar" { t.Fatalf("Env=%+v", d.Exec.Env) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// The canonical sub-table spelling under the same header must still decode.
+func TestSubTableInnerUnderHeaderStillWorks(t *testing.T) {
+	const in = "[exec]\n" +
+		"[exec.session]\nname = \"sess\"\n" +
+		"[exec.window]\ntitle = \"win\"\n" +
+		"[exec.actions.build]\ncommand = \"make\"\n" +
+		"[exec.groups.editors]\nvim = \"on\"\n" +
+		"[exec.env]\nFOO = \"bar\"\n"
+	doc, err := DecodeConfig([]byte(in))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Exec == nil || d.Exec.Session == nil || d.Exec.Session.Name != "sess" { t.Fatalf("Session=%+v", d.Exec) }
+	if d.Exec.Window.Title != "win" { t.Fatalf("Window=%+v", d.Exec.Window) }
+	if d.Exec.Actions["build"].Command != "make" { t.Fatalf("Actions=%+v", d.Exec.Actions) }
+	if d.Exec.Groups["editors"]["vim"] != "on" { t.Fatalf("Groups=%+v", d.Exec.Groups) }
+	if d.Exec.Env["FOO"] != "bar" { t.Fatalf("Env=%+v", d.Exec.Env) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, output)
+	}
+}
+
 // Regression for #113: a standalone dotted sub-table header ([direnv.dotenv]
 // with no bare [direnv] header) is valid TOML — the parent table is implicit —
 // but the generated decoder only ran the dotted-header consumption scan inside

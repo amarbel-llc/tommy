@@ -171,15 +171,15 @@ func compContNode(ctx jenCtx, c cdNode, cv *jen.Statement, fv string) []jen.Code
 	case cdMapScalar:
 		return compMapScalar(ctx, n, cv, fv)
 	case cdMapMap:
-		return compMapMap(ctx, n)
+		return compMapMap(ctx, n, cv)
 	case cdInTable:
-		return compInTable(ctx, n)
+		return compInTable(ctx, n, cv)
 	case cdNilGuard:
 		return compNilGuard(ctx, n, cv)
 	case cdArrayTable:
 		return compArrayTable(ctx, n, fv)
 	case cdMapStruct:
-		return compMapStruct(ctx, n)
+		return compMapStruct(ctx, n, cv)
 	case cdDelStruct:
 		return compDelStruct(ctx, n)
 	case cdDelSlice:
@@ -224,7 +224,7 @@ func compMapScalar(ctx jenCtx, n cdMapScalar, cv *jen.Statement, fv string) []je
 	return []jen.Code{tableScan, inlineFallback}
 }
 
-func compMapMap(ctx jenCtx, n cdMapMap) []jen.Code {
+func compMapMap(ctx jenCtx, n cdMapMap, cv *jen.Statement) []jen.Code {
 	pf := n.TKey.Lit(".")
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		if n.TypeName != "" {
@@ -254,9 +254,12 @@ func compMapMap(ctx jenCtx, n cdMapMap) []jen.Code {
 				g.Id("_mr").Index(jen.Id("_mk")).Op("=").Id("_inner")
 			}
 		})
-		// Inline-table fallback (#108): `field = { k = { ik = "v" } }`.
+		// Inline-table fallback (#108): `field = { k = { ik = "v" } }`. The inline
+		// table is a child of this field's container — the document root for a
+		// top-level field, the found parent table node (cv) for one nested under a
+		// header (#115) — so search cv, matching compMapScalar's #106 fallback.
 		g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
-			compMapMapInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())))
+			compMapMapInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(cv.Clone(), jen.Lit(n.TKey.BareKey())))
 		})
 		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})}
@@ -366,24 +369,28 @@ func compImplicitParentDecode(ctx jenCtx, g *jen.Group, key TOMLKey, parent *jen
 // The inline node's body is decoded SCOPE-RELATIVE (compScopedBody)
 // so a nested struct/map field resolves WITHIN the inline node — the scoped
 // container renderers' own inline fallbacks (FindChildInlineTable(scope, ...))
-// then handle deeper inlining recursively. container is the node to search for
-// the inline key (the document root — the sole caller is the root-relative
-// compInTable, and the #113 lookup relies on that).
-func compInlineOrFlatFallback(ctx jenCtx, g *jen.Group, key TOMLKey, children, flatChildren []cdNode, container *jen.Statement) {
+// then handle deeper inlining recursively. cv is the field's container: the
+// document root for a top-level field, the found parent table node for one
+// nested under a header (#115). The inline key and the #89 flat children are
+// resolved against cv (mirroring compMapScalar/#106 and compNilGuard); the #113
+// implicit-parent lookup stays anchored at the document root, where standalone
+// dotted [key.x] sub-headers always live.
+func compInlineOrFlatFallback(ctx jenCtx, g *jen.Group, key TOMLKey, children, flatChildren []cdNode, cv *jen.Statement) {
 	itv := "_it" + key.VarSuffix()
-	g.Id(itv).Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(container.Clone(), jen.Lit(key.BareKey()))
+	g.Id(itv).Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(cv.Clone(), jen.Lit(key.BareKey()))
 	g.If(jen.Id(itv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 		ib.Add(ctx.mc(key))
 		compScopedBody(ctx, ib, children, jen.Id(itv), "")
 	}).Else().BlockFunc(func(eb *jen.Group) {
-		// Header and inline both absent (#89): decode root-relative array-table /
-		// delegated children against the container anyway.
-		for _, s := range compRenderDecodeBody(ctx, flatChildren, container.Clone(), "") {
+		// Header and inline both absent (#89): decode array-table / delegated
+		// children against the container anyway.
+		for _, s := range compRenderDecodeBody(ctx, flatChildren, cv.Clone(), "") {
 			eb.Add(s)
 		}
 		// Standalone dotted sub-headers (#113): [key.x] with no bare [key] still
 		// defines the table implicitly; consume those children too.
-		compImplicitParentDecode(ctx, eb, key, container, key.Jen(), children, nil, func(db *jen.Group, imp *jen.Statement, dotted []cdNode) {
+		root := ctx.docVar.Clone().Dot("Root").Call()
+		compImplicitParentDecode(ctx, eb, key, root, key.Jen(), children, nil, func(db *jen.Group, imp *jen.Statement, dotted []cdNode) {
 			for _, s := range compRenderDecodeBody(ctx, dotted, imp, "") {
 				db.Add(s)
 			}
@@ -391,7 +398,7 @@ func compInlineOrFlatFallback(ctx jenCtx, g *jen.Group, key TOMLKey, children, f
 	})
 }
 
-func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
+func compInTable(ctx jenCtx, n cdInTable, cv *jen.Statement) []jen.Code {
 	ftv := "_ft" + n.TKey.VarSuffix()
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		g.Var().Id(ftv).Op("*").Qual(cstPkg, "Node")
@@ -406,7 +413,7 @@ func compInTable(ctx jenCtx, n cdInTable) []jen.Code {
 				ib.Add(s)
 			}
 		}).Else().BlockFunc(func(eb *jen.Group) {
-			compInlineOrFlatFallback(ctx, eb, n.TKey, n.Children, n.FlatChildren, ctx.docVar.Clone().Dot("Root").Call())
+			compInlineOrFlatFallback(ctx, eb, n.TKey, n.Children, n.FlatChildren, cv)
 		})
 	})}
 }
@@ -431,7 +438,11 @@ func compNilGuard(ctx jenCtx, n cdNilGuard, cv *jen.Statement) []jen.Code {
 		}).Else().BlockFunc(func(g *jen.Group) {
 			// Inline-table fallback (#108): `field = { ... }`, decoded scope-relative
 			// to the inline node so nested fields resolve within it (see compInTable).
-			g.Id(itv).Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey()))
+			// The inline node is a child of this field's container — the document root
+			// for a top-level field, the found parent table node (cv) for one nested
+			// under a header (#115) — so search cv, matching the #89 flat fallback
+			// just below and compMapScalar's #106 fallback.
+			g.Id(itv).Op(":=").Qual(cstPkg, "FindChildInlineTable").Call(cv.Clone(), jen.Lit(n.TKey.BareKey()))
 			g.If(jen.Id(itv).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 				ib.Add(ctx.mc(n.TKey))
 				ib.Id(lv).Op(":=").Op("&").Id(n.TypeName).Values()
@@ -822,7 +833,7 @@ func compScopedDelMap(ctx jenCtx, g *jen.Group, n cdDelMap, scope *jen.Statement
 	})
 }
 
-func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
+func compMapStruct(ctx jenCtx, n cdMapStruct, cv *jen.Statement) []jen.Code {
 	pf := n.TKey.Lit(".")
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		if n.SlicePtr {
@@ -865,9 +876,12 @@ func compMapStruct(ctx jenCtx, n cdMapStruct) []jen.Code {
 		// Inline-table fallback (#108): accept `field = { k = { ...fields... } }`
 		// when no [field.k] sub-tables were found. The outer inline table's entries
 		// are the map keys; each entry's value is an inner inline table holding the
-		// struct fields, decoded exactly like a sub-table body.
+		// struct fields, decoded exactly like a sub-table body. The outer inline
+		// table is a child of this field's container — the document root for a
+		// top-level field, the found parent table node (cv) for one nested under a
+		// header (#115) — so search cv, matching compMapScalar's #106 fallback.
 		g.If(jen.Id("_mr").Op("==").Nil()).BlockFunc(func(fb *jen.Group) {
-			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(ctx.docVar.Clone().Dot("Root").Call(), jen.Lit(n.TKey.BareKey())))
+			compMapStructInlineBody(ctx, fb, n, jen.Qual(cstPkg, "FindChildInlineTable").Call(cv.Clone(), jen.Lit(n.TKey.BareKey())))
 		})
 		g.If(jen.Id("_mr").Op("!=").Nil()).Block(n.Tgt.Jen().Clone().Op("=").Id("_mr"))
 	})}

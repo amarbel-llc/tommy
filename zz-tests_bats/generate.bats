@@ -370,3 +370,73 @@ GOEOF
   assert_success
   assert_output --partial "PASS"
 }
+
+# Regression for #115: the "header-outer + inline-inner" spelling. A child field
+# written as an inline table (`session = { ... }`) under the parent's own bare
+# [exec] header is a NodeKeyValue child of the [exec] node, not the document
+# root. The root-relative container renderers ran their inline fallback against
+# the document root, so every inline-inner child was silently dropped. Covers a
+# *struct (compNilGuard), a struct (compInTable), a map[string]struct
+# (compMapStruct) and a map[string]NamedMap (compMapMap) in one shape.
+function generate_inline_inner_under_header_decodes { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+type Labels map[string]string
+
+//go:generate tommy generate
+type Config struct {
+	Exec *Exec `toml:"exec"`
+}
+
+type Exec struct {
+	Session *Session          `toml:"session"`
+	Window  Window            `toml:"window"`
+	Actions map[string]Action `toml:"actions"`
+	Groups  map[string]Labels `toml:"groups"`
+}
+
+type Session struct {
+	Name string `toml:"name"`
+}
+
+type Window struct {
+	Title string `toml:"title"`
+}
+
+type Action struct {
+	Command string `toml:"command"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > inline_test.go <<'GOEOF'
+package batstest
+
+import "testing"
+
+func TestInlineInnerUnderHeader(t *testing.T) {
+	in := "[exec]\n" +
+		"session = { name = \"sess\" }\n" +
+		"window = { title = \"win\" }\n" +
+		"actions = { build = { command = \"make\" } }\n" +
+		"groups = { editors = { vim = \"on\" } }\n"
+	doc, err := DecodeConfig([]byte(in))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Exec == nil || d.Exec.Session == nil || d.Exec.Session.Name != "sess" { t.Fatalf("Session=%+v", d.Exec) }
+	if d.Exec.Window.Title != "win" { t.Fatalf("Window=%+v", d.Exec.Window) }
+	if d.Exec.Actions["build"].Command != "make" { t.Fatalf("Actions=%+v", d.Exec.Actions) }
+	if d.Exec.Groups["editors"]["vim"] != "on" { t.Fatalf("Groups=%+v", d.Exec.Groups) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}
