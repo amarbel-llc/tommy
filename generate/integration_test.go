@@ -5858,6 +5858,132 @@ func TestDecodeIntoRoundTrip(t *testing.T) {
 }
 
 // Core #35 test: cross-package struct with unexported nested type, delegated via DecodeInto/EncodeFrom
+// Regression for #114: a standalone dotted sub-header ([sub.env] with no bare
+// [sub]) defines the parent implicitly (#113), but the delegated renderers —
+// compDelStruct (value + pointer), compScopedDelStruct, and compDelMap — only
+// found the parent via an exact [sub] header, so the cross-package field stayed
+// zero and the dotted header was reported undecoded. Each now falls back to
+// cst.FindImplicitChildTable and passes the synthetic node to the target
+// package's DecodeInto, which resolves its sub-tables via ChildScope.
+func TestIntegrationDelegatedImplicitParent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	extDir := filepath.Join(dir, "options")
+	writeFixture(t, extDir, "go.mod", strings.Join([]string{
+		"module example.com/test/options",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+	writeFixture(t, extDir, "options.go", `package options
+
+//go:generate tommy generate
+type Sub struct {
+	Env map[string]string `+"`"+`toml:"env"`+"`"+`
+}
+
+//go:generate tommy generate
+type Action struct {
+	Env map[string]string `+"`"+`toml:"env"`+"`"+`
+}
+`)
+	if err := Generate(extDir, "options.go"); err != nil {
+		t.Fatalf("Generate options: %v", err)
+	}
+
+	consumerDir := filepath.Join(dir, "consumer")
+	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
+		"module example.com/test/consumer",
+		"",
+		"go 1.26",
+		"",
+		"require (",
+		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\texample.com/test/options v0.0.0",
+		")",
+		"",
+		"replace (",
+		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\texample.com/test/options => ../options",
+		")",
+		"",
+	}, "\n"))
+	writeFixture(t, consumerDir, "config.go", `package consumer
+
+import "example.com/test/options"
+
+//go:generate tommy generate
+type Config struct {
+	Sub     options.Sub               `+"`"+`toml:"sub"`+"`"+`
+	PSub    *options.Sub              `+"`"+`toml:"psub"`+"`"+`
+	Actions map[string]options.Action `+"`"+`toml:"actions"`+"`"+`
+}
+`)
+	if err := Generate(consumerDir, "config.go"); err != nil {
+		t.Fatalf("Generate consumer: %v", err)
+	}
+	writeFixture(t, consumerDir, "consumer_test.go", `package consumer
+
+import "testing"
+
+// Value delegated struct: only [sub.env] present, no bare [sub] (compDelStruct).
+func TestDelegatedImplicitParentValue(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[sub.env]\nK = \"v\"\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Sub.Env["K"] != "v" { t.Fatalf("Sub.Env=%+v", d.Sub.Env) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Pointer delegated struct (compDelStruct, Ptr branch).
+func TestDelegatedImplicitParentPtr(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[psub.env]\nK = \"v\"\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.PSub == nil || d.PSub.Env["K"] != "v" { t.Fatalf("PSub=%+v", d.PSub) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Delegated map whose only header for an entry is the deeper [actions.build.env]
+// (compDelMap).
+func TestDelegatedMapImplicitParent(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[actions.build.env]\nK = \"v\"\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Actions["build"].Env["K"] != "v" { t.Fatalf("Actions=%+v", d.Actions) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// The canonical bare-header spelling must still decode unchanged.
+func TestDelegatedExplicitParentStillWorks(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[sub]\n[sub.env]\nK = \"v\"\n\n[actions.build]\n[actions.build.env]\nK = \"w\"\n"))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Sub.Env["K"] != "v" { t.Fatalf("Sub.Env=%+v", d.Sub.Env) }
+	if d.Actions["build"].Env["K"] != "w" { t.Fatalf("Actions=%+v", d.Actions) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = consumerDir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go test failed: %v\n%s", err, out)
+	}
+}
+
 func TestIntegrationCrossPackageDelegation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

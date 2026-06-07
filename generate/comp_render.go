@@ -768,6 +768,12 @@ func compScopedDelStruct(ctx jenCtx, g *jen.Group, n cdDelStruct, scope *jen.Sta
 	v := "_ct" + n.TKey.VarSuffix()
 	g.BlockFunc(func(b *jen.Group) {
 		b.Id(v).Op(":=").Qual(cstPkg, "FindChildTable").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(bk))
+		// #114: a standalone dotted [scope.key.x] sub-header with no bare
+		// [scope.key] defines the delegated parent implicitly — synthesize it so
+		// the target package's DecodeInto can resolve its sub-tables.
+		b.If(jen.Id(v).Op("==").Nil()).Block(
+			jen.Id(v).Op("=").Qual(cstPkg, "FindImplicitChildTable").Call(ctx.docVar.Clone().Dot("Root").Call(), scope.Clone(), jen.Lit(bk)),
+		)
 		b.If(jen.Id(v).Op("!=").Nil()).BlockFunc(func(ib *jen.Group) {
 			ib.Add(ctx.mc(n.TKey))
 			if n.Ptr {
@@ -927,14 +933,25 @@ func compDelStruct(ctx jenCtx, n cdDelStruct) []jen.Code {
 	pk := n.TKey.Lit(".")
 	decFn := "Decode" + st + "Into"
 
+	tblv := "_tbl" + n.TKey.VarSuffix()
+	// findTable scans the root for the bare [key] header, then — if absent —
+	// synthesizes the implicit parent for a standalone dotted [key.x] sub-header
+	// (#114, the delegated dual of #113's same-package implicit-parent decode).
+	// The target package's DecodeInto resolves the synthetic node's sub-tables via
+	// ChildScope's implicitScope fallback, so it decodes identically either way.
+	findTable := func(g *jen.Group) {
+		g.Var().Id(tblv).Op("*").Qual(cstPkg, "Node")
+		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
+			jen.If(tableMatch(n.TKey)).Block(jen.Id(tblv).Op("=").Id("_ch"), jen.Break()),
+		)
+		g.If(jen.Id(tblv).Op("==").Nil()).Block(
+			jen.Id(tblv).Op("=").Qual(cstPkg, "FindImplicitChildTable").Call(ctx.docVar.Clone().Dot("Root").Call(), ctx.docVar.Clone().Dot("Root").Call(), n.TKey.Jen()),
+		)
+	}
 	if n.Ptr {
 		lv := toLowerFirst(st) + "Val"
-		tblv := "_tbl" + n.TKey.VarSuffix()
 		return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
-			g.Var().Id(tblv).Op("*").Qual(cstPkg, "Node")
-			g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
-				jen.If(tableMatch(n.TKey)).Block(jen.Id(tblv).Op("=").Id("_ch"), jen.Break()),
-			)
+			findTable(g)
 			g.If(jen.Id(tblv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(n.TKey))
 				g.Id(lv).Op(":=").Op("&").Qual(n.ImportPath, st).Values()
@@ -945,15 +962,15 @@ func compDelStruct(ctx jenCtx, n cdDelStruct) []jen.Code {
 			})
 		})}
 	}
-	return []jen.Code{jen.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).Block(
-		jen.If(tableMatch(n.TKey)).BlockFunc(func(g *jen.Group) {
+	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
+		findTable(g)
+		g.If(jen.Id(tblv).Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
 			g.Add(ctx.mc(n.TKey))
 			g.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(
-				jen.Op("&").Add(n.Tgt.Jen().Clone()), ctx.docVar.Clone(), jen.Id("_ch"), ctx.consumed.Clone(), pk.Jen(),
+				jen.Op("&").Add(n.Tgt.Jen().Clone()), ctx.docVar.Clone(), jen.Id(tblv), ctx.consumed.Clone(), pk.Jen(),
 			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+": %w", jen.Err()))
-			g.Break()
-		}),
-	)}
+		})
+	})}
 }
 
 func compDelSlice(ctx jenCtx, n cdDelSlice, fv string) []jen.Code {
@@ -1003,18 +1020,35 @@ func compDelMap(ctx jenCtx, n cdDelMap) []jen.Code {
 	bk := n.TKey.BareKey()
 	pf := n.TKey.Lit(".")
 	decFn := "Decode" + st + "Into"
+	depth := n.TKey.SegmentCount() + 1
 
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
+		// _seen dedupes map keys: one entry may be evidenced by several headers
+		// (the bare [field.key] plus deeper [field.key.x]), and must decode once.
+		g.Id("_seen").Op(":=").Map(jen.String()).Bool().Values()
 		g.For(jen.List(jen.Id("_"), jen.Id("_ch")).Op(":=").Range().Add(ctx.root())).BlockFunc(func(g *jen.Group) {
 			g.If(jen.Id("_ch").Dot("Kind").Op("!=").Qual(cstPkg, "NodeTable")).Block(jen.Continue())
-			// Same structural depth/extraction as compMapStruct (#103): a dotted or
-			// spaced map key is one segment, so count segments rather than the joined
-			// header's dots, and take the key as the final segment.
 			g.Id("_hdr").Op(":=").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch"))
 			g.If(jen.Op("!").Qual("strings", "HasPrefix").Call(jen.Id("_hdr"), pf.Jen())).Block(jen.Continue())
 			g.Id("_segs").Op(":=").Qual(cstPkg, "TableHeaderSegments").Call(jen.Id("_ch"))
-			g.If(jen.Len(jen.Id("_segs")).Op("!=").Lit(n.TKey.SegmentCount()+1)).Block(jen.Continue())
-			g.Id(n.MapVar).Op(":=").Id("_segs").Index(jen.Len(jen.Id("_segs")).Op("-").Lit(1))
+			// Accept the entry header [field.key] (depth segments) AND any deeper
+			// [field.key.x…] header (#114): a standalone dotted sub-header with no
+			// bare [field.key] defines the map entry's table implicitly, like
+			// #113 for same-package fields. The map key is the segment just past
+			// the field prefix, counted structurally so a dotted/spaced key is one
+			// segment (#103).
+			g.If(jen.Len(jen.Id("_segs")).Op("<").Lit(depth)).Block(jen.Continue())
+			g.Id(n.MapVar).Op(":=").Id("_segs").Index(jen.Lit(n.TKey.SegmentCount()))
+			g.If(jen.Id("_seen").Index(jen.Id(n.MapVar))).Block(jen.Continue())
+			g.Id("_seen").Index(jen.Id(n.MapVar)).Op("=").True()
+			// Entry container: the exact [field.key] node when this header is it,
+			// else a synthetic implicit parent resolved from the deeper evidence.
+			// The target package's DecodeInto resolves either via ChildScope.
+			g.Id("_entry").Op(":=").Id("_ch")
+			g.If(jen.Len(jen.Id("_segs")).Op("!=").Lit(depth)).Block(
+				jen.Id("_entry").Op("=").Qual(cstPkg, "FindImplicitChildTable").Call(ctx.docVar.Clone().Dot("Root").Call(), ctx.docVar.Clone().Dot("Root").Call(), pf.Jen().Op("+").Id(n.MapVar)),
+			)
+			g.If(jen.Id("_entry").Op("==").Nil()).Block(jen.Continue())
 			g.If(n.Tgt.Jen().Clone().Op("==").Nil()).BlockFunc(func(g *jen.Group) {
 				g.Add(ctx.mc(n.TKey))
 				g.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Qual(n.ImportPath, st))
@@ -1023,7 +1057,7 @@ func compDelMap(ctx jenCtx, n cdDelMap) []jen.Code {
 			g.Var().Id(n.EntryVar).Qual(n.ImportPath, st)
 			dke := n.TKey.Lit(".").Var(n.MapVar).Lit(".")
 			g.If(jen.Err().Op(":=").Qual(n.ImportPath, decFn).Call(
-				jen.Op("&").Id(n.EntryVar), ctx.docVar.Clone(), jen.Id("_ch"), ctx.consumed.Clone(), dke.Jen(),
+				jen.Op("&").Id(n.EntryVar), ctx.docVar.Clone(), jen.Id("_entry"), ctx.consumed.Clone(), dke.Jen(),
 			), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+".%s: %w", jen.Id(n.MapVar), jen.Err()))
 			g.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.MapVar)).Op("=").Id(n.EntryVar)
 		})
