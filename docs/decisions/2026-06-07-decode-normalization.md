@@ -1,13 +1,27 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-07
-promotion-criteria: the spelling fuzzer (TestRoundTripSpellingFuzz) gates ALL
-  variants (canonical, inline-table-deep, dotted-key, inline-array-of-tables,
-  implicit-parents) with zero xfails across the full fuzz-sweep seed set, and
-  the bats + ./generate integration suites stay green, with the per-renderer
-  spelling fallbacks deleted.
+promotion-criteria: met — TestRoundTripSpellingFuzz gates ALL variants
+  (canonical, inline-table-deep, dotted-key, inline-array-of-tables,
+  implicit-parents) with zero xfails across 14 seeds x 120 cases; the ./generate
+  integration suite + all library tests stay green; the per-renderer
+  spelling-fallback decode renderer (~1050 lines) is deleted.
 supersedes: n/a (complements 2026-06-01-compositional-codegen)
 ---
+
+> **Status note (2026-06-08).** Implemented and accepted. `cst.Decompose` +
+> `Value` (pkg/cst/decompose.go) is the normalization layer;
+> `comp_decode_model.go` is the model-walk decoder; the old CST-pattern decode
+> renderer is removed. Delegated `DecodeXInto` now takes `(data, *cst.Value)`.
+> `Undecoded` is computed on the model. The `#55` flat-key fallback is preserved
+> (restricted to leaf children; slice-of-struct flat children are subsumed by
+> the model's implicit-parent materialization — see the `#101` note in the
+> commit). Deferred cleanup: the now-dead enumerative-era cst/document helpers
+> (`CheckNoDuplicateKeys`, `FindImplicitChildTable`/`implicitScope`/
+> `Node.Synthetic`, `FindChildTableDup`, `document.UndecodedKeys`'s inline
+> descent) remain public + tested and can be retired in a follow-up; they no
+> longer sit on the generated decode path. `pkg/marshal` (reflection) is
+> unchanged and still CST-based.
 
 # ADR: Decode via a Normalized Value Model (collapse the spelling axis)
 
