@@ -20,6 +20,12 @@ func runGenerate(args []string) int {
 		return 1
 	}
 
+	// Stamp this binary's identity into the generated header so a stale codegen
+	// binary against a newer tommy library is visible (#125). version/commit are
+	// the ldflags-injected main vars (eng-versioning(7)).
+	generate.BuildVersion = version
+	generate.BuildCommit = commit
+
 	if err := generate.Generate(dir, goFile); err != nil {
 		fmt.Fprintf(os.Stderr, "tommy generate: %s\n", err)
 		return 1

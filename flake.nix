@@ -74,7 +74,11 @@
         tommyBin = pkgs.buildGoApplication {
           pname = "tommy";
           version = "0.4.0";
-          commit = self.rev or self.shortRev or "unknown";
+          # shortRev when the tree is clean; dirtyShortRev ("<sha>-dirty") when
+          # it isn't — so a dirty build is distinguishable in `tommy version` and
+          # the generated-file header (#125). Flakes expose neither on a non-git
+          # build, hence the "unknown" fallback.
+          commit = self.shortRev or self.dirtyShortRev or "unknown";
           src = go-pkgs-test;
           modules = ./gomod2nix.toml;
           subPackages = [ "cmd/tommy" ];
