@@ -275,16 +275,29 @@ func decomposeValue(kv *Node, path string) (Value, error) {
 func inlineTableElements(arr *Node) ([]*Node, bool) {
 	var tables []*Node
 	for _, c := range arr.Children {
-		switch c.Kind {
-		case NodeInlineTable:
+		switch {
+		case c.Kind == NodeInlineTable:
 			tables = append(tables, c)
-		case NodeWhitespace, NodeNewline, NodeComment, NodeComma, NodeBracketOpen, NodeBracketClose:
+		case isArrayTrivia(c.Kind):
 			// structural punctuation / trivia
 		default:
 			return nil, false // a scalar (or nested array) element: not array-of-tables
 		}
 	}
 	return tables, len(tables) > 0
+}
+
+// isArrayTrivia reports whether a NodeArray child is structural punctuation or
+// trivia (brackets, separators, whitespace, comments) rather than a value
+// element. The array-spelling readers — inlineTableElements, IsEmptyArray, and
+// the Extract*Slice extractors — share this one classification.
+func isArrayTrivia(k NodeKind) bool {
+	switch k {
+	case NodeWhitespace, NodeNewline, NodeComment, NodeComma, NodeBracketOpen, NodeBracketClose:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsEmptyArray reports whether v is a leaf carrying an empty inline array
@@ -303,10 +316,7 @@ func (v *Value) IsEmptyArray() bool {
 		return false
 	}
 	for _, c := range av.Children {
-		switch c.Kind {
-		case NodeWhitespace, NodeNewline, NodeComment, NodeComma, NodeBracketOpen, NodeBracketClose:
-			// structural punctuation / trivia
-		default:
+		if !isArrayTrivia(c.Kind) {
 			return false // a real element (scalar or inline table)
 		}
 	}

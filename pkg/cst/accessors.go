@@ -178,7 +178,10 @@ func ExtractBool(kv *Node) (bool, bool) {
 	return b, true
 }
 
-// ExtractStringSlice extracts a []string from a NodeKeyValue whose value is a NodeArray.
+// ExtractStringSlice extracts a []string from a NodeKeyValue whose value is a
+// NodeArray. A non-string element makes it return false (rather than silently
+// dropping the element), so a heterogeneous array surfaces as a type error
+// instead of a partial slice.
 func ExtractStringSlice(kv *Node) ([]string, bool) {
 	v := KeyValueValue(kv)
 	if v == nil || v.Kind != NodeArray {
@@ -186,9 +189,13 @@ func ExtractStringSlice(kv *Node) ([]string, bool) {
 	}
 	var result []string
 	for _, child := range v.Children {
-		if child.Kind == NodeString {
-			result = append(result, StripQuotes(string(child.Raw)))
+		if isArrayTrivia(child.Kind) {
+			continue
 		}
+		if child.Kind != NodeString {
+			return nil, false
+		}
+		result = append(result, StripQuotes(string(child.Raw)))
 	}
 	return result, true
 }
@@ -201,13 +208,17 @@ func ExtractIntSlice(kv *Node) ([]int, bool) {
 	}
 	var result []int
 	for _, child := range v.Children {
-		if child.Kind == NodeInteger {
-			n, err := strconv.ParseInt(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
-			if err != nil {
-				return nil, false
-			}
-			result = append(result, int(n))
+		if isArrayTrivia(child.Kind) {
+			continue
 		}
+		if child.Kind != NodeInteger {
+			return nil, false
+		}
+		n, err := strconv.ParseInt(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		result = append(result, int(n))
 	}
 	return result, true
 }
@@ -220,13 +231,17 @@ func ExtractInt64Slice(kv *Node) ([]int64, bool) {
 	}
 	var result []int64
 	for _, child := range v.Children {
-		if child.Kind == NodeInteger {
-			n, err := strconv.ParseInt(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
-			if err != nil {
-				return nil, false
-			}
-			result = append(result, n)
+		if isArrayTrivia(child.Kind) {
+			continue
 		}
+		if child.Kind != NodeInteger {
+			return nil, false
+		}
+		n, err := strconv.ParseInt(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		result = append(result, n)
 	}
 	return result, true
 }
@@ -239,13 +254,17 @@ func ExtractUint64Slice(kv *Node) ([]uint64, bool) {
 	}
 	var result []uint64
 	for _, child := range v.Children {
-		if child.Kind == NodeInteger {
-			n, err := strconv.ParseUint(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
-			if err != nil {
-				return nil, false
-			}
-			result = append(result, n)
+		if isArrayTrivia(child.Kind) {
+			continue
 		}
+		if child.Kind != NodeInteger {
+			return nil, false
+		}
+		n, err := strconv.ParseUint(strings.ReplaceAll(string(child.Raw), "_", ""), 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		result = append(result, n)
 	}
 	return result, true
 }
@@ -260,13 +279,17 @@ func ExtractFloat64Slice(kv *Node) ([]float64, bool) {
 	}
 	var result []float64
 	for _, child := range v.Children {
-		if child.Kind == NodeFloat || child.Kind == NodeInteger {
-			n, err := strconv.ParseFloat(strings.ReplaceAll(string(child.Raw), "_", ""), 64)
-			if err != nil {
-				return nil, false
-			}
-			result = append(result, n)
+		if isArrayTrivia(child.Kind) {
+			continue
 		}
+		if child.Kind != NodeFloat && child.Kind != NodeInteger {
+			return nil, false
+		}
+		n, err := strconv.ParseFloat(strings.ReplaceAll(string(child.Raw), "_", ""), 64)
+		if err != nil {
+			return nil, false
+		}
+		result = append(result, n)
 	}
 	return result, true
 }
@@ -279,13 +302,17 @@ func ExtractBoolSlice(kv *Node) ([]bool, bool) {
 	}
 	var result []bool
 	for _, child := range v.Children {
-		if child.Kind == NodeBool {
-			b, err := strconv.ParseBool(string(child.Raw))
-			if err != nil {
-				return nil, false
-			}
-			result = append(result, b)
+		if isArrayTrivia(child.Kind) {
+			continue
 		}
+		if child.Kind != NodeBool {
+			return nil, false
+		}
+		b, err := strconv.ParseBool(string(child.Raw))
+		if err != nil {
+			return nil, false
+		}
+		result = append(result, b)
 	}
 	return result, true
 }

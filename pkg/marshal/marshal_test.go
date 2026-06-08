@@ -390,6 +390,19 @@ func TestUnmarshalRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+// A heterogeneous array for a primitive-slice field is a type error, not a
+// partial slice: the strict Extract*Slice helpers reject the mismatched element
+// rather than silently dropping it (review #2/#6).
+func TestUnmarshalRejectsHeterogeneousSlice(t *testing.T) {
+	type C struct {
+		Ports []int `toml:"ports"`
+	}
+	var c C
+	if _, err := UnmarshalDocument([]byte("ports = [1, 2.5, 3]\n"), &c); err == nil {
+		t.Fatalf("expected a type error for a heterogeneous []int, got Ports=%v", c.Ports)
+	}
+}
+
 // An explicit empty array `servers = []` for a []struct field decodes to an
 // empty (non-nil) slice without error: Decompose keeps the empty array a leaf
 // (it can't tell an empty array-of-tables from an empty scalar array), so the
