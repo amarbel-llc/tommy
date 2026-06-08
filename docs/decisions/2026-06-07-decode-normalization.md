@@ -16,12 +16,12 @@ supersedes: n/a (complements 2026-06-01-compositional-codegen)
 > `Undecoded` is computed on the model. The `#55` flat-key fallback is preserved
 > (restricted to leaf children; slice-of-struct flat children are subsumed by
 > the model's implicit-parent materialization — see the `#101` note in the
-> commit). Deferred cleanup: the now-dead enumerative-era cst/document helpers
+> commit). The enumerative-era cst/document helpers it obsoleted
 > (`CheckNoDuplicateKeys`, `FindImplicitChildTable`/`implicitScope`/
-> `Node.Synthetic`, `FindChildTableDup`, `document.UndecodedKeys`'s inline
-> descent) remain public + tested and can be retired in a follow-up; they no
-> longer sit on the generated decode path. `pkg/marshal` (reflection) is
-> unchanged and still CST-based.
+> `Node.Synthetic`, `FindChildTableDup`, `document.UndecodedKeys`/
+> `MarkAllConsumed`) have since been deleted. `pkg/marshal` (reflection
+> unmarshal) was also migrated onto `cst.Decompose`, so it accepts every
+> spelling too; its encode path stays CST-based.
 
 # ADR: Decode via a Normalized Value Model (collapse the spelling axis)
 
