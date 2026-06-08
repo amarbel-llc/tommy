@@ -28,10 +28,14 @@ go test -v -run TestName ./generate/   # a single Go test
 just debug-test TestName               # one Go test, verbose
 ```
 
-**Codegen renderer & wire-format coverage.** The generator has a single renderer,
-`RenderFile` (jennifer-based, `generate/comp_render.go`), walking the compositional
-IR (`comp_ir.go`) built by the folds in `comp_build.go` over the `TypeExpr` algebra
-(`typeexpr.go`); shared jennifer helpers live in `comp_support.go`. CI covers it three
+**Codegen renderers & wire-format coverage.** Two jennifer-based renderers fold
+over the compositional IR (`comp_ir.go`, built by `comp_build.go` over the
+`TypeExpr` algebra in `typeexpr.go`): `RenderFile` (`generate/comp_render.go`)
+emits the **encode** path, while the **decode** path is emitted by
+`comp_decode_model.go` as a walk over the normalized value model produced by
+`cst.Decompose` (the spelling-normalization layer — one reader per kind, no
+per-spelling fallbacks; see `docs/decisions/2026-06-07-decode-normalization.md`).
+Shared jennifer helpers live in `comp_support.go`. CI covers it three
 ways: the bats lane (`bats-default`) exercises
 `tommy generate` end-to-end against the installed binary; the `go-generate`
 flake check runs the rich Go `./generate/...` integration suite (100+ cases,
@@ -77,7 +81,9 @@ The library has four layers, each depending only on the one below it:
     token becomes a leaf `Node`; structural nodes (`NodeTable`,
     `NodeArrayTable`, `NodeKeyValue`, `NodeArray`, `NodeInlineTable`,
     `NodeDottedKey`) group children. `Node.Bytes()` concatenation reproduces the
-    original input byte-for-byte.
+    original input byte-for-byte. `Decompose` collapses a parsed CST into a
+    canonical `Value` model (the decode-normalization layer that erases TOML's
+    spelling duality); undecoded-key detection lives there (`Value.Undecoded`).
 
 3.  **Document** (`pkg/document/`) --- High-level API over the CST for
     reading/writing TOML values by dotted key paths. Supports
@@ -85,7 +91,7 @@ The library has four layers, each depending only on the one below it:
     (`FindArrayTableNodes`, `AppendArrayTableEntry`), sub-tables
     (`FindSubTables`, `EnsureSubTable`), and map extraction
     (`GetStringMapFromTable`). Mutations edit CST nodes in-place to preserve
-    formatting. Also tracks consumed keys for undecoded-key detection.
+    formatting.
 
 4.  **Marshal** (`pkg/marshal/`) --- Reflection-based
     `UnmarshalDocument`/`MarshalDocument` using `toml` struct tags. Returns a
@@ -98,11 +104,14 @@ The library has four layers, each depending only on the one below it:
 custom marshaler, text marshaler, etc.) - `fieldType` (`typeexpr.go`) maps each
 `FieldKind` to a compositional `TypeExpr` (Scalar/Ptr/Slice/Map/Struct/Delegated)
 - the `comp_build.go` folds recurse over that algebra to build the `comp_ir.go`
-node trees, threading the TOML position - `RenderFile` (`comp_render.go`) walks
-the nodes and emits decode/encode method bodies via jennifer - Cross-package
-struct fields use delegation: `FieldDelegatedStruct` emits calls to the target
-package's `DecodeInto`/`EncodeFrom` instead of inlining field-by-field decoding,
-enabling structs that contain unexported types
+node trees - `RenderFile` (`comp_render.go`) emits the **encode** method via
+jennifer, while the **decode** method is emitted by `comp_decode_model.go`, which
+walks the normalized `cst.Value` model from `cst.Decompose` (one reader per kind;
+the old per-spelling CST-pattern decode renderer was retired by the 2026-06-07
+decode-normalization ADR) - Cross-package struct fields use delegation:
+`FieldDelegatedStruct` emits calls to the target package's `DecodeInto`/`EncodeFrom`
+(`DecodeXInto` now takes a `*cst.Value`) instead of inlining field-by-field
+decoding, enabling structs that contain unexported types
 
 **Ring Buffer** (`internal/ringbuf/`) --- Circular buffer backed by an
 `io.Reader`, ported from dodder's `catgut` package. Provides `Peek`,
