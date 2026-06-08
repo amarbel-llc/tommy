@@ -84,6 +84,10 @@ The library has four layers, each depending only on the one below it:
     original input byte-for-byte. `Decompose` collapses a parsed CST into a
     canonical `Value` model (the decode-normalization layer that erases TOML's
     spelling duality); undecoded-key detection lives there (`Value.Undecoded`).
+    A consumer that decodes elsewhere (not through tommy) can still compute
+    unknown keys off the model: `DecomposeBytes(data)`, mark recognized paths
+    via `Value.Get`/`GetPath` + `MarkSeen`/`MarkConsumed`, then `Undecoded()` —
+    spelling-correct, unlike a raw-CST key walk.
 
 3.  **Document** (`pkg/document/`) --- High-level API over the CST for
     reading/writing TOML values by dotted key paths. Supports

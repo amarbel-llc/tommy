@@ -65,6 +65,24 @@ func (v *Value) Get(key string) (*Value, bool) {
 	return nil, false
 }
 
+// GetPath navigates a dotted key-path from this table (e.g. "server.tls"),
+// returning the value at the path and whether it is present. Each segment
+// descends one VTable level; a missing segment or a non-table encountered
+// mid-path yields (nil, false). It is the ergonomic way to reach a nested value
+// or whole subtree to MarkSeen/MarkConsumed before calling Undecoded. Segments
+// are split on "." (bare-key paths), matching the dotted paths Undecoded reports.
+func (v *Value) GetPath(dotted string) (*Value, bool) {
+	cur := v
+	for _, seg := range strings.Split(dotted, ".") {
+		next, ok := cur.Get(seg)
+		if !ok {
+			return nil, false
+		}
+		cur = next
+	}
+	return cur, true
+}
+
 // MarkSeen records that the decoder recognized this value's key. For a struct
 // table or array it means "entered" — Undecoded still descends to surface any
 // unconsumed child (an unknown struct field). Generated decoders call it.
@@ -109,6 +127,22 @@ func (v *Value) collectUndecoded(prefix string, out *[]string) {
 			}
 		}
 	}
+}
+
+// DecomposeBytes parses TOML and returns the canonical value model in one call,
+// equivalent to Decompose(Parse(data)). It is the entry point for computing
+// undecoded ("unknown") keys WITHOUT decoding through a generated decoder or
+// reflection marshal: parse, mark the keys you recognize via Get/GetPath +
+// MarkConsumed/MarkSeen, then call Undecoded. Because the model normalizes every
+// TOML spelling first (inline vs header table, dotted vs nested key), this is
+// spelling-correct where a raw-CST key walk — the retired document.UndecodedKeys
+// — was not.
+func DecomposeBytes(data []byte) (*Value, error) {
+	root, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return Decompose(root)
 }
 
 // Decompose builds the canonical value model from a parsed document root.

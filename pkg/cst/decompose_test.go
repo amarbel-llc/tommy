@@ -186,3 +186,71 @@ func TestDecomposeAcceptsValid(t *testing.T) {
 		}
 	}
 }
+
+// A consumer that decodes elsewhere (or not through tommy at all) can still
+// answer "which keys did I not account for?": DecomposeBytes, mark what it
+// recognizes via Get/GetPath + MarkSeen/MarkConsumed, then Undecoded.
+func TestDecomposeBytesUndecodedDecoderAgnostic(t *testing.T) {
+	data := []byte("name = \"x\"\nunknown_top = 1\n\n[server]\nhost = \"h\"\nextra = true\n\n[meta]\na = 1\n")
+	v, err := DecomposeBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := v.Get("name"); ok {
+		f.MarkConsumed()
+	}
+	if f, ok := v.GetPath("server"); ok {
+		f.MarkSeen() // entered: descend to surface unknown inner fields
+	}
+	if f, ok := v.GetPath("server.host"); ok {
+		f.MarkConsumed()
+	}
+	if f, ok := v.GetPath("meta"); ok {
+		f.MarkConsumed() // whole subtree absorbed (e.g. a map field)
+	}
+	assertUndecoded(t, v, []string{"unknown_top", "server.extra"})
+}
+
+// The model collapses spellings, so an inline-table subtable is descended for
+// unknown inner keys exactly like a header table — where the retired raw-CST
+// document.UndecodedKeys treated an inline table as an opaque leaf and missed
+// server.extra.
+func TestDecomposeBytesUndecodedSpellingInvariant(t *testing.T) {
+	v, err := DecomposeBytes([]byte("server = { host = \"h\", extra = true }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := v.GetPath("server"); ok {
+		f.MarkSeen()
+	}
+	if f, ok := v.GetPath("server.host"); ok {
+		f.MarkConsumed()
+	}
+	assertUndecoded(t, v, []string{"server.extra"})
+}
+
+func TestGetPath(t *testing.T) {
+	v, err := DecomposeBytes([]byte("a = 1\n[b]\nc = 2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.GetPath("b.c"); !ok {
+		t.Error("b.c should resolve")
+	}
+	if _, ok := v.GetPath("b.x"); ok {
+		t.Error("b.x should be absent")
+	}
+	if _, ok := v.GetPath("a.deep"); ok {
+		t.Error("descending into a leaf should fail")
+	}
+}
+
+func assertUndecoded(t *testing.T, v *Value, want []string) {
+	t.Helper()
+	got := v.Undecoded()
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Undecoded() = %v, want %v", got, want)
+	}
+}
