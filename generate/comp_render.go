@@ -9,9 +9,9 @@ import (
 
 // Compositional renderer (#84). RenderFile walks the cd*/ce* node trees
 // (comp_build.go) and emits the generated *_tommy.go. It uses the decode/encode
-// contexts (jenCtx/encCtx) and the shared jennifer helpers (tableMatch,
-// posHeader, jenType, jenZeroLit, delegateParts, jenSetCall, cst/doc package
-// consts) from comp_support.go. The four behaviors the proof-of-concept spike
+// contexts (jenCtx/encCtx) and the shared jennifer helpers (jenType,
+// jenZeroLit, delegateParts, jenSetCall, cst/doc package consts) from
+// comp_support.go. The four behaviors the proof-of-concept spike
 // deferred — consumed/undecoded tracking, same-package []struct handle tracking,
 // positional nesting (#10), and the flat-key fallback (#55) — are all handled
 // here.

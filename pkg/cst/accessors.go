@@ -9,22 +9,34 @@ import (
 // KeyValueName returns the key name from a NodeKeyValue node.
 // For simple keys like `name = "value"`, returns "name".
 // For dotted keys like `a.b.c = "value"`, returns "a.b.c".
+//
+// Like TableHeaderKey, the join is lossy: a quoted dot-containing segment is
+// indistinguishable from nesting. Callers that must tell them apart (#103) use
+// keyValueSegments.
 func KeyValueName(kv *Node) string {
-	for _, child := range kv.Children {
-		if child.Kind == NodeKey {
-			return StripQuotes(string(child.Raw))
-		}
-		if child.Kind == NodeDottedKey {
-			var parts []string
-			for _, sub := range child.Children {
-				if sub.Kind == NodeKey {
-					parts = append(parts, StripQuotes(string(sub.Raw)))
+	return strings.Join(keyValueSegments(kv), ".")
+}
+
+// keyValueSegments returns the structural key segments of a key-value (one for a
+// bare key, several for a dotted key), each unquoted. A quoted dot-containing
+// segment stays one segment (#103). KeyValueName is the joined-string dual,
+// mirroring the TableHeaderSegments/TableHeaderKey pair below.
+func keyValueSegments(kv *Node) []string {
+	for _, c := range kv.Children {
+		switch c.Kind {
+		case NodeKey:
+			return []string{StripQuotes(string(c.Raw))}
+		case NodeDottedKey:
+			var segs []string
+			for _, s := range c.Children {
+				if s.Kind == NodeKey {
+					segs = append(segs, StripQuotes(string(s.Raw)))
 				}
 			}
-			return strings.Join(parts, ".")
+			return segs
 		}
 	}
-	return ""
+	return nil
 }
 
 // KeyValueValue returns the value node from a NodeKeyValue node.

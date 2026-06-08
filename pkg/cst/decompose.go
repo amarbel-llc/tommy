@@ -287,27 +287,6 @@ func inlineTableElements(arr *Node) ([]*Node, bool) {
 	return tables, len(tables) > 0
 }
 
-// keyValueSegments returns the structural key segments of a key-value (one for a
-// bare key, several for a dotted key), each unquoted. A quoted dot-containing
-// segment stays one segment (#103).
-func keyValueSegments(kv *Node) []string {
-	for _, c := range kv.Children {
-		switch c.Kind {
-		case NodeKey:
-			return []string{StripQuotes(string(c.Raw))}
-		case NodeDottedKey:
-			var segs []string
-			for _, s := range c.Children {
-				if s.Kind == NodeKey {
-					segs = append(segs, StripQuotes(string(s.Raw)))
-				}
-			}
-			return segs
-		}
-	}
-	return nil
-}
-
 func dotted(segs []string) string { return strings.Join(segs, ".") }
 func joinPath(prefix string, segs []string) string {
 	j := dotted(segs)

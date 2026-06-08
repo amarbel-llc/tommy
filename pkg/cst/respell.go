@@ -214,6 +214,18 @@ func firstHeaderIndex(nodes []*Node) int {
 	return len(nodes)
 }
 
+// spliceHoist inserts hoist immediately before the first table/array-table
+// header in out, keeping the hoisted root-level key-values legal TOML (a bare
+// key-value after a header would bind to that table, not the root).
+func spliceHoist(out, hoist []*Node) []*Node {
+	at := firstHeaderIndex(out)
+	spliced := make([]*Node, 0, len(out)+len(hoist))
+	spliced = append(spliced, out[:at]...)
+	spliced = append(spliced, hoist...)
+	spliced = append(spliced, out[at:]...)
+	return spliced
+}
+
 // deepInlineSubtree folds the table headed by segs — and EVERYTHING under it —
 // into one nested inline-table value. It reconstructs the subtree from ALL
 // descendant headers (not just an exact [segs.x] child): a map field whose
@@ -317,12 +329,7 @@ func RespellInlineTables(toml []byte) ([]byte, error) {
 		}
 		out = append(out, node)
 	}
-	at := firstHeaderIndex(out)
-	spliced := make([]*Node, 0, len(out)+len(hoist))
-	spliced = append(spliced, out[:at]...)
-	spliced = append(spliced, hoist...)
-	spliced = append(spliced, out[at:]...)
-	root.Children = spliced
+	root.Children = spliceHoist(out, hoist)
 	return root.Bytes(), nil
 }
 
@@ -384,12 +391,7 @@ func RespellDottedKeys(toml []byte) ([]byte, error) {
 	if len(hoist) == 0 {
 		return root.Bytes(), nil
 	}
-	at := firstHeaderIndex(out)
-	spliced := make([]*Node, 0, len(out)+len(hoist))
-	spliced = append(spliced, out[:at]...)
-	spliced = append(spliced, hoist...)
-	spliced = append(spliced, out[at:]...)
-	root.Children = spliced
+	root.Children = spliceHoist(out, hoist)
 	return root.Bytes(), nil
 }
 
@@ -544,11 +546,6 @@ func RespellInlineArrays(toml []byte) ([]byte, error) {
 		}
 		out = append(out, node)
 	}
-	at := firstHeaderIndex(out)
-	spliced := make([]*Node, 0, len(out)+len(hoist))
-	spliced = append(spliced, out[:at]...)
-	spliced = append(spliced, hoist...)
-	spliced = append(spliced, out[at:]...)
-	root.Children = spliced
+	root.Children = spliceHoist(out, hoist)
 	return root.Bytes(), nil
 }
