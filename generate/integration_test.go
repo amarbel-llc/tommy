@@ -10790,6 +10790,109 @@ var _ = cst.FindChildTable
 	}
 }
 
+// Differential decode (prototype): the generated decoder (DecodeConfig) and the
+// reflection decoder (marshal.UnmarshalDocument) must agree on every input they
+// both support. Both #1 (empty array-of-tables) and #121 (empty primitive slice)
+// were "the two decode paths disagree" bugs that round-trip fuzzing could not see
+// (it only decodes encoder output); a differential check catches that class
+// directly. Scoped to the common subset both paths implement — scalars, primitive
+// slices, value structs, []struct — since the reflection path does not support
+// maps or pointers (a separate known capability gap, not a divergence bug).
+func TestIntegrationDifferentialDecode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/diffdecode",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package diffdecode
+
+//go:generate tommy generate
+type Config struct {
+	Name    string   `+"`"+`toml:"name"`+"`"+`
+	Ports   []int    `+"`"+`toml:"ports"`+"`"+`
+	Tags    []string `+"`"+`toml:"tags"`+"`"+`
+	Servers []Server `+"`"+`toml:"servers"`+"`"+`
+	Inner   Inner    `+"`"+`toml:"inner"`+"`"+`
+}
+
+type Server struct {
+	Host string `+"`"+`toml:"host"`+"`"+`
+}
+
+type Inner struct {
+	Owner string `+"`"+`toml:"owner"`+"`"+`
+}
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	writeFixture(t, dir, "diff_test.go", `package diffdecode
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/amarbel-llc/tommy/pkg/marshal"
+)
+
+func TestDifferentialDecode(t *testing.T) {
+	cases := []struct {
+		name string
+		toml string
+	}{
+		{"canonical", "name = \"n\"\nports = [1, 2]\ntags = [\"a\", \"b\"]\n\n[[servers]]\nhost = \"h0\"\n\n[[servers]]\nhost = \"h1\"\n\n[inner]\nowner = \"o\"\n"},
+		{"empty primitive slices", "ports = []\ntags = []\n"},
+		{"empty struct slice", "servers = []\n"},
+		{"absent collections", "name = \"only\"\n"},
+		{"inline inner table", "inner = { owner = \"o\" }\n"},
+		{"inline struct array", "servers = [ { host = \"a\" }, { host = \"b\" } ]\n"},
+		{"dotted inner key", "inner.owner = \"o\"\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, gerr := DecodeConfig([]byte(tc.toml))
+			var ref Config
+			_, rerr := marshal.UnmarshalDocument([]byte(tc.toml), &ref)
+			if (gerr == nil) != (rerr == nil) {
+				t.Fatalf("decode error disagreement:\n  generated:  %v\n  reflection: %v", gerr, rerr)
+			}
+			if gerr != nil {
+				return
+			}
+			if gen := *doc.Data(); !reflect.DeepEqual(gen, ref) {
+				t.Fatalf("decode paths disagree:\n  generated:  %#v\n  reflection: %#v", gen, ref)
+			}
+		})
+	}
+}
+`)
+
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("differential decode failed: %v\n%s", err, out)
+	}
+}
+
 // Regression for #113: a standalone dotted sub-table header ([direnv.dotenv]
 // with no bare [direnv] header) is valid TOML — the parent table is implicit —
 // but the generated decoder only ran the dotted-header consumption scan inside
