@@ -390,6 +390,38 @@ func TestUnmarshalRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+// A present-but-empty primitive array decodes to a non-nil empty slice, matching
+// the generated decoder's #21 normalization; an absent field stays nil (tommy#121).
+func TestUnmarshalEmptyPrimitiveSlice(t *testing.T) {
+	type C struct {
+		Tags  []string `toml:"tags"`
+		Ports []int    `toml:"ports"`
+		Off   []bool   `toml:"off"`
+	}
+	var c C
+	if _, err := UnmarshalDocument([]byte("tags = []\nports = []\noff = []\n"), &c); err != nil {
+		t.Fatalf("UnmarshalDocument: %v", err)
+	}
+	if c.Tags == nil || len(c.Tags) != 0 {
+		t.Errorf("Tags = %#v, want non-nil empty", c.Tags)
+	}
+	if c.Ports == nil || len(c.Ports) != 0 {
+		t.Errorf("Ports = %#v, want non-nil empty", c.Ports)
+	}
+	if c.Off == nil || len(c.Off) != 0 {
+		t.Errorf("Off = %#v, want non-nil empty", c.Off)
+	}
+
+	// An absent field must stay nil — absent != present-but-empty.
+	var d C
+	if _, err := UnmarshalDocument([]byte("ports = []\n"), &d); err != nil {
+		t.Fatalf("UnmarshalDocument: %v", err)
+	}
+	if d.Tags != nil {
+		t.Errorf("absent Tags = %#v, want nil", d.Tags)
+	}
+}
+
 // A heterogeneous array for a primitive-slice field is a type error, not a
 // partial slice: the strict Extract*Slice helpers reject the mismatched element
 // rather than silently dropping it (review #2/#6).

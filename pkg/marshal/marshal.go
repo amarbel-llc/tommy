@@ -234,6 +234,13 @@ func decodeSliceValue(v *cst.Value, fv reflect.Value, key string) error {
 	default:
 		return fmt.Errorf("unsupported slice element type %s for key %q", elemType.Kind(), key)
 	}
+	// A present-but-empty primitive array (`xs = []`) extracts to a nil slice;
+	// normalize it to a non-nil empty slice so the reflection path matches the
+	// generated decoder's #21 behavior (tommy#121). Absent fields never reach
+	// here (decodeStructValue skips them), so this only affects present-empty.
+	if fv.IsNil() {
+		fv.Set(reflect.MakeSlice(fv.Type(), 0, 0))
+	}
 	return nil
 }
 
