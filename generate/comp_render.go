@@ -653,6 +653,14 @@ func compEmitDecodeInto(f *jen.File, si StructInfo) {
 		jen.Id("sub").Op("*").Qual(cstPkg, "Value"),
 	).Error().BlockFunc(func(g *jen.Group) {
 		compModelBody(ctx, g, nodes, jen.Id("sub"), "")
+		// A delegated struct validates itself just like a top-level DecodeX does
+		// (after all fields are set), so an invalid nested cross-package config is
+		// rejected rather than silently accepted.
+		if si.Validatable {
+			g.If(jen.Err().Op(":=").Id("data").Dot("Validate").Call(), jen.Err().Op("!=").Nil()).Block(
+				jen.Return(jen.Qual("fmt", "Errorf").Call(jen.Lit("validation failed: %w"), jen.Err())),
+			)
+		}
 		g.Return(jen.Nil())
 	})
 }
@@ -670,6 +678,14 @@ func compEmitEncodeFrom(f *jen.File, si StructInfo) {
 		jen.Id("doc").Op("*").Qual(docPkg, "Document"),
 		jen.Id("container").Op("*").Qual(cstPkg, "Node"),
 	).Error().BlockFunc(func(g *jen.Group) {
+		// Validate before writing, mirroring top-level Encode — a delegated struct
+		// must not serialize an invalid value just because it was reached via a
+		// parent's EncodeFrom.
+		if si.Validatable {
+			g.If(jen.Err().Op(":=").Id("data").Dot("Validate").Call(), jen.Err().Op("!=").Nil()).Block(
+				jen.Return(jen.Qual("fmt", "Errorf").Call(jen.Lit("validation failed: %w"), jen.Err())),
+			)
+		}
 		for _, s := range compRenderEncodeBody(ectx, nodes, jen.Id("container")) {
 			g.Add(s)
 		}

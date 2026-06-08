@@ -8001,7 +8001,10 @@ type Config struct {
 
 	writeFixture(t, pkgbDir, "pkgb_test.go", `package pkgb
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
 	input := []byte("[actions.build]\ncommand = \"make\"\ntimeout = 30\n\n[actions.test]\ncommand = \"go test\"\ntimeout = 60\n")
@@ -8030,6 +8033,19 @@ func TestMapCrossPackageDelegationRoundTrip(t *testing.T) {
 	}
 	if len(doc2.Data().Actions) != 2 {
 		t.Fatalf("re-decoded actions count = %d, want 2", len(doc2.Data().Actions))
+	}
+}
+
+func TestMapCrossPackageDelegationValidates(t *testing.T) {
+	// An empty command violates pkga.Action.Validate(); the delegated decode
+	// (DecodeActionInto) must run Validate and surface the error rather than
+	// silently accept the invalid nested cross-package value.
+	_, err := DecodeConfig([]byte("[actions.build]\ntimeout = 30\n"))
+	if err == nil {
+		t.Fatal("expected validation error for empty command, got nil")
+	}
+	if !strings.Contains(err.Error(), "command must not be empty") {
+		t.Fatalf("error = %v, want validation failure", err)
 	}
 }
 `)
