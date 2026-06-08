@@ -1011,11 +1011,6 @@ func ChildScope(root, parent *Node) (int, int) {
 		}
 	}
 	if parentIdx < 0 {
-		// A synthetic implicit-parent node (FindImplicitChildTable, #113) is
-		// detached by construction; resolve its scope via its evidence anchor.
-		if start, end, ok := implicitScope(root, parent); ok {
-			return start, end
-		}
 		// Parent not in root.Children: fail closed (empty scope) so the scoped
 		// finds return nothing rather than silently matching document-wide.
 		return 0, 0
@@ -1032,85 +1027,6 @@ func ChildScope(root, parent *Node) (int, int) {
 		}
 	}
 	return parentIdx, end
-}
-
-// FindImplicitChildTable returns a detached synthetic NodeTable standing in for
-// the implicit [parentKey.key] table: per the TOML spec a dotted header like
-// [parentKey.key.x] defines its parent tables implicitly, so a document may
-// contain sub-tables of key without ever spelling the bare [parentKey.key]
-// header (#113). It scans ChildScope(root, parent) for the first table or
-// array-table whose header extends parentKey.key by at least one segment (the
-// "evidence"); if none exists it returns nil.
-//
-// The synthetic node carries only the header key segments plus the evidence
-// node appended last as a scope anchor, and is flagged Synthetic (#116). That
-// shape makes it inert everywhere a real table node could over-match: it has no
-// NodeKeyValue children (leaf scans and FindChildInlineTable find nothing) and
-// is not part of the document tree (it must never be mutated or serialized).
-// The scoped finders resolve its range via ChildScope's implicitScope fallback,
-// which keys off the Synthetic flag and then locates the evidence by identity —
-// bounding the scope to the entry the evidence was found in, so identically-
-// headed sub-tables of a sibling array-table entry are not claimed.
-//
-// Like FindChildTable, matching is joined-key (TableHeaderKey), so a quoted
-// dot-containing segment is indistinguishable from nesting (#103 caveat).
-func FindImplicitChildTable(root, parent *Node, key string) *Node {
-	fullKey := qualifiedKey(parent, key)
-	prefix := fullKey + "."
-	start, end := ChildScope(root, parent)
-	for i := start; i < end; i++ {
-		child := root.Children[i]
-		if child.Kind != NodeTable && child.Kind != NodeArrayTable {
-			continue
-		}
-		if !strings.HasPrefix(TableHeaderKey(child), prefix) {
-			continue
-		}
-		segs := append(TableHeaderSegments(parent), strings.Split(key, ".")...)
-		synthetic := &Node{Kind: NodeTable, Synthetic: true, Children: headerKeyNodes(segs)}
-		synthetic.Children = append(synthetic.Children, child)
-		return synthetic
-	}
-	return nil
-}
-
-// implicitScope resolves the [start, end) scope of a synthetic implicit-parent
-// node built by FindImplicitChildTable. The node is identified by its Synthetic
-// flag (#116) — an explicit marker rather than a fragile structural predicate,
-// so no parser/encoder-built node can be mistaken for one. Its last child is
-// the evidence table/array-table; the scope starts there — the first sub-table
-// of the implicit parent within the scope it was found in — and extends while
-// headers stay prefixed, mirroring ChildScope's contiguity convention.
-func implicitScope(root, parent *Node) (start, end int, ok bool) {
-	if !parent.Synthetic || parent.Kind != NodeTable || len(parent.Children) < 2 {
-		return 0, 0, false
-	}
-	anchor := parent.Children[len(parent.Children)-1]
-	if anchor.Kind != NodeTable && anchor.Kind != NodeArrayTable {
-		return 0, 0, false
-	}
-	anchorIdx := -1
-	for i, child := range root.Children {
-		if child == anchor {
-			anchorIdx = i
-			break
-		}
-	}
-	if anchorIdx < 0 {
-		return 0, 0, false
-	}
-	prefix := TableHeaderKey(parent) + "."
-	end = len(root.Children)
-	for i := anchorIdx + 1; i < len(root.Children); i++ {
-		child := root.Children[i]
-		if child.Kind == NodeTable || child.Kind == NodeArrayTable {
-			if !strings.HasPrefix(TableHeaderKey(child), prefix) {
-				end = i
-				break
-			}
-		}
-	}
-	return anchorIdx, end, true
 }
 
 // FindChildTable returns the [parentKey.key] table scoped to parent, or nil.
@@ -1152,27 +1068,6 @@ func FindChildInlineTable(parent *Node, key string) *Node {
 		}
 	}
 	return nil
-}
-
-// FindChildTableDup is FindChildTable plus a duplicate flag: it returns the first
-// matching [parentKey.key] table scoped to parent, and dup=true if a second one
-// exists in the same scope — a TOML "defining a table more than once" violation
-// (#92/#102) within an array-table entry or delegated container. dup lets the
-// generated scoped decoders error instead of silently taking the first, matching
-// the top-level receiver's duplicate-table guard now that scoping is correct (#99).
-func FindChildTableDup(root, parent *Node, key string) (match *Node, dup bool) {
-	fullKey := qualifiedKey(parent, key)
-	start, end := ChildScope(root, parent)
-	for i := start; i < end; i++ {
-		child := root.Children[i]
-		if child.Kind == NodeTable && TableHeaderKey(child) == fullKey {
-			if match != nil {
-				return match, true
-			}
-			match = child
-		}
-	}
-	return match, false
 }
 
 // FindChildArrayTableNodes returns the [[parentKey.key]] entries scoped to parent,
