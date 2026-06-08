@@ -326,15 +326,18 @@ func (g *shapeGen) goTypeIn(t *td, cur string) string {
 // genValue emits a Go composite literal populating t. Every slice/map gets two
 // distinct entries so a swapped index or mis-scoped entry is caught by DeepEqual.
 func (g *shapeGen) genValue(t *td) string {
-	// nil generation is confined to representable positions. A nil pointer or nil
-	// map as a STRUCT FIELD round-trips cleanly (the key is simply absent), and is
-	// emitted ~1/4 of the time by the struct case below. A nil pointer as a
-	// slice/map ELEMENT is NOT generated: TOML arrays/sub-tables have no null, so
-	// []*T{nil} / map[string]*T{k:nil} are unrepresentable. nil *slices* are also
-	// not generated — their decode normalizes inconsistently across element types
-	// (nil []string -> nil, but nil []*int/[]Struct -> empty), a fidelity gap
-	// tracked separately. Empty non-nil collections normalize to nil and are not
-	// generated either.
+	// nil/empty generation is confined to representable positions, all injected by
+	// the struct case below (~1/4 each). As a STRUCT FIELD, a nil pointer / nil map
+	// / nil slice round-trips cleanly (the key is simply absent). A present-but-
+	// empty PRIMITIVE slice (`= []`) and an empty map[string]string (an empty
+	// `[table]`) are distinct TOML forms, so both nil AND empty are generated for
+	// them. A map[string]Struct has no present-empty form, so only its nil variant
+	// is generated, never `{}`. An array-of-tables ([]struct / []*struct) generates
+	// NEITHER nil nor empty: a nil one as a struct's only emitting field makes that
+	// struct encode to nothing — unrepresentable behind a pointer (it round-trips
+	// to a nil pointer, cf. #89) — so it stays populated. A nil pointer as a
+	// slice/map ELEMENT is never generated either: TOML arrays/sub-tables have no
+	// null, so []*T{nil} / map[string]*T{k:nil} are unrepresentable.
 	switch t.kind {
 	case "scalar":
 		return g.scalarValue(t.scalar)
@@ -412,6 +415,8 @@ func (g *shapeGen) genValue(t *td) string {
 				primElem := f.t.elem.kind == "scalar" ||
 					(f.t.elem.kind == "ptr" && f.t.elem.elem.kind == "scalar")
 				if primElem {
+					// A primitive slice distinguishes nil (key omitted) from empty
+					// (`= []`) — exercise both.
 					switch r := g.rng.Intn(4); {
 					case r == 0:
 						fv = "nil"
@@ -419,6 +424,12 @@ func (g *shapeGen) genValue(t *td) string {
 						fv = g.goType(f.t) + "{}"
 					}
 				}
+				// An array-of-tables ([]struct / []*struct) stays populated: it has
+				// no present-empty TOML form, and a nil one that is a struct's only
+				// emitting field makes that struct encode to nothing — which is
+				// unrepresentable behind a pointer (it round-trips to a nil pointer,
+				// cf. #89's no-spurious-bare-section rule). So neither nil nor empty
+				// is generated for it.
 			}
 			b.WriteString(f.name + ": " + fv)
 		}
