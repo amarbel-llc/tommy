@@ -339,8 +339,12 @@ func TestRespellPreservesValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := mustParseRoot(t, string(got))
-	it := FindChildInlineTable(root, "env")
-	if it == nil {
+	kv := findKV(root, "env")
+	if kv == nil {
+		t.Fatal("expected env key-value in respelled output")
+	}
+	it := KeyValueValue(kv)
+	if it == nil || it.Kind != NodeInlineTable {
 		t.Fatal("expected env inline table in respelled output")
 	}
 	m := ExtractStringMap(it)

@@ -1068,47 +1068,6 @@ func ChildScope(root, parent *Node) (int, int) {
 	return parentIdx, end
 }
 
-// FindChildTable returns the [parentKey.key] table scoped to parent, or nil.
-// Read-side dual of EnsureChildTable: it searches only within ChildScope(parent),
-// so the i-th array-table entry's nested table is found without matching a
-// sibling entry's identically-headed table.
-func FindChildTable(root, parent *Node, key string) *Node {
-	fullKey := qualifiedKey(parent, key)
-	start, end := ChildScope(root, parent)
-	for i := start; i < end; i++ {
-		child := root.Children[i]
-		if child.Kind == NodeTable && TableHeaderKey(child) == fullKey {
-			return child
-		}
-	}
-	return nil
-}
-
-// FindChildInlineTable returns the NodeInlineTable value of a `key = { ... }`
-// inline-table key-value that is a direct child of parent, or nil. It is the
-// inline-spelling dual of FindChildTable: a map[string]string (or table-typed)
-// field may be written either as a [parent.key] sub-table header (FindChildTable)
-// or as an inline table nested under parent (this), and both are valid TOML
-// encodings of the same data (#106). Unlike FindChildTable, this scans parent's
-// own children directly — an inline table lives inside its parent table node, not
-// at the document root — so parent is the actual container node (root for a
-// top-level field, the [parent] NodeTable for a nested one), not a root+parent
-// pair fed through ChildScope.
-//
-// The returned node is itself a container of NodeKeyValue children, so it can be
-// passed straight to ExtractStringMap.
-func FindChildInlineTable(parent *Node, key string) *Node {
-	for _, child := range parent.Children {
-		if child.Kind != NodeKeyValue || KeyValueName(child) != key {
-			continue
-		}
-		if v := KeyValueValue(child); v != nil && v.Kind == NodeInlineTable {
-			return v
-		}
-	}
-	return nil
-}
-
 // FindChildArrayTableNodes returns the [[parentKey.key]] entries scoped to parent,
 // in document order. Scoped variant of FindArrayTableNodes for nested arrays.
 func FindChildArrayTableNodes(root, parent *Node, key string) []*Node {
