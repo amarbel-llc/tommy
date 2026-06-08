@@ -1,11 +1,48 @@
 package generate
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// Render must be deterministic and Generate must write exactly Render's output —
+// otherwise `tommy generate --check` would false-positive on a freshly generated
+// file. Also pins OutputPath's <base>_tommy.go convention.
+func TestRenderDeterministicMatchesGenerate(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "go.mod", "module example.com/test\n\ngo 1.25.6\n")
+	writeFixture(t, dir, "config.go", "package test\n\n//go:generate tommy generate\ntype Config struct {\n\tName string `toml:\"name\"`\n}\n")
+
+	if got, want := OutputPath(dir, "config.go"), filepath.Join(dir, "config_tommy.go"); got != want {
+		t.Fatalf("OutputPath = %q, want %q", got, want)
+	}
+
+	a, err := Render(dir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Render(dir, "config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatal("Render is not deterministic — --check would be unstable")
+	}
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatal(err)
+	}
+	onDisk, err := os.ReadFile(OutputPath(dir, "config.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, a) {
+		t.Fatal("Generate output != Render output — --check would false-positive on a fresh file")
+	}
+}
 
 func TestGenerateProducesValidFile(t *testing.T) {
 	dir := t.TempDir()

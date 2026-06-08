@@ -8,6 +8,8 @@ tommy-generate - generate type-safe TOML Decode/Encode methods
 
 *//go:generate tommy generate*
 
+*tommy generate --check*
+
 # DESCRIPTION
 
 *tommy generate* is a code generator invoked via a *//go:generate* directive.
@@ -38,6 +40,28 @@ Then:
 ```
 go generate ./...
 ```
+
+# DIAGNOSTICS
+
+On each run, *tommy generate* prints the resolved output path and the producing
+*tommy* build to standard error:
+
+```
+tommy 0.4.1 (c113f1f): writing internal/config/config_tommy.go
+```
+
+so a wrong target (an output-filename mismatch) or a stale codegen binary is
+visible at a glance rather than discovered later.
+
+# CHECK MODE
+
+*tommy generate --check* regenerates in memory and compares the result against
+the existing generated file *without writing it*, exiting non-zero if they
+differ or it is missing. Use it in CI to catch a generated file that is out of date —
+or one produced by a different *tommy* version, which the header stamp (see
+*OUTPUT*) makes a content difference. It reads *GOFILE* like generation, so run
+it in the same *go generate* environment; alternatively a CI step may
+*go generate ./...* and assert a clean *git diff*.
 
 # ENVIRONMENT
 

@@ -28,6 +28,31 @@ function generate_creates_companion_file { # @test
   assert [ -f config_tommy.go ]
 }
 
+# `tommy generate` reports the resolved output path + build on a normal run, and
+# `--check` is a CI staleness guard: regenerate in memory, diff the committed
+# file without writing, fail when it drifts (consumer-ergonomics; the run-log
+# would have caught maneater's output-filename mismatch).
+function generate_check_detects_stale_output { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  run go generate ./...
+  assert_success
+  assert_output --partial "writing"   # the run-log diagnostic line
+  assert [ -f config_tommy.go ]
+
+  export GOFILE=config.go
+
+  # Freshly generated → --check passes (Generate writes exactly Render's output).
+  run tommy generate --check
+  assert_success
+
+  # A drifted generated file → --check fails loudly, no write.
+  printf '\n// drift\n' >> config_tommy.go
+  run tommy generate --check
+  assert_failure
+  assert_output --partial "out of date"
+}
+
 # With stats-me opt-in (STATSD_* set) generation must still succeed: telemetry is
 # fire-and-forget UDP, so a port with nothing listening must not perturb it.
 function generate_with_stats_me_enabled_still_succeeds { # @test
