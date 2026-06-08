@@ -287,6 +287,32 @@ func inlineTableElements(arr *Node) ([]*Node, bool) {
 	return tables, len(tables) > 0
 }
 
+// IsEmptyArray reports whether v is a leaf carrying an empty inline array
+// (`key = []`). Decompose keeps an empty array a VLeaf because emptiness erases
+// the array-of-tables-vs-scalar-array distinction (#94): there are no inline
+// tables to inspect, so inlineTableElements declines it. A struct-slice decoder
+// consults this to treat `xs = []` as an empty array-of-tables (an empty slice)
+// rather than a type error, matching how an empty scalar array already decodes
+// to an empty []int.
+func (v *Value) IsEmptyArray() bool {
+	if v.Kind != VLeaf || v.Leaf == nil {
+		return false
+	}
+	av := KeyValueValue(v.Leaf)
+	if av == nil || av.Kind != NodeArray {
+		return false
+	}
+	for _, c := range av.Children {
+		switch c.Kind {
+		case NodeWhitespace, NodeNewline, NodeComment, NodeComma, NodeBracketOpen, NodeBracketClose:
+			// structural punctuation / trivia
+		default:
+			return false // a real element (scalar or inline table)
+		}
+	}
+	return true
+}
+
 func dotted(segs []string) string { return strings.Join(segs, ".") }
 func joinPath(prefix string, segs []string) string {
 	j := dotted(segs)

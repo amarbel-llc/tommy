@@ -176,6 +176,12 @@ func decodeSliceValue(v *cst.Value, fv reflect.Value, key string) error {
 	elemType := fv.Type().Elem()
 	if elemType.Kind() == reflect.Struct {
 		if v.Kind != cst.VArray {
+			// `servers = []` decomposes to an empty-array leaf, not a VArray;
+			// decode it as an empty (non-nil) slice instead of a type error (#94).
+			if v.IsEmptyArray() {
+				fv.Set(reflect.MakeSlice(fv.Type(), 0, 0))
+				return nil
+			}
 			return typeErr(key, "array of tables")
 		}
 		slice := reflect.MakeSlice(fv.Type(), len(v.Items), len(v.Items))

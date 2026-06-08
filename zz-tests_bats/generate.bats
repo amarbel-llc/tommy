@@ -441,6 +441,59 @@ GOEOF
   assert_output --partial "PASS"
 }
 
+# Regression for #94: an explicit empty array `servers = []` for a []struct
+# field must decode to an empty (non-nil) slice and be consumed. Decompose keeps
+# an empty array a leaf (it can't tell an empty array-of-tables from an empty
+# scalar array), so the generated array-table decoder must accept the
+# empty-array leaf rather than skip it — which left the field nil AND reported
+# "servers" as undecoded. A populated [[servers]] must keep working.
+function generate_empty_array_of_tables_decodes { # @test
+  cd "$BATS_TEST_TMPDIR/proj"
+
+  cat > config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Servers []Server `toml:"servers"`
+}
+
+type Server struct {
+	Name string `toml:"name"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat > empty_array_test.go <<'GOEOF'
+package batstest
+
+import "testing"
+
+func TestEmptyArrayOfTables(t *testing.T) {
+	doc, err := DecodeConfig([]byte("servers = []\n"))
+	if err != nil { t.Fatalf("DecodeConfig: %v", err) }
+	d := doc.Data()
+	if d.Servers == nil { t.Fatal("Servers = nil, want empty non-nil slice") }
+	if len(d.Servers) != 0 { t.Fatalf("len(Servers) = %d, want 0", len(d.Servers)) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+func TestPopulatedArrayOfTablesStillWorks(t *testing.T) {
+	doc, err := DecodeConfig([]byte("[[servers]]\nname = \"a\"\n"))
+	if err != nil { t.Fatalf("DecodeConfig: %v", err) }
+	d := doc.Data()
+	if len(d.Servers) != 1 || d.Servers[0].Name != "a" { t.Fatalf("Servers=%+v", d.Servers) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}
+
 # Regression for #110: a key defined twice in the inline-table spelling
 # (`sess = { ... }` twice, or a duplicate inner inline key) must be rejected
 # like the header form (`[sess]` twice, #92) — the generated decoder runs

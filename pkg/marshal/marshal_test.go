@@ -389,3 +389,21 @@ func TestUnmarshalRejectsDuplicateKeys(t *testing.T) {
 		t.Fatal("expected duplicate-key error")
 	}
 }
+
+// An explicit empty array `servers = []` for a []struct field decodes to an
+// empty (non-nil) slice without error: Decompose keeps the empty array a leaf
+// (it can't tell an empty array-of-tables from an empty scalar array), so the
+// struct-slice decoder must accept the empty-array leaf rather than reject it
+// as a non-array-of-tables (#94, was a regression vs the CST-based decoder).
+func TestUnmarshalEmptyStructSlice(t *testing.T) {
+	var cfg ServersConfig
+	if _, err := UnmarshalDocument([]byte("title = \"config\"\nservers = []\n"), &cfg); err != nil {
+		t.Fatalf("UnmarshalDocument: %v", err)
+	}
+	if cfg.Servers == nil {
+		t.Fatal("Servers = nil, want empty non-nil slice")
+	}
+	if len(cfg.Servers) != 0 {
+		t.Fatalf("len(Servers) = %d, want 0", len(cfg.Servers))
+	}
+}

@@ -134,6 +134,39 @@ func TestDecomposeRejectsDuplicates(t *testing.T) {
 	}
 }
 
+func TestValueIsEmptyArray(t *testing.T) {
+	cases := []struct {
+		src  string
+		key  string
+		want bool
+	}{
+		{"xs = []\n", "xs", true},          // empty inline array
+		{"xs = [ ]\n", "xs", true},         // empty with interior whitespace
+		{"xs = [\n]\n", "xs", true},        // empty across a newline
+		{"xs = [1, 2]\n", "xs", false},     // scalar array leaf
+		{"xs = \"a\"\n", "xs", false},      // plain scalar leaf
+		{"xs = [{ a = 1 }]\n", "xs", false}, // inline array-of-tables → VArray, not a leaf
+		{"[xs]\nk = 1\n", "xs", false},     // table, not an array
+	}
+	for _, tc := range cases {
+		root, err := Parse([]byte(tc.src))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", tc.src, err)
+		}
+		model, err := Decompose(root)
+		if err != nil {
+			t.Fatalf("Decompose(%q): %v", tc.src, err)
+		}
+		v, ok := model.Get(tc.key)
+		if !ok {
+			t.Fatalf("Get(%q) from %q: not present", tc.key, tc.src)
+		}
+		if got := v.IsEmptyArray(); got != tc.want {
+			t.Errorf("IsEmptyArray(%q) = %v, want %v", tc.src, got, tc.want)
+		}
+	}
+}
+
 func TestDecomposeAcceptsValid(t *testing.T) {
 	// Same key in different scopes is fine; present-but-empty is preserved.
 	ok := []string{

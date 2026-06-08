@@ -10876,6 +10876,20 @@ func TestStandaloneDottedInArrayEntries(t *testing.T) {
 	}
 	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
 }
+
+// An explicit empty array "apps = []" for a []struct field decodes to an empty
+// (non-nil) slice and is consumed. Decompose keeps an empty array a leaf (it
+// can't tell an empty array-of-tables from an empty scalar array, #94), so the
+// generated array-table decoder must accept the empty-array leaf rather than
+// skip it — which left the field nil AND reported "apps" as undecoded.
+func TestEmptyArrayOfTables(t *testing.T) {
+	doc, err := DecodeConfig([]byte("apps = []\n"))
+	if err != nil { t.Fatalf("DecodeConfig: %v", err) }
+	d := doc.Data()
+	if d.Apps == nil { t.Fatal("Apps = nil, want empty non-nil slice") }
+	if len(d.Apps) != 0 { t.Fatalf("len(Apps) = %d, want 0", len(d.Apps)) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
 `)
 
 	cmd := exec.Command("go", "test", "-v", "./...")

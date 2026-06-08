@@ -264,6 +264,31 @@ func compModelArrayTable(ctx jenCtx, g *jen.Group, n cdArrayTable, tv *jen.State
 			compModelBody(ctx, lb, n.Children, jen.Id(ev), "")
 		})
 	})
+	compModelEmptyArrayLeaf(g, tv, n.TKey, fv, n.Tgt, jenType(n.TypeName, n.ImportPath), n.SlicePtr)
+}
+
+// compModelEmptyArrayLeaf emits the `key = []` branch for a struct-slice field.
+// Decompose keeps an empty array a VLeaf (an empty `[]` can't be told apart from
+// an empty scalar array), so the VArray reader above misses it. Here we consume
+// the leaf and assign an empty (non-nil) slice, so an explicit empty
+// array-of-tables decodes to an empty slice instead of leaking as an undecoded
+// key (#94). elem is the slice element type; slicePtr makes the slice []*elem.
+func compModelEmptyArrayLeaf(g *jen.Group, tv *jen.Statement, key TOMLKey, fv string, tgt TargetPath, elem *jen.Statement, slicePtr bool) {
+	v := "_ea" + key.VarSuffix()
+	g.If(
+		jen.List(jen.Id(v), jen.Id("_eaok")).Op(":=").Add(tv.Clone()).Dot("Get").Call(jen.Lit(key.BareKey())),
+		jen.Id("_eaok").Op("&&").Id(v).Dot("IsEmptyArray").Call(),
+	).BlockFunc(func(b *jen.Group) {
+		if fv != "" {
+			b.Id(fv).Op("=").True()
+		}
+		b.Add(jen.Id(v).Dot("MarkConsumed").Call())
+		lit := jen.Index()
+		if slicePtr {
+			lit = lit.Op("*")
+		}
+		b.Add(tgt.Jen()).Op("=").Add(lit.Add(elem).Values())
+	})
 }
 
 // compModelMapScalar decodes map[string]string: each leaf entry that extracts to
@@ -394,6 +419,7 @@ func compModelDelSlice(ctx jenCtx, g *jen.Group, n cdDelSlice, tv *jen.Statement
 			}
 		})
 	})
+	compModelEmptyArrayLeaf(g, tv, n.TKey, fv, n.Tgt, jen.Qual(n.ImportPath, st), n.SlicePtr)
 }
 
 // compModelDelMap delegates a cross-package map[string]Struct per entry.
