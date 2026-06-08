@@ -342,3 +342,50 @@ func TestMarshalNestedNoChangesPreserves(t *testing.T) {
 		t.Fatalf("expected byte-for-byte identical output.\nexpected:\n%s\ngot:\n%s", string(input), string(out))
 	}
 }
+
+// Migrating decode onto cst.Decompose (ADR 2026-06-07) makes the reflection
+// unmarshal accept every TOML spelling, not just the canonical one.
+type SpellConfig struct {
+	Storage StorageConfig `toml:"storage"`
+	Servers []SpellServer `toml:"servers"`
+}
+
+type SpellServer struct {
+	Name string `toml:"name"`
+	Port int    `toml:"port"`
+}
+
+func TestUnmarshalAcceptsAllSpellings(t *testing.T) {
+	cases := map[string]string{
+		"sub-table":       "[storage]\nbase_path = \"/data\"\nhash_buckets = [1, 2]\n",
+		"inline-table":    "storage = { base_path = \"/data\", hash_buckets = [1, 2] }\n",
+		"dotted-key":      "storage.base_path = \"/data\"\nstorage.hash_buckets = [1, 2]\n",
+		"array-of-tables": "[[servers]]\nname = \"a\"\nport = 1\n[[servers]]\nname = \"b\"\nport = 2\n",
+		"inline-array":    "servers = [ { name = \"a\", port = 1 }, { name = \"b\", port = 2 } ]\n",
+	}
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			var cfg SpellConfig
+			if _, err := UnmarshalDocument([]byte(input), &cfg); err != nil {
+				t.Fatalf("UnmarshalDocument: %v", err)
+			}
+			switch name {
+			case "array-of-tables", "inline-array":
+				if len(cfg.Servers) != 2 || cfg.Servers[0].Name != "a" || cfg.Servers[1].Port != 2 {
+					t.Fatalf("servers=%+v", cfg.Servers)
+				}
+			default:
+				if cfg.Storage.BasePath != "/data" || len(cfg.Storage.HashBuckets) != 2 || cfg.Storage.HashBuckets[1] != 2 {
+					t.Fatalf("storage=%+v", cfg.Storage)
+				}
+			}
+		})
+	}
+}
+
+func TestUnmarshalRejectsDuplicateKeys(t *testing.T) {
+	var cfg Config
+	if _, err := UnmarshalDocument([]byte("name = \"a\"\nname = \"b\"\n"), &cfg); err == nil {
+		t.Fatal("expected duplicate-key error")
+	}
+}

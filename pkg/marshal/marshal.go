@@ -1,7 +1,6 @@
 package marshal
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -29,7 +28,11 @@ func UnmarshalDocument(input []byte, v any) (*DocumentHandle, error) {
 		return nil, err
 	}
 
-	if err := decodeStruct(doc, rv.Elem(), ""); err != nil {
+	model, err := cst.Decompose(doc.Root())
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeStructValue(model, rv.Elem()); err != nil {
 		return nil, err
 	}
 
@@ -49,7 +52,11 @@ func UnmarshalReader(r io.Reader, v any) (*DocumentHandle, error) {
 		return nil, err
 	}
 
-	if err := decodeStruct(doc, rv.Elem(), ""); err != nil {
+	model, err := cst.Decompose(doc.Root())
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeStructValue(model, rv.Elem()); err != nil {
 		return nil, err
 	}
 
@@ -90,207 +97,152 @@ func qualifiedKey(prefix, name string) string {
 	return prefix + "." + name
 }
 
-func decodeStruct(doc *document.Document, rv reflect.Value, prefix string) error {
+// decodeStructValue populates rv (a struct) from the normalized value model
+// table v: every tagged field present in v is decoded; absent fields stay zero.
+// Reading from the model (cst.Decompose) means the reflection unmarshal accepts
+// every TOML spelling — inline tables, dotted keys, inline arrays, implicit
+// parents — for free, the same robustness the generated decoder gained (ADR
+// 2026-06-07). Encode (MarshalDocument) is unchanged and stays CST-based.
+func decodeStructValue(v *cst.Value, rv reflect.Value) error {
 	rt := rv.Type()
-
 	for i := range rt.NumField() {
-		field := rt.Field(i)
-		name, ok := fieldTomlKey(field)
+		name, ok := fieldTomlKey(rt.Field(i))
 		if !ok {
 			continue
 		}
-
-		fv := rv.Field(i)
-		key := qualifiedKey(prefix, name)
-
-		if field.Type.Kind() == reflect.Struct {
-			if err := decodeStruct(doc, fv, key); err != nil {
-				return err
-			}
+		child, present := v.Get(name)
+		if !present {
 			continue
 		}
-
-		if err := decodeField(doc, fv, key); err != nil {
+		if err := decodeFieldValue(child, rv.Field(i), name); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
-func isNotFoundError(err error) bool {
-	return errors.Is(err, document.ErrNotFound)
-}
-
-func decodeField(doc *document.Document, fv reflect.Value, key string) error {
+func decodeFieldValue(v *cst.Value, fv reflect.Value, key string) error {
 	switch fv.Kind() {
+	case reflect.Struct:
+		if v.Kind != cst.VTable {
+			return typeErr(key, "table")
+		}
+		return decodeStructValue(v, fv)
 	case reflect.String:
-		v, err := document.Get[string](doc, key)
-		if isNotFoundError(err) {
-			return nil
+		s, ok := leafExtract(v, cst.ExtractString)
+		if !ok {
+			return typeErr(key, "string")
 		}
-		if err != nil {
-			return err
-		}
-		fv.SetString(v)
-
+		fv.SetString(s)
 	case reflect.Int:
-		v, err := document.Get[int](doc, key)
-		if isNotFoundError(err) {
-			return nil
+		n, ok := leafExtract(v, cst.ExtractInt)
+		if !ok {
+			return typeErr(key, "int")
 		}
-		if err != nil {
-			return err
-		}
-		fv.SetInt(int64(v))
-
+		fv.SetInt(int64(n))
 	case reflect.Int64:
-		v, err := document.Get[int64](doc, key)
-		if isNotFoundError(err) {
-			return nil
+		n, ok := leafExtract(v, cst.ExtractInt64)
+		if !ok {
+			return typeErr(key, "int64")
 		}
-		if err != nil {
-			return err
+		fv.SetInt(n)
+	case reflect.Uint64:
+		n, ok := leafExtract(v, cst.ExtractUint64)
+		if !ok {
+			return typeErr(key, "uint64")
 		}
-		fv.SetInt(v)
-
+		fv.SetUint(n)
 	case reflect.Float64:
-		v, err := document.Get[float64](doc, key)
-		if isNotFoundError(err) {
-			return nil
+		f, ok := leafExtract(v, cst.ExtractFloat64)
+		if !ok {
+			return typeErr(key, "float64")
 		}
-		if err != nil {
-			return err
-		}
-		fv.SetFloat(v)
-
+		fv.SetFloat(f)
 	case reflect.Bool:
-		v, err := document.Get[bool](doc, key)
-		if isNotFoundError(err) {
-			return nil
+		b, ok := leafExtract(v, cst.ExtractBool)
+		if !ok {
+			return typeErr(key, "bool")
 		}
-		if err != nil {
-			return err
-		}
-		fv.SetBool(v)
-
+		fv.SetBool(b)
 	case reflect.Slice:
-		return decodeSliceField(doc, fv, key)
-
+		return decodeSliceValue(v, fv, key)
 	default:
 		return fmt.Errorf("unsupported field type %s for key %q", fv.Kind(), key)
 	}
-
 	return nil
 }
 
-func decodeSliceField(doc *document.Document, fv reflect.Value, key string) error {
+func decodeSliceValue(v *cst.Value, fv reflect.Value, key string) error {
 	elemType := fv.Type().Elem()
-
-	switch elemType.Kind() {
-	case reflect.Int:
-		v, err := document.Get[[]int](doc, key)
-		if err != nil {
-			return err
+	if elemType.Kind() == reflect.Struct {
+		if v.Kind != cst.VArray {
+			return typeErr(key, "array of tables")
 		}
-		fv.Set(reflect.ValueOf(v))
-
-	case reflect.String:
-		v, err := document.Get[[]string](doc, key)
-		if err != nil {
-			return err
+		slice := reflect.MakeSlice(fv.Type(), len(v.Items), len(v.Items))
+		for i := range v.Items {
+			if err := decodeStructValue(&v.Items[i], slice.Index(i)); err != nil {
+				return fmt.Errorf("%q[%d]: %w", key, i, err)
+			}
 		}
-		fv.Set(reflect.ValueOf(v))
-
-	case reflect.Struct:
-		return decodeStructSliceField(doc, fv, key)
-
-	default:
-		return fmt.Errorf("unsupported slice element type %s for key %q", elemType.Kind(), key)
-	}
-
-	return nil
-}
-
-func decodeStructSliceField(doc *document.Document, fv reflect.Value, key string) error {
-	nodes := doc.FindArrayTableNodes(key)
-	if len(nodes) == 0 {
+		fv.Set(slice)
 		return nil
 	}
 
-	slice := reflect.MakeSlice(fv.Type(), len(nodes), len(nodes))
-	elemType := fv.Type().Elem()
-
-	for i, node := range nodes {
-		elem := slice.Index(i)
-		for j := range elemType.NumField() {
-			field := elemType.Field(j)
-			name, ok := fieldTomlKey(field)
-			if !ok {
-				continue
-			}
-			fieldVal := elem.Field(j)
-			if err := decodeContainerField(doc, node, fieldVal, name); err != nil {
-				return fmt.Errorf("field %q in %q[%d]: %w", name, key, i, err)
-			}
+	switch elemType.Kind() {
+	case reflect.Int:
+		s, ok := leafExtract(v, cst.ExtractIntSlice)
+		if !ok {
+			return typeErr(key, "[]int")
 		}
+		fv.Set(reflect.ValueOf(s))
+	case reflect.Int64:
+		s, ok := leafExtract(v, cst.ExtractInt64Slice)
+		if !ok {
+			return typeErr(key, "[]int64")
+		}
+		fv.Set(reflect.ValueOf(s))
+	case reflect.Uint64:
+		s, ok := leafExtract(v, cst.ExtractUint64Slice)
+		if !ok {
+			return typeErr(key, "[]uint64")
+		}
+		fv.Set(reflect.ValueOf(s))
+	case reflect.Float64:
+		s, ok := leafExtract(v, cst.ExtractFloat64Slice)
+		if !ok {
+			return typeErr(key, "[]float64")
+		}
+		fv.Set(reflect.ValueOf(s))
+	case reflect.Bool:
+		s, ok := leafExtract(v, cst.ExtractBoolSlice)
+		if !ok {
+			return typeErr(key, "[]bool")
+		}
+		fv.Set(reflect.ValueOf(s))
+	case reflect.String:
+		s, ok := leafExtract(v, cst.ExtractStringSlice)
+		if !ok {
+			return typeErr(key, "[]string")
+		}
+		fv.Set(reflect.ValueOf(s))
+	default:
+		return fmt.Errorf("unsupported slice element type %s for key %q", elemType.Kind(), key)
 	}
-
-	fv.Set(slice)
 	return nil
 }
 
-func decodeContainerField(doc *document.Document, container *cst.Node, fv reflect.Value, key string) error {
-	switch fv.Kind() {
-	case reflect.String:
-		v, err := document.GetFromContainer[string](doc, container, key)
-		if isNotFoundError(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fv.SetString(v)
-	case reflect.Int:
-		v, err := document.GetFromContainer[int](doc, container, key)
-		if isNotFoundError(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fv.SetInt(int64(v))
-	case reflect.Int64:
-		v, err := document.GetFromContainer[int64](doc, container, key)
-		if isNotFoundError(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fv.SetInt(v)
-	case reflect.Float64:
-		v, err := document.GetFromContainer[float64](doc, container, key)
-		if isNotFoundError(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fv.SetFloat(v)
-	case reflect.Bool:
-		v, err := document.GetFromContainer[bool](doc, container, key)
-		if isNotFoundError(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fv.SetBool(v)
-	default:
-		return fmt.Errorf("unsupported field type %s", fv.Kind())
+// leafExtract applies a cst scalar/slice extractor to a model leaf value,
+// returning false (so the caller reports a type error) when v is not a leaf.
+func leafExtract[T any](v *cst.Value, extract func(*cst.Node) (T, bool)) (T, bool) {
+	if v.Kind != cst.VLeaf {
+		var zero T
+		return zero, false
 	}
-	return nil
+	return extract(v.Leaf)
+}
+
+func typeErr(key, want string) error {
+	return fmt.Errorf("key %q: cannot decode as %s", key, want)
 }
 
 func encodeStruct(doc *document.Document, rv reflect.Value, prefix string) error {
@@ -453,4 +405,3 @@ func encodeFieldValue(fv reflect.Value) any {
 		return nil
 	}
 }
-
