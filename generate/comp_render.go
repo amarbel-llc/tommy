@@ -1609,7 +1609,7 @@ func compEmitStruct(f *jen.File, si StructInfo) {
 	f.Type().Id(dt).StructFunc(func(g *jen.Group) {
 		g.Id("data").Id(si.Name)
 		g.Id("cstDoc").Op("*").Qual(docPkg, "Document")
-		g.Id("consumed").Map(jen.String()).Bool()
+		g.Id("model").Op("*").Qual(cstPkg, "Value")
 		for _, fi := range si.Fields {
 			if isSamePackageSliceStruct(fi) {
 				g.Id(unexport(fi.GoName)).Index().Id(unexport(sliceStructName(fi)) + "Handle")
@@ -1621,8 +1621,11 @@ func compEmitStruct(f *jen.File, si StructInfo) {
 		jen.Return(jen.Op("&").Id("d").Dot("data")),
 	)
 	compEmitEncode(f, si, dt)
+	// Undecoded reports key-paths present in the input that no field consumed,
+	// computed on the normalized model (spelling-independent, ADR 2026-06-07).
 	f.Func().Params(jen.Id("d").Op("*").Id(dt)).Id("Undecoded").Params().Index().String().Block(
-		jen.Return(jen.Qual(docPkg, "UndecodedKeys").Call(jen.Id("d").Dot("cstDoc").Dot("Root").Call(), jen.Id("d").Dot("consumed"))),
+		jen.If(jen.Id("d").Dot("model").Op("==").Nil()).Block(jen.Return(jen.Nil())),
+		jen.Return(jen.Id("d").Dot("model").Dot("Undecoded").Call()),
 	)
 	for _, m := range []struct{ n, d string }{
 		{"Comment", "GetComment"},
@@ -1650,19 +1653,17 @@ func compEmitDecode(f *jen.File, si StructInfo, dt string) {
 	f.Func().Id("Decode"+si.Name).Params(jen.Id("input").Index().Byte()).Params(jen.Op("*").Id(dt), jen.Error()).BlockFunc(func(g *jen.Group) {
 		g.List(jen.Id("doc"), jen.Err()).Op(":=").Qual(docPkg, "Parse").Call(jen.Id("input"))
 		g.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
-		// Reject a key defined more than once in any scope, in every spelling
-		// (#110): the distributed guards miss a duplicate inline-table outer key
-		// (`mytable = { ... }` twice) and a duplicate container field generally.
-		g.If(jen.Err().Op(":=").Qual(cstPkg, "CheckNoDuplicateKeys").Call(jen.Id("doc").Dot("Root").Call()), jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
+		// Normalize every TOML spelling to one value model; this also rejects
+		// duplicate keys in any spelling (ADR 2026-06-07, subsuming #110).
+		g.List(jen.Id("model"), jen.Err()).Op(":=").Qual(cstPkg, "Decompose").Call(jen.Id("doc").Dot("Root").Call())
+		g.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
 		g.Empty()
 		g.Id("d").Op(":=").Op("&").Id(dt).Values(jen.Dict{
-			jen.Id("cstDoc"):   jen.Id("doc"),
-			jen.Id("consumed"): jen.Make(jen.Map(jen.String()).Bool()),
+			jen.Id("cstDoc"): jen.Id("doc"),
+			jen.Id("model"):  jen.Id("model"),
 		})
 		g.Empty()
-		for _, s := range compRenderDecodeBody(ctx, nodes, jen.Id("d").Dot("cstDoc").Dot("Root").Call(), "") {
-			g.Add(s)
-		}
+		compModelBody(ctx, g, nodes, jen.Id("model"), "")
 		if si.Validatable {
 			g.If(jen.Err().Op(":=").Id("d").Dot("data").Dot("Validate").Call(), jen.Err().Op("!=").Nil()).Block(
 				jen.Return(jen.Nil(), jen.Qual("fmt", "Errorf").Call(jen.Lit("validation failed: %w"), jen.Err())),
@@ -1691,21 +1692,15 @@ func compEmitEncode(f *jen.File, si StructInfo, dt string) {
 func compEmitDecodeInto(f *jen.File, si StructInfo) {
 	ctx := freeJenCtx()
 	nodes := foldCompDecode(&si, compPos{tkey: PrefixedKey(""), tgt: LocalTarget("data"), seq: new(int)}, false)
+	// Delegated decode (ADR 2026-06-07): the caller passes the already-normalized
+	// sub-Value for this struct's field, so DecodeInto just folds the type algebra
+	// over it — no doc/container/consumed/prefix threading, no scope resolution.
+	// Marking seen on sub flows back to the parent's model for Undecoded.
 	f.Func().Id("Decode"+si.Name+"Into").Params(
 		jen.Id("data").Op("*").Id(si.Name),
-		jen.Id("doc").Op("*").Qual(docPkg, "Document"),
-		jen.Id("container").Op("*").Qual(cstPkg, "Node"),
-		jen.Id("consumed").Map(jen.String()).Bool(),
-		jen.Id("keyPrefix").String(),
+		jen.Id("sub").Op("*").Qual(cstPkg, "Value"),
 	).Error().BlockFunc(func(g *jen.Group) {
-		// Decode V's fields scoped to the passed container (#99). The delegated
-		// decoder always runs within a container (a [[slice]] entry or a [field]
-		// table), so nested table fields must resolve relative to it via
-		// FindChildTable(root, container, key) — not by scanning the document root,
-		// which makes every array-table entry pick up the first entry's sub-table.
-		// compScopedBody is the same scope-relative path same-package array-tables
-		// use (the #86/#87 fix); leaves still scan container.Children unchanged.
-		compScopedBody(ctx, g, nodes, jen.Id("container"), "")
+		compModelBody(ctx, g, nodes, jen.Id("sub"), "")
 		g.Return(jen.Nil())
 	})
 }

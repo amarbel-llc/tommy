@@ -5802,20 +5802,24 @@ type Settings struct {
 import (
 	"testing"
 
+	"github.com/amarbel-llc/tommy/pkg/cst"
 	"github.com/amarbel-llc/tommy/pkg/document"
 )
+
+func decompose(t *testing.T, src []byte) *cst.Value {
+	t.Helper()
+	doc, err := document.Parse(src)
+	if err != nil { t.Fatal(err) }
+	m, err := cst.Decompose(doc.Root())
+	if err != nil { t.Fatal(err) }
+	return m
+}
 
 func TestDecodeIntoRoundTrip(t *testing.T) {
 	input := []byte("host = \"localhost\"\nport = 8080\n")
 
-	doc, err := document.Parse(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	var data Settings
-	consumed := make(map[string]bool)
-	if err := DecodeSettingsInto(&data, doc, doc.Root(), consumed, ""); err != nil {
+	if err := DecodeSettingsInto(&data, decompose(t, input)); err != nil {
 		t.Fatalf("DecodeSettingsInto: %v", err)
 	}
 
@@ -5826,20 +5830,17 @@ func TestDecodeIntoRoundTrip(t *testing.T) {
 		t.Fatalf("Port = %d, want 8080", data.Port)
 	}
 
+	// EncodeFrom still edits a CST node; round-trip the encode path on a fresh doc.
+	doc, err := document.Parse(input)
+	if err != nil { t.Fatal(err) }
 	data.Port = 9090
 	if err := EncodeSettingsFrom(&data, doc, doc.Root()); err != nil {
 		t.Fatalf("EncodeSettingsFrom: %v", err)
 	}
 
 	out := doc.Bytes()
-	doc2, err := document.Parse(out)
-	if err != nil {
-		t.Fatalf("re-parse: %v", err)
-	}
-
 	var data2 Settings
-	consumed2 := make(map[string]bool)
-	if err := DecodeSettingsInto(&data2, doc2, doc2.Root(), consumed2, ""); err != nil {
+	if err := DecodeSettingsInto(&data2, decompose(t, out)); err != nil {
 		t.Fatalf("re-decode: %v", err)
 	}
 	if data2.Port != 9090 {
@@ -10780,6 +10781,7 @@ type App struct {
 import (
 	"testing"
 
+	"github.com/amarbel-llc/tommy/pkg/cst"
 	"github.com/amarbel-llc/tommy/pkg/document"
 )
 
@@ -10805,21 +10807,22 @@ func TestStandaloneDottedValueStruct(t *testing.T) {
 	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
 }
 
-// The keyPrefix-parameterized Into variant must consume the standalone dotted
-// header the same way.
+// The DecodeInto variant decodes from an already-normalized sub-value; the
+// standalone dotted header is materialized into the model by Decompose, so the
+// implicit parent resolves with no special handling in DecodeInto.
 func TestStandaloneDottedDecodeInto(t *testing.T) {
 	input := []byte("[direnv.dotenv]\nFOO = \"bar\"\n")
 	doc, err := document.Parse(input)
 	if err != nil { t.Fatal(err) }
+	model, err := cst.Decompose(doc.Root())
+	if err != nil { t.Fatal(err) }
 	var data Config
-	consumed := make(map[string]bool)
-	if err := DecodeConfigInto(&data, doc, doc.Root(), consumed, ""); err != nil {
+	if err := DecodeConfigInto(&data, model); err != nil {
 		t.Fatalf("DecodeConfigInto: %v", err)
 	}
 	if data.Direnv == nil { t.Fatal("Direnv is nil") }
 	if data.Direnv.Dotenv["FOO"] != "bar" { t.Fatalf("Dotenv[FOO]=%q, want bar", data.Direnv.Dotenv["FOO"]) }
-	if !consumed["direnv.dotenv"] { t.Fatalf("direnv.dotenv not consumed: %v", consumed) }
-	if !consumed["direnv.dotenv.FOO"] { t.Fatalf("direnv.dotenv.FOO not consumed: %v", consumed) }
+	if u := model.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
 }
 
 // The explicit-parent spelling must keep working and produce the same value.

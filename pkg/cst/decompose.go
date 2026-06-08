@@ -41,8 +41,12 @@ type Value struct {
 	Leaf   *Node   // VLeaf: the source NodeKeyValue (Extract* operate on it)
 	Fields []Field // VTable: in first-seen order
 	Items  []Value // VArray: entries, each Kind==VTable
+	Node   *Node   // source structural node (header table / array-table entry /
+	//   inline table), for round-trip-stable encode handles; nil at the root
 
 	explicit bool // VTable: defined directly by a header (for #92 dup detection)
+	seen     bool // the decoder recognized this value's key (descend in Undecoded)
+	full     bool // this value AND its whole subtree are accounted for (leaf / map)
 }
 
 // Field is one entry of a VTable.
@@ -61,6 +65,52 @@ func (v *Value) Get(key string) (*Value, bool) {
 	return nil, false
 }
 
+// MarkSeen records that the decoder recognized this value's key. For a struct
+// table or array it means "entered" — Undecoded still descends to surface any
+// unconsumed child (an unknown struct field). Generated decoders call it.
+func (v *Value) MarkSeen() { v.seen = true }
+
+// MarkConsumed records that this value AND its entire subtree are accounted for
+// — a scalar leaf the decoder read, or a map field that absorbs every entry.
+// Undecoded does not descend a consumed value. Generated decoders call it.
+func (v *Value) MarkConsumed() { v.seen = true; v.full = true }
+
+// Undecoded returns the dotted key-paths present in the model that no decoder
+// consumed — the spelling-independent replacement for document.UndecodedKeys.
+// The receiver is treated as entered (its fields are walked); a field whose
+// value was never seen is reported (without descending), a seen struct/array is
+// descended, and a consumed value contributes nothing.
+func (v *Value) Undecoded() []string {
+	var out []string
+	v.collectUndecoded("", &out)
+	return out
+}
+
+func (v *Value) collectUndecoded(prefix string, out *[]string) {
+	if v.full {
+		return
+	}
+	switch v.Kind {
+	case VTable:
+		for i := range v.Fields {
+			f := &v.Fields[i]
+			p := joinPath(prefix, []string{f.Key})
+			if !f.Val.seen {
+				*out = append(*out, p)
+			} else {
+				f.Val.collectUndecoded(p, out)
+			}
+		}
+	case VArray:
+		for i := range v.Items {
+			it := &v.Items[i]
+			if it.seen {
+				it.collectUndecoded(fmt.Sprintf("%s[%d]", prefix, i), out)
+			}
+		}
+	}
+}
+
 // Decompose builds the canonical value model from a parsed document root.
 func Decompose(root *Node) (*Value, error) {
 	t := &Value{Kind: VTable, explicit: true}
@@ -76,6 +126,7 @@ func Decompose(root *Node) (*Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			target.Node = c
 			if err := mergeBody(target, c, dotted(segs)); err != nil {
 				return nil, err
 			}
@@ -85,6 +136,7 @@ func Decompose(root *Node) (*Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			entry.Node = c
 			if err := mergeBody(entry, c, dotted(segs)); err != nil {
 				return nil, err
 			}
@@ -195,7 +247,7 @@ func decomposeValue(kv *Node, path string) (Value, error) {
 	}
 	switch v.Kind {
 	case NodeInlineTable:
-		t := Value{Kind: VTable, explicit: true}
+		t := Value{Kind: VTable, explicit: true, Node: v}
 		if err := mergeBody(&t, v, path); err != nil {
 			return Value{}, err
 		}
@@ -204,7 +256,7 @@ func decomposeValue(kv *Node, path string) (Value, error) {
 		if entries, ok := inlineTableElements(v); ok {
 			arr := Value{Kind: VArray}
 			for _, e := range entries {
-				entry := Value{Kind: VTable, explicit: true}
+				entry := Value{Kind: VTable, explicit: true, Node: e}
 				if err := mergeBody(&entry, e, path+"[]"); err != nil {
 					return Value{}, err
 				}

@@ -335,13 +335,18 @@ func RespellInlineTables(toml []byte) ([]byte, error) {
 // and bare-key bodies, and only when no other table shares the `a` prefix (TOML
 // forbids redefining a table, so `a.name = ...` alongside `[a.b]` would be
 // illegal). Anything else is left canonical. No-op when nothing qualifies.
+//
+// The emitted `a.x = v` dotted key-values are HOISTED above the first remaining
+// table header: a root-level key-value after a `[table]` binds to that table,
+// so a dotted key for a late-positioned `[a]` would otherwise rebind under a
+// preceding header (changing the value). Mirrors RespellInlineTables' hoist.
 func RespellDottedKeys(toml []byte) ([]byte, error) {
 	root, err := Parse(toml)
 	if err != nil {
 		return nil, err
 	}
 	orig := root.Children
-	var out []*Node
+	var out, hoist []*Node
 	for _, node := range orig {
 		if node.Kind != NodeTable || !tableIsLeaf(node) || tableHasPrefixChild(orig, node) {
 			out = append(out, node)
@@ -373,22 +378,36 @@ func RespellDottedKeys(toml []byte) ([]byte, error) {
 		for _, kv := range kvs {
 			key, value := kvKeyAndValue(kv)
 			leaf := StripQuotes(string(key.Raw))
-			out = append(out, dottedKeyKV([]string{prefix, leaf}, value))
+			hoist = append(hoist, dottedKeyKV([]string{prefix, leaf}, value))
 		}
 	}
-	root.Children = out
+	if len(hoist) == 0 {
+		return root.Bytes(), nil
+	}
+	at := firstHeaderIndex(out)
+	spliced := make([]*Node, 0, len(out)+len(hoist))
+	spliced = append(spliced, out[:at]...)
+	spliced = append(spliced, hoist...)
+	spliced = append(spliced, out[at:]...)
+	root.Children = spliced
 	return root.Bytes(), nil
 }
 
 // RespellImplicitParents removes a bare `[parent]` header whose body is empty
-// when at least one deeper `[parent.x]` / `[[parent.x]]` header exists — the
-// standalone-dotted spelling (#113/#64/#117). Per the TOML spec a dotted header
-// defines its parent tables implicitly, so an empty `[parent]` is redundant and
-// may be dropped; the encoder never produces this form (it always emits the bare
-// parent), so the round-trip fuzzers never reach it. Only EMPTY-bodied parents
-// are removed — one carrying its own key-values would lose them. Chains collapse
-// (`[a]` then `[a.b]`, both empty, both drop, leaving `[a.b.c]`). A no-op when
-// nothing qualifies.
+// AND whose immediately-following header extends it (`[parent.x]` /
+// `[[parent.x]]`) — the standalone-dotted spelling (#113/#64/#117). Per the TOML
+// spec a dotted header defines its parent tables implicitly, so such a `[parent]`
+// is redundant; the encoder never produces this form (it always emits the bare
+// parent), so the round-trip fuzzers never reach it.
+//
+// The "immediately following" test (rather than a document-wide prefix scan) is
+// what makes the rewrite VALUE-preserving across array-of-tables: canonical
+// output always places a table's sub-tables right after it, so an empty
+// `[parent]` whose next header does NOT extend it is the sole (empty) definition
+// in its scope — e.g. an empty map entry in one `[[xs]]` entry whose same-keyed
+// sibling in ANOTHER entry has deeper children — and must be kept. Only
+// empty-bodied parents are removed (one with key-values would lose them); chains
+// collapse. A no-op when nothing qualifies.
 func RespellImplicitParents(toml []byte) ([]byte, error) {
 	root, err := Parse(toml)
 	if err != nil {
@@ -396,14 +415,31 @@ func RespellImplicitParents(toml []byte) ([]byte, error) {
 	}
 	orig := root.Children
 	var out []*Node
-	for _, node := range orig {
-		if node.Kind == NodeTable && len(tableBodyKVs(node)) == 0 && tableHasPrefixChild(orig, node) {
+	for i, node := range orig {
+		if node.Kind == NodeTable && len(tableBodyKVs(node)) == 0 && nextHeaderExtends(orig, i) {
 			continue // empty parent of a deeper header: defined implicitly, drop it
 		}
 		out = append(out, node)
 	}
 	root.Children = out
 	return root.Bytes(), nil
+}
+
+// nextHeaderExtends reports whether the first table/array-table header AFTER
+// nodes[i] has nodes[i]'s header segments as a strict prefix — i.e. nodes[i]'s
+// own sub-table immediately follows it (the canonical layout). Scoped by
+// construction: a sibling header or a new array-table entry does not extend the
+// prefix, so it stops the scan.
+func nextHeaderExtends(nodes []*Node, i int) bool {
+	segs := TableHeaderSegments(nodes[i])
+	for j := i + 1; j < len(nodes); j++ {
+		switch nodes[j].Kind {
+		case NodeTable, NodeArrayTable:
+			cs := TableHeaderSegments(nodes[j])
+			return len(cs) > len(segs) && segmentsHavePrefix(cs, segs)
+		}
+	}
+	return false
 }
 
 // buildInlineArray assembles a `[ {...}, {...} ]` NodeArray of inline tables from
@@ -487,17 +523,19 @@ func RespellInlineArrays(toml []byte) ([]byte, error) {
 		return root.Bytes(), nil
 	}
 
-	// Emit: replace the FIRST [[key]] entry of each rewritable group with the
-	// inline-array KV, drop the rest.
+	// Emit: drop every rewritten [[key]] entry, and HOIST the inline-array
+	// key-values above the first remaining table header — a root-level
+	// `xs = [...]` after a `[table]` would bind to that table, rebinding the
+	// array under it (mirrors RespellInlineTables / RespellDottedKeys).
 	emitted := map[string]bool{}
-	var out []*Node
+	var out, hoist []*Node
 	for _, node := range orig {
 		if node.Kind == NodeArrayTable {
 			segs := TableHeaderSegments(node)
 			if len(segs) == 1 {
 				if kv, rw := inlineFor[segs[0]]; rw {
 					if !emitted[segs[0]] {
-						out = append(out, kv)
+						hoist = append(hoist, kv)
 						emitted[segs[0]] = true
 					}
 					continue
@@ -506,6 +544,11 @@ func RespellInlineArrays(toml []byte) ([]byte, error) {
 		}
 		out = append(out, node)
 	}
-	root.Children = out
+	at := firstHeaderIndex(out)
+	spliced := make([]*Node, 0, len(out)+len(hoist))
+	spliced = append(spliced, out[:at]...)
+	spliced = append(spliced, hoist...)
+	spliced = append(spliced, out[at:]...)
+	root.Children = spliced
 	return root.Bytes(), nil
 }

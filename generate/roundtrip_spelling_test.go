@@ -20,20 +20,15 @@ import (
 // canonical encoder output via the pkg/cst Respell* API and checks each spelling
 // against the decoder.
 //
-// Classification is DYNAMIC, from observed bytes — no shape prediction (a
-// shape-based expected-pass predicate was tried and empirically rejected:
-// whether a respell fires, and whether the fired form decodes, depends on
-// encoder details — nesting depth, leaf-ness, empty entries, quoted keys — that
-// a shallow shape walk cannot capture). Per variant:
-//
-//   - respell NO-OP (bytes unchanged): the variant TOML is literally the
-//     canonical encoding, so it MUST round-trip — a failure is a hard error
-//     (the real regression guard: a canonical form must always decode).
-//   - respell CHANGED: the alternative spelling may or may not be accepted by
-//     the decoder (most are not yet — #107 is staged fuzzer-first). The outcome
-//     is logged (xfail/xpass) but never fails CI. When a later cycle teaches the
-//     decoder a spelling, its own integration tests guard it; this fuzzer simply
-//     starts logging xpass for that shape.
+// EVERY variant is now GATING (ADR 2026-06-07): the decoder normalizes all TOML
+// spellings to one value model (cst.Decompose) before decoding, so every legal
+// spelling of a value MUST decode to that value with no undecoded keys — a
+// failure is a hard error, for the canonical form and every re-spelling alike.
+// This replaced the earlier staged xfail/xpass logging (the spelling axis used
+// to be enumerated per renderer, so most alternative spellings were not yet
+// accepted; #107 ran fuzzer-first). The respell functions must be
+// value-preserving for the gate to hold; spellingChanged guards that they
+// actually fire (else the run is canonical-only and proves nothing).
 //
 // Supersedes the hand-rolled duality audit (a throwaway `debug-duality-audit`
 // recipe) that probed these same dualities against a single fixed fixture.
@@ -53,9 +48,9 @@ var spellingVariants = []struct {
 }
 
 // respellHelperSrc is injected into the generated fuzz_test.go. checkSpelling
-// classifies one (case, variant) dynamically: a no-op respell must round-trip
-// (hard fail otherwise); a changed respell is logged as xfail/xpass and never
-// fails CI. Relies on the fixture importing pkg/cst and "bytes".
+// GATES one (case, variant): the spelling — canonical or re-spelled — must
+// decode to the expected value with no undecoded keys, else it is a hard
+// failure. Relies on the fixture importing pkg/cst and "bytes".
 const respellHelperSrc = `// spellingChanged counts how many (case, variant) pairs the respell actually
 // rewrote — non-zero proves the fuzzer exercised alternative spellings rather
 // than silently no-opping into a canonical-only run (a coverage guard).
@@ -63,21 +58,11 @@ var spellingChanged int
 
 func checkSpelling(t *testing.T, name, variant string, want any, canonical, respelled []byte, got any, decErr error, undecoded []string) {
 	t.Helper()
-	changed := !bytes.Equal(respelled, canonical)
-	pass := decErr == nil && len(undecoded) == 0 && reflect.DeepEqual(got, want)
-	if !changed {
-		// The rewrite was inapplicable, so this IS the canonical encoding: it must
-		// round-trip. A failure here is a real regression, not a spelling gap.
-		if !pass {
-			t.Fatalf("%s/%s: canonical (unchanged) form failed to round-trip\nerr=%v undecoded=%v\nwant: %s\ngot:  %s\ntoml:\n%s", name, variant, decErr, undecoded, dump(want), dump(got), respelled)
-		}
-		return
+	if !bytes.Equal(respelled, canonical) {
+		spellingChanged++
 	}
-	spellingChanged++
-	if pass {
-		t.Logf("%s/%s: xpass — alternative spelling now round-trips", name, variant)
-	} else {
-		t.Logf("%s/%s: xfail — alternative spelling not yet accepted", name, variant)
+	if decErr != nil || len(undecoded) != 0 || !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s/%s: spelling failed to round-trip\nerr=%v undecoded=%v\nwant: %s\ngot:  %s\ntoml:\n%s", name, variant, decErr, undecoded, dump(want), dump(got), respelled)
 	}
 }
 

@@ -196,6 +196,34 @@ func TestRespellDottedKeys(t *testing.T) {
 	})
 }
 
+func TestRespellDottedKeysHoistsBelowLateTable(t *testing.T) {
+	// A single-segment leaf table positioned AFTER another table must hoist its
+	// dotted keys ABOVE the first header — a root `a.x = v` after `[other]` would
+	// otherwise bind under [other], changing the value.
+	assertRespell(t, RespellDottedKeys,
+		"[[other]]\nk = \"v\"\n[a]\nx = 1\n",
+		"a.x = 1\n[[other]]\nk = \"v\"\n",
+	)
+}
+
+func TestRespellInlineArraysHoistsBelowLateTable(t *testing.T) {
+	assertRespell(t, RespellInlineArrays,
+		"[other]\nk = \"v\"\n[[xs]]\nh = \"a\"\n",
+		"xs = [ { h = \"a\" } ]\n[other]\nk = \"v\"\n",
+	)
+}
+
+func TestRespellImplicitParentsArrayScopeSafe(t *testing.T) {
+	// An empty map-entry table in one [[xs]] entry must NOT be dropped just
+	// because a SIBLING entry has a same-keyed entry with deeper children: the
+	// "immediately-following header extends it" rule keeps it (its own scope has
+	// no deeper child). Only [xs.m.b], whose own sub-table follows it, collapses.
+	assertRespell(t, RespellImplicitParents,
+		"[[xs]]\n[xs.m.a]\n[xs.m.b]\n[xs.m.b.inner]\nk = \"v\"\n[[xs]]\n[xs.m.a]\n[xs.m.a.inner]\nk = \"w\"\n",
+		"[[xs]]\n[xs.m.a]\n[xs.m.b.inner]\nk = \"v\"\n[[xs]]\n[xs.m.a.inner]\nk = \"w\"\n",
+	)
+}
+
 func TestRespellImplicitParents(t *testing.T) {
 	t.Run("empty parent of a sub-table is dropped", func(t *testing.T) {
 		assertRespell(t, RespellImplicitParents,
