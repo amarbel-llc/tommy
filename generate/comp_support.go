@@ -115,11 +115,6 @@ func freeEncCtx() encCtx {
 	}
 }
 
-// tableMatch is the root-scan predicate: _ch is a [key] table header.
-func tableMatch(key TOMLKey) *jen.Statement {
-	return jen.Id("_ch").Dot("Kind").Op("==").Qual(cstPkg, "NodeTable").Op("&&").Qual(cstPkg, "TableHeaderKey").Call(jen.Id("_ch")).Op("==").Add(key.Jen())
-}
-
 func delegateParts(typeName string) (string, string) {
 	if i := strings.IndexByte(typeName, '.'); i >= 0 {
 		return typeName[:i], typeName[i+1:]
