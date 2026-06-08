@@ -3,8 +3,10 @@ package generate
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -31,6 +33,16 @@ type FieldInfo struct {
 // Analyze inspects the given Go source file for structs with
 // //go:generate tommy generate directives and returns their metadata.
 func Analyze(dir, filename string) ([]StructInfo, error) {
+	// Ignore tommy's own output during analysis: a stale *_tommy.go (e.g. one
+	// still calling a cst symbol this version removed) must not block the very
+	// regeneration that would replace it — the codegen bootstrap catch-22 (#93).
+	// Analysis only needs the hand-written struct definitions, never the
+	// generated methods.
+	overlay, err := blankGeneratedOverlay(dir, filename)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &packages.Config{
 		Mode: packages.NeedName |
 			packages.NeedTypes |
@@ -38,8 +50,9 @@ func Analyze(dir, filename string) ([]StructInfo, error) {
 			packages.NeedSyntax |
 			packages.NeedFiles |
 			packages.NeedCompiledGoFiles,
-		Dir:  dir,
-		Fset: token.NewFileSet(),
+		Dir:     dir,
+		Fset:    token.NewFileSet(),
+		Overlay: overlay,
 	}
 
 	pkgs, err := packages.Load(cfg, ".")
@@ -53,7 +66,11 @@ func Analyze(dir, filename string) ([]StructInfo, error) {
 
 	pkg := pkgs[0]
 	if len(pkg.Errors) > 0 {
-		return nil, fmt.Errorf("package errors: %v", pkg.Errors[0])
+		return nil, fmt.Errorf("package does not type-check after ignoring generated *_tommy.go files: %v\n\n"+
+			"tommy generate ignores its own output, so this means non-generated code in the package fails to "+
+			"compile. If that code consumes the generated Decode/Encode API, isolate the //go:generate struct "+
+			"(and its *_tommy.go) into a package with no consumers, so a stale or removed generated file cannot "+
+			"block regeneration.", pkg.Errors[0])
 	}
 
 	var targetFile *ast.File
@@ -100,6 +117,51 @@ func Analyze(dir, filename string) ([]StructInfo, error) {
 	}
 
 	return infos, nil
+}
+
+// blankGeneratedOverlay returns a packages.Load overlay that replaces every
+// *_tommy.go in dir with an empty file in the same package, so packages.Load
+// type-checks the hand-written sources as if the generated output were absent.
+// Returns nil (no overlay) when there is no generated file yet — the
+// first-generation case.
+func blankGeneratedOverlay(dir, filename string) (map[string][]byte, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	matches, err := filepath.Glob(filepath.Join(absDir, "*_tommy.go"))
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	pkgName, err := packageName(filepath.Join(absDir, filename))
+	if err != nil {
+		return nil, err
+	}
+	target := filepath.Join(absDir, filename)
+	blank := []byte("package " + pkgName + "\n")
+	overlay := make(map[string][]byte, len(matches))
+	for _, m := range matches {
+		if m == target {
+			continue // never blank the source file carrying the //go:generate directive
+		}
+		overlay[m] = blank // glob over absDir yields absolute paths
+	}
+	if len(overlay) == 0 {
+		return nil, nil
+	}
+	return overlay, nil
+}
+
+// packageName reads only the package clause of a Go file.
+func packageName(path string) (string, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.PackageClauseOnly)
+	if err != nil {
+		return "", fmt.Errorf("reading package name from %s: %w", path, err)
+	}
+	return f.Name.Name, nil
 }
 
 func hasGenerateDirective(fset *token.FileSet, file *ast.File, decl *ast.GenDecl) bool {

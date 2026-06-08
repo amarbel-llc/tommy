@@ -10725,6 +10725,71 @@ func TestDuplicateGuardAllowsValid(t *testing.T) {
 	}
 }
 
+// Regression: a stale generated file from an older tommy — one that still calls
+// a cst symbol this version removed (e.g. the deleted FindChildTable) — must not
+// block regeneration. tommy generate ignores its own *_tommy.go output during
+// analysis, so `go generate` recovers in place for an isolated codegen package
+// (the #93 bootstrap catch-22 proud-mulberry hit during the rewrite migration).
+func TestIntegrationStaleGeneratedFileDoesNotBlockRegen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, dir, "go.mod", strings.Join([]string{
+		"module example.com/staleregen",
+		"",
+		"go 1.26",
+		"",
+		"require github.com/amarbel-llc/tommy v0.0.0",
+		"",
+		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"",
+	}, "\n"))
+
+	writeFixture(t, dir, "config.go", `package staleregen
+
+//go:generate tommy generate
+type Config struct {
+	Name string `+"`"+`toml:"name"`+"`"+`
+}
+`)
+
+	// A stale generated file from a prior tommy that calls a cst finder this
+	// version deleted: it does not compile and must not block regen.
+	writeFixture(t, dir, "config_tommy.go", `package staleregen
+
+import "github.com/amarbel-llc/tommy/pkg/cst"
+
+var _ = cst.FindChildTable
+`)
+
+	if err := Generate(dir, "config.go"); err != nil {
+		t.Fatalf("Generate must ignore the stale generated file, got: %v", err)
+	}
+
+	out, err := os.ReadFile(filepath.Join(dir, "config_tommy.go"))
+	if err != nil {
+		t.Fatalf("read regenerated file: %v", err)
+	}
+	if strings.Contains(string(out), "FindChildTable") {
+		t.Fatal("regenerated file still references the removed FindChildTable — it was not overwritten")
+	}
+
+	// The regenerated package must compile cleanly.
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), testGoEnv()...)
+	if buildOut, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("regenerated package failed to build: %v\n%s", err, buildOut)
+	}
+}
+
 // Regression for #113: a standalone dotted sub-table header ([direnv.dotenv]
 // with no bare [direnv] header) is valid TOML — the parent table is implicit —
 // but the generated decoder only ran the dotted-header consumption scan inside
