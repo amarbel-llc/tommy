@@ -1066,6 +1066,25 @@ func TestCommentInTable(t *testing.T) {
 	}
 }
 
+// Regression for #126: adding a new top-level key to a document whose leading
+// content is a comment must not splice the key onto the comment's line — the
+// comment's trailing newline is a sibling node, not part of the comment, so the
+// insert point must keep one newline between them.
+func TestSetNewKeyAfterLeadingComment(t *testing.T) {
+	doc, err := Parse([]byte("# my servers\n\n[[servers]]\nname = \"x\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.Set("title", "config"); err != nil {
+		t.Fatal(err)
+	}
+	got := string(doc.Bytes())
+	expected := "# my servers\ntitle = \"config\"\n\n[[servers]]\nname = \"x\"\n"
+	if got != expected {
+		t.Errorf("expected:\n%s\ngot:\n%s", expected, got)
+	}
+}
+
 func TestFindSubTablesExcludesGrandchildren(t *testing.T) {
 	input := []byte(`[calendars.tasks]
 url = "https://example.com"

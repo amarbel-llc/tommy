@@ -776,6 +776,13 @@ func keyValueInsertIndex(container *cst.Node) int {
 			for i > 0 && container.Children[i-1].Kind == cst.NodeNewline {
 				i--
 			}
+			// A comment's trailing newline is a SIBLING node, not part of the
+			// comment, so landing directly after the comment would splice the
+			// key-value onto the comment's line (#126). Keep one newline between
+			// them by stepping back past it.
+			if i > 0 && container.Children[i-1].Kind == cst.NodeComment {
+				i++
+			}
 			return i
 		}
 	}
