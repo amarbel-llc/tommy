@@ -25,7 +25,8 @@ just test-bats-nix-tag fmt   # a single tagged lane
 
 # Local fast iteration on the Go test suite (needs network for go/packages):
 go test -v -run TestName ./generate/   # a single Go test
-just debug-test TestName               # one Go test, verbose
+just debug-test TestName               # one Go test in ./generate/, verbose
+just debug-test TestName ./pkg/document/  # a library unit test (pkg arg; no network)
 ```
 
 **Codegen renderers & wire-format coverage.** Two jennifer-based renderers fold

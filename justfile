@@ -152,9 +152,12 @@ debug-summary:
     echo "$out" | grep -E 'undefined:|cannot use|syntax error|gofmt:' | sort | uniq -c | sort -rn | head -15
   fi
 
+# Run one Go test verbose (agent dev-loop: drill into a single failure). pkg
+# defaults to ./generate/; pass e.g. ./pkg/document/ or ./pkg/marshal/ for a
+# library unit test (those need no network, unlike the ./generate/ suite).
 [group('debug')]
-debug-test test_name:
-  go test -run '^{{test_name}}$' ./generate/ -v -count=1 || true
+debug-test test_name pkg='./generate/':
+  go test -run '^{{test_name}}$' {{pkg}} -v -count=1 || true
 
 # Run a ./generate test under the offline env the nix go-generate check
 # imposes (GOPROXY=off + TOMMY_TEST_OFFLINE against the already-populated local
