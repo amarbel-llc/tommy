@@ -140,6 +140,48 @@ and validate it against all four cells. What it confirmed and surfaced:
 - **The one load-bearing assumption is the encoder's zero-value policy** — see
   the sharpened open question below. Everything else fell out cleanly.
 
+## Progress (2026-06-09): fold hardened + first consumer wired
+
+The prototype was reviewed for robustness before any production wiring. Two
+concrete results:
+
+1. **A latent gap was found and fixed before it could bite.** The prototype
+   computed `EmptyDistinct` as `!elemIsStructish(elem)`, which mis-classified
+   `map[string]NamedMap` (a *nested* map): its entries encode as `[outer.key]`
+   sub-tables, so an empty outer map emits nothing and round-trips to nil — it has
+   **no** present-empty form, like `map[string]struct`. The negated
+   `elemIsStructish` returned `true` there. Had the prototype been wired into the
+   fuzzer as-is, the generator would have started emitting unrepresentable empty
+   nested maps → a red sweep → the next doom-loop iteration. The predicate is now
+   the positive `elemIsScalarLeaf` (scalar / ptr-to-scalar only; struct, delegated,
+   AND nested map/slice are non-leaf), with the mapmap cell pinned as a regression
+   test. This is the value of making the boundary first-class: the gap was a
+   *visible disagreement* between the fold and the empirically-green fuzzer, caught
+   at review instead of in production.
+
+2. **The fold is now load-bearing — wired into its first consumer.** The
+   round-trip fuzzer (`roundtrip_gen_test.go`) previously hand-coded "does this
+   shape have a present-empty form?" inline in `genValue` (the #94/#122 drift
+   site). It now DERIVES that decision from `reprOf(...).EmptyDistinct` via a
+   `td → spkType` bridge, so the fuzzer and the production fold consult one source
+   and cannot drift. A guard test (`TestFuzzerBridgeEmptyForm`) locks the bridge to
+   the fold across every fuzzer shape. Because this consumer is test-only, it
+   carries **zero production-codegen risk** while exercising the fold on every fuzz
+   sweep — exactly the "prove the model against real round-trips before trusting it
+   in production paths" step the ADR called for. The wiring is behaviour-preserving
+   (verified across seeds + the delegation/spelling fuzzers).
+
+The fold was also made **exhaustive**: `reprOf` / `elemIsScalarLeaf` panic on an
+unhandled `TypeExpr` constructor instead of silently inheriting a worst-case
+default, so adding a constructor to the algebra forces a deliberate
+representability decision (the panic can only fire under test today).
+
+**Still gated.** The encoder and both decoders are the *next* consumers — that is
+the change that retires the remaining hand-sync — but it remains blocked on
+pinning the encoder's zero-value policy (open question below). The fuzzer wiring
+is the safe first step that de-risks it: the fold is now validated by the sweep,
+not just by its own unit tests.
+
 ## Risks / open questions
 
 - **Decoder capability gap (#123).** Differential testing only works on the

@@ -323,6 +323,42 @@ func (g *shapeGen) goTypeIn(t *td, cur string) string {
 	panic("bad td kind: " + t.kind)
 }
 
+// toSpkType bridges a fuzzer type descriptor to the production TypeExpr algebra,
+// so genValue can consult the SAME representability fold (reprOf) the codegen is
+// built on instead of re-deriving "does this shape have a present-empty form?" in
+// a parallel hand-coded site — the four-way drift the representability ADR
+// (2026-06-08) targets. Only the structure reprOf inspects is reconstructed,
+// which is enough for EmptyDistinct / MayBeSilent.
+func (t *td) toSpkType() spkType {
+	switch t.kind {
+	case "scalar":
+		return spkScalar{Codec: codecPrim, TypeName: t.scalar}
+	case "text":
+		return spkScalar{Codec: codecText, TypeName: t.stName}
+	case "ptr":
+		return spkPtr{Elem: t.elem.toSpkType()}
+	case "slice":
+		return spkSlice{Elem: t.elem.toSpkType()}
+	case "map":
+		return spkMap{Elem: t.elem.toSpkType()}
+	case "mapmap":
+		// map[string]<named map[string]string> — a nested map (sub-tables).
+		return spkMap{Elem: spkMap{Elem: spkScalar{Codec: codecPrim, TypeName: "string"}}}
+	case "namedmapstruct":
+		// map[string]<struct> via a named alias; elem is the value struct.
+		return spkMap{Elem: t.elem.toSpkType()}
+	case "struct":
+		si := &StructInfo{Name: t.stName}
+		for _, f := range t.fields {
+			si.Fields = append(si.Fields, FieldInfo{
+				GoName: f.name, TomlKey: f.tomlKey, Type: f.t.toSpkType(), OmitEmpty: f.omitEmpty,
+			})
+		}
+		return spkStruct{TypeName: t.stName, InnerInfo: si}
+	}
+	panic("toSpkType: bad td kind " + t.kind)
+}
+
 // genValue emits a Go composite literal populating t. Every slice/map gets two
 // distinct entries so a swapped index or mis-scoped entry is caught by DeepEqual.
 func (g *shapeGen) genValue(t *td) string {
@@ -397,11 +433,12 @@ func (g *shapeGen) genValue(t *td) string {
 					fv = "nil"
 				}
 			case "map":
-				// map[string]string (scalar elem) has a present-empty form (an empty
-				// `[table]`), so it's faithful: generate nil AND empty. map[string]Struct
-				// uses `[m.key]` sub-tables with no distinct empty representation, so it
-				// normalizes nil≡empty — only nil there.
-				if f.t.elem.kind == "scalar" {
+				// Whether map[string]X has a present-empty form (an empty `[table]`)
+				// is DERIVED from the representability fold (reprOf.EmptyDistinct), not
+				// hand-detected here: true for map[string]scalar, false for
+				// map[string]struct (sub-tables). When distinct, both nil and empty
+				// round-trip faithfully; otherwise nil-only.
+				if reprOf(f.t.toSpkType(), f.omitEmpty).EmptyDistinct {
 					switch r := g.rng.Intn(4); {
 					case r == 0:
 						fv = "nil"
@@ -412,11 +449,11 @@ func (g *shapeGen) genValue(t *td) string {
 					fv = "nil"
 				}
 			case "slice":
-				primElem := f.t.elem.kind == "scalar" ||
-					(f.t.elem.kind == "ptr" && f.t.elem.elem.kind == "scalar")
-				if primElem {
-					// A primitive slice distinguishes nil (key omitted) from empty
-					// (`= []`) — exercise both.
+				// []scalar / []*scalar distinguishes nil (key omitted) from empty
+				// (`= []`); an array-of-tables ([]struct / []*struct) has no
+				// present-empty form. That distinction is the fold's EmptyDistinct,
+				// not a hand-coded element-kind check (kept in sync via the bridge).
+				if reprOf(f.t.toSpkType(), f.omitEmpty).EmptyDistinct {
 					switch r := g.rng.Intn(4); {
 					case r == 0:
 						fv = "nil"
