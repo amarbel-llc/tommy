@@ -323,27 +323,82 @@ func (g *shapeGen) goTypeIn(t *td, cur string) string {
 	panic("bad td kind: " + t.kind)
 }
 
+// tdToSpk maps the fuzzer's td shape onto the TypeExpr algebra so the value
+// generator can ask the representability fold (representability.go) which
+// nil/empty variants round-trip, instead of hand-maintaining a parallel copy
+// of the encoder's value-space rules (the ADR 2026-06-08 "fifth sync site").
+func tdToSpk(t *td) spkType {
+	switch t.kind {
+	case "scalar":
+		return spkScalar{Codec: codecPrim, TypeName: t.scalar}
+	case "text":
+		return spkScalar{Codec: codecText, TypeName: t.stName}
+	case "ptr":
+		return spkPtr{Elem: tdToSpk(t.elem)}
+	case "slice":
+		return spkSlice{Elem: tdToSpk(t.elem)}
+	case "map":
+		return spkMap{Elem: tdToSpk(t.elem)}
+	case "mapmap":
+		return spkMap{Elem: spkMap{Elem: spkScalar{Codec: codecPrim, TypeName: "string"}}}
+	case "namedmapstruct":
+		return spkMap{Elem: tdToSpk(t.elem)}
+	case "struct":
+		si := &StructInfo{Name: t.stName}
+		for _, f := range t.fields {
+			si.Fields = append(si.Fields, FieldInfo{GoName: f.name, TomlKey: f.tomlKey, Type: tdToSpk(f.t), OmitEmpty: f.omitEmpty})
+		}
+		if t.pkg != "" {
+			// Cross-package: a delegated leaf (its encoder always emits the
+			// table header, unlike a same-package #89-skippable struct).
+			return spkDelegated{TypeName: t.pkg + "." + t.stName, InnerInfo: si}
+		}
+		return spkStruct{TypeName: t.stName, InnerInfo: si}
+	}
+	panic("bad td kind: " + t.kind)
+}
+
+// tdNilable reports whether a FIELD of this shape may be generated nil: every
+// reference kind is, since an absent key decodes back to nil. (Slice/map
+// ELEMENTS are never generated nil — TOML has no null — which genValue
+// guarantees structurally: nil injection happens only in the struct-field loop.)
+func tdNilable(t *td) bool {
+	switch t.kind {
+	case "ptr", "slice", "map", "mapmap", "namedmapstruct":
+		return true
+	}
+	return false
+}
+
+// tdIsArrayTable reports whether the field encodes as an array-of-tables.
+func tdIsArrayTable(t *td) bool {
+	return t.kind == "slice" && elemIsStructish(tdToSpk(t.elem))
+}
+
 // genValue emits a Go composite literal populating t. Every slice/map gets two
 // distinct entries so a swapped index or mis-scoped entry is caught by DeepEqual.
 func (g *shapeGen) genValue(t *td) string {
-	// nil/empty generation is confined to representable positions, all injected by
-	// the struct case below (~1/4 each). As a STRUCT FIELD, a nil pointer / nil map
-	// / nil slice round-trips cleanly (the key is simply absent). A present-but-
-	// empty PRIMITIVE slice (`= []`) and an empty map[string]string (an empty
-	// `[table]`) are distinct TOML forms, so both nil AND empty are generated for
-	// them. A map[string]Struct has no present-empty form, so only its nil variant
-	// is generated, never `{}`. An array-of-tables ([]struct / []*struct) generates
-	// NEITHER nil nor empty: a nil one as a struct's only emitting field makes that
-	// struct encode to nothing — unrepresentable behind a pointer (it round-trips
-	// to a nil pointer, cf. #89) — so it stays populated. A nil pointer as a
-	// slice/map ELEMENT is never generated either: TOML arrays/sub-tables have no
-	// null, so []*T{nil} / map[string]*T{k:nil} are unrepresentable.
+	return g.genValueCtx(t, false)
+}
+
+// genValueCtx threads one positional bit: guardAT marks a struct value sitting
+// behind a pointer FIELD whose table header the #89 rule skips (every field an
+// array-of-tables). In that position the struct body is the pointer's only
+// presence witness, so its array-table fields must stay populated — an
+// all-silent body would round-trip the pointer to nil (#122). Everywhere else
+// (top level, value structs, slice/map entries — whose entry headers witness)
+// the nil/empty policy is derived per-field from the representability fold.
+func (g *shapeGen) genValueCtx(t *td, guardAT bool) string {
 	switch t.kind {
 	case "scalar":
 		return g.scalarValue(t.scalar)
 	case "ptr":
 		if t.elem.kind == "struct" {
-			return "&" + g.genValue(t.elem)
+			inner := false
+			if s, ok := tdToSpk(t.elem).(spkStruct); ok {
+				inner = structHeaderSkipped(s.InnerInfo, false)
+			}
+			return "&" + g.genValueCtx(t.elem, inner)
 		}
 		return "ptr(" + g.genValue(t.elem) + ")"
 	case "slice":
@@ -379,57 +434,20 @@ func (g *shapeGen) genValue(t *td) string {
 				b.WriteString(", ")
 			}
 			fv := g.genValue(f.t)
-			// Emit nil/empty variants where they round-trip faithfully (#21). A nil
-			// *scalar / *struct / map / mapmap field is simply an absent key/[table].
-			// A primitive slice distinguishes nil (key omitted) from empty `= []`, so
-			// generate both. An array-table slice ([]struct / []*struct) has no
-			// present-empty TOML form (an array-of-tables exists only with ≥1 entry),
-			// so nil≡empty there — keep those populated. Nil collection ELEMENTS stay
-			// excluded (TOML has no null).
-			// An ,omitempty field omits empty AND nil → both decode nil, so the
-			// empty-collection variant (which would round-trip to nil, not empty) is
-			// suppressed for omitempty fields; nil and populated still round-trip.
-			switch f.t.kind {
-			case "mapmap", "ptr", "namedmapstruct":
-				// namedmapstruct is a map[string]struct alias — no present-empty
-				// form (like map[string]Struct), so nil-only, never `{}`.
-				if g.rng.Intn(4) == 0 {
-					fv = "nil"
-				}
-			case "map":
-				// map[string]string (scalar elem) has a present-empty form (an empty
-				// `[table]`), so it's faithful: generate nil AND empty. map[string]Struct
-				// uses `[m.key]` sub-tables with no distinct empty representation, so it
-				// normalizes nil≡empty — only nil there.
-				if f.t.elem.kind == "scalar" {
-					switch r := g.rng.Intn(4); {
-					case r == 0:
-						fv = "nil"
-					case r == 1 && !f.omitEmpty:
-						fv = g.goType(f.t) + "{}"
-					}
-				} else if g.rng.Intn(4) == 0 {
-					fv = "nil"
-				}
-			case "slice":
-				primElem := f.t.elem.kind == "scalar" ||
-					(f.t.elem.kind == "ptr" && f.t.elem.elem.kind == "scalar")
-				if primElem {
-					// A primitive slice distinguishes nil (key omitted) from empty
-					// (`= []`) — exercise both.
-					switch r := g.rng.Intn(4); {
-					case r == 0:
-						fv = "nil"
-					case r == 1 && !f.omitEmpty:
-						fv = g.goType(f.t) + "{}"
-					}
-				}
-				// An array-of-tables ([]struct / []*struct) stays populated: it has
-				// no present-empty TOML form, and a nil one that is a struct's only
-				// emitting field makes that struct encode to nothing — which is
-				// unrepresentable behind a pointer (it round-trips to a nil pointer,
-				// cf. #89's no-spurious-bare-section rule). So neither nil nor empty
-				// is generated for it.
+			// The nil/empty policy is DERIVED from the representability fold
+			// rather than hand-coded per kind (~1/4 nil, ~1/4 empty where each
+			// round-trips): nil is faithful for every reference field (absent →
+			// nil), except an array-table field under guardAT (see genValueCtx);
+			// present-empty is generated exactly where the encoder witnesses it
+			// (EncodeWitnessesEmpty — `= []` / a bare `[table]`, minus omitempty
+			// leaves, which collapse empty to absent).
+			r := reprOf(tdToSpk(f.t), f.omitEmpty, false)
+			nilOK := tdNilable(f.t) && !(guardAT && tdIsArrayTable(f.t))
+			switch p := g.rng.Intn(4); {
+			case p == 0 && nilOK:
+				fv = "nil"
+			case p == 1 && r.EncodeWitnessesEmpty:
+				fv = g.goType(f.t) + "{}"
 			}
 			b.WriteString(f.name + ": " + fv)
 		}
