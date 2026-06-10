@@ -1039,24 +1039,6 @@ func SubTableKeyInContainer(table *cst.Node, container *cst.Node, prefix string)
 	return SubTableKey(table, containerKey+"."+prefix)
 }
 
-// EnsureTableInContainer finds or creates a table for the given key within a
-// container. It first checks direct children, then the document root for
-// qualified headers (like FindTableInContainer), creating the table if absent.
-func (doc *Document) EnsureTableInContainer(container *cst.Node, key string) *cst.Node {
-	if existing := doc.FindTableInContainer(container, key); existing != nil {
-		return existing
-	}
-
-	containerKey := tableHeaderKey(container)
-	var fullName string
-	if containerKey != "" {
-		fullName = containerKey + "." + key
-	} else {
-		fullName = key
-	}
-	return doc.EnsureTable(fullName)
-}
-
 // DeleteAllInContainer removes all key-value children from a container node.
 func DeleteAllInContainer(container *cst.Node) {
 	var kept []*cst.Node
