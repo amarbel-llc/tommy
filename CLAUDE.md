@@ -46,9 +46,15 @@ hit the network in the sandbox); and the `fuzz-sweep` flake check loops the thre
 generative fuzzers (`TestRoundTripFuzz`, `TestRoundTripFuzzDelegation`,
 `TestRoundTripSpellingFuzz`) over many seeds (`fuzzSweepSeeds` in `flake.nix`) —
 the `go-generate` check runs them at seed 1 only, the sweep widens shape coverage
-per merge. When adding an emission edge case, add both a
+per merge. The value-space axis (which Go nil/empty/pointer shapes round-trip)
+is modeled by the representability fold (`generate/representability.go`, ADR
+2026-06-08) and held to generated-code reality by the conformance harness
+(`representability_conformance_test.go`); the fuzzers derive their nil/empty
+generation policy from that fold (`tdToSpk` + `reprOf`) rather than hand-coded
+exclusions. When adding an emission edge case, add both a
 bats test under `zz-tests_bats/` (tagged `generate`, e.g. `encode_wire_format.bats`)
-and a Go integration test for depth.
+and a Go integration test for depth; when changing encoder suppression/witness
+behavior, flip the matching conformance cell and the model axis together.
 
 ## CLI Commands
 
