@@ -1,80 +1,203 @@
 package generate
 
-// Representability fold (PROTOTYPE — ADR 2026-06-08). A fold over the TypeExpr
-// IR that makes explicit which Go value shapes have a faithful TOML round-trip.
-// It is not yet wired into the encoder / decoders / fuzzer; it exists to validate
-// that the model is a clean static computation and to surface its hidden
-// assumptions (see the ADR's open questions). The four bug cells it must predict:
+// Representability fold (ADR 2026-06-08; sharpened 2026-06-09). A fold over the
+// TypeExpr IR that makes explicit which Go value shapes have a faithful TOML
+// round-trip under the GENERATED encoder/decoder pair. Unlike the first
+// prototype — which reasoned from assumed encoder behavior — this version models
+// the renderer as it actually is, and is held to that empirically by the
+// conformance harness (representability_conformance_test.go): every claim below
+// is asserted against compiled generated code, so the model cannot silently
+// drift from the implementation.
 //
-//   #1   empty `xs = []` into []struct collapses to nil (no present-empty form)
-//   #121 empty `xs = []` into []scalar round-trips as a non-nil empty slice
-//   #94  the fuzzer must know which empty/nil variants are representable
-//   #122 a non-nil pointer to an all-silent struct body round-trips to nil
+// The round-trip law it makes checkable, per field shape T:
 //
-// The eventual goal (ADR): the encoder's suppression, the decoders' nil/empty
-// normalization, and the fuzzer's generation policy all DERIVE from this fold,
-// instead of being hand-maintained in four places that drift apart.
+//	decode(encode(v)) == v   for all v of T   iff   silent(T) ⊆ {absent(T)}
+//	                                                and empty witnesses where distinct
+//
+// where absent(T) is the value decode produces when the key is missing (the Go
+// zero value: zero scalar, nil pointer/slice/map, zero struct), and silent(T) is
+// the set of values the encoder emits zero tokens for. Silence is harmless
+// exactly when the silent value IS the absent-default (a zero scalar); it is a
+// lossy cell when it isn't (a non-nil pointer, a present-empty collection).
+//
+// Encoder facts the fold encodes (each pinned by a conformance cell):
+//
+//   - A non-omitempty zero SCALAR is suppressed unless the key already exists in
+//     the document (compSetPrimitive) — silent, but faithful: absent decodes to
+//     the same zero. (This also makes encode output depend on the PRIOR document
+//     state — see the ADR's document-state axis.)
+//   - A non-nil POINTER SCALAR always emits, zero or not.
+//   - A struct field (value or pointer) witnesses its presence with its [table]
+//     header — EXCEPT when every child is a root-relative array-table, where the
+//     #89 no-spurious-bare-section rule skips the header (compEncTable /
+//     compEncNilGuard / compEncodeAllArrayTables). Behind a pointer that
+//     exception is the #122 lossy cell: an all-silent body collapses to nil.
+//     Delegated structs always emit their header (compEncDelStruct).
+//   - []scalar and map[string]scalar witness present-empty (`= []`, a bare
+//     `[table]`); []struct, map[string]struct and map[string]NamedMap do NOT
+//     (their encoders are entry-driven: zero entries, zero tokens) — even though
+//     the DECODERS read those present-empty forms (compModelEmptyArrayLeaf, the
+//     VTable map readers). That encode/decode asymmetry is the #1/#94 cell.
+//   - Nil container ELEMENTS are skipped on encode (TOML has no null):
+//     []*scalar, []*struct, map[string]*struct all drop nil entries.
+//
+// Position matters: the #89 header skip applies only to fields reached through
+// root-relative table nesting. Inside an array-table entry or a map sub-table
+// the entry/sub-table header always witnesses, so the same struct shape can be
+// lossy at the document root and faithful inside a [[list]] entry. The fold
+// threads that as the `scoped` parameter.
 
 // repr is the representability descriptor for a field's TypeExpr.
 type repr struct {
 	// MayBeSilent reports whether SOME value of this field encodes to zero TOML
-	// tokens — indistinguishable from absence on decode. A non-nil pointer to a
-	// MayBeSilent body has values that do not round-trip (#122); a faithful
-	// generator must not emit those silent values.
+	// tokens into an empty document — indistinguishable from absence on decode.
 	MayBeSilent bool
-	// EmptyDistinct reports whether a present-but-empty value has a TOML encoding
-	// distinct from absence, so empty round-trips as non-nil empty rather than
-	// collapsing to nil. True for []scalar / map[string]scalar (`= []`, empty
-	// `[table]`); false for array-of-tables and map[string]struct (#1/#94).
-	EmptyDistinct bool
+	// SilentFaithful reports whether every silent value equals the decode-absent
+	// default, i.e. silence never loses information. A zero scalar is silent and
+	// faithful; a non-nil *AllArrayTables body is silent and NOT faithful (#122);
+	// a present-empty []struct is silent and NOT faithful (#1).
+	SilentFaithful bool
+	// EncodeWitnessesEmpty reports whether the ENCODER emits a present-empty
+	// form for an empty (non-nil) collection: `= []` / a bare `[table]`. True
+	// for []scalar and map[string]scalar; false for array-of-tables and
+	// struct-/named-map-valued maps, whose encoders are entry-driven.
+	EncodeWitnessesEmpty bool
+	// DecodeReadsEmpty reports whether the DECODER maps an explicit present-empty
+	// form to a non-nil empty collection. True for every collection kind — the
+	// decoders gained the empty forms in #1/#94 — which is what makes
+	// EncodeWitnessesEmpty=false an asymmetry rather than a shared limitation.
+	DecodeReadsEmpty bool
+	// FullyFaithful reports whether EVERY value of this shape round-trips
+	// (decode∘encode == id from an empty document). This is the predicate the
+	// fuzzer's generation policy derives from: a fully-faithful shape needs no
+	// value exclusions at all.
+	FullyFaithful bool
 }
 
 // reprOf folds the representability model over a field's TypeExpr. omitEmpty is
 // the field's `,omitempty` tag, which widens the silent set (a zero/empty value
-// is dropped entirely).
-//
-// PROTOTYPE ASSUMPTION: a non-omitempty scalar always emits its `key = value`
-// (even the zero value), which is what the round-trip fuzzer relies on — it
-// fills scalars with non-zero samples. The reflection encoder's additional
-// "skip a zero value that isn't already in the document" rule is deliberately
-// NOT modelled here; reconciling the generated and reflection encoders'
-// zero-value policy is exactly the hidden contract this fold is meant to force
-// into the open (ADR open question #1).
-func reprOf(t spkType, omitEmpty bool) repr {
+// is dropped entirely — a deliberate, user-requested collapse, so it shows up
+// here as lost faithfulness at empty). scoped reports whether the field lives
+// inside an array-table entry or map sub-table (whose header always witnesses)
+// rather than root-relative table nesting (where #89 can skip the header).
+func reprOf(t spkType, omitEmpty bool, scoped bool) repr {
 	switch s := t.(type) {
 	case spkScalar:
-		return repr{MayBeSilent: omitEmpty, EmptyDistinct: false}
+		// Zero suppression makes the zero value silent even without omitempty,
+		// but absent decodes to the same zero: silent yet faithful either way.
+		return repr{MayBeSilent: true, SilentFaithful: true, FullyFaithful: true}
 	case spkPtr:
-		// A nil pointer is silent; the field is therefore always potentially silent.
-		return repr{MayBeSilent: true, EmptyDistinct: false}
+		return reprPtr(s, scoped)
 	case spkSlice:
-		// A nil slice is silent (omitted). A []scalar has a present-empty form
-		// (`= []`) distinct from nil; an array-of-tables ([]struct / []*struct)
-		// does not.
-		return repr{MayBeSilent: true, EmptyDistinct: !elemIsStructish(s.Elem)}
+		if elemIsStructish(s.Elem) {
+			// Array-of-tables: entry-driven encode → empty is silent and collapses
+			// to nil, though decode reads an explicit `= []` (#1/#94). A pointer
+			// element can additionally be nil, which encode skips (lossy).
+			return repr{MayBeSilent: true, SilentFaithful: false,
+				EncodeWitnessesEmpty: false, DecodeReadsEmpty: true, FullyFaithful: false}
+		}
+		// []scalar: nil omits (faithful), empty emits `= []` — unless omitempty,
+		// which collapses empty to absent (decodes nil ≠ empty: lossy at empty).
+		return repr{MayBeSilent: true, SilentFaithful: !omitEmpty,
+			EncodeWitnessesEmpty: !omitEmpty, DecodeReadsEmpty: true, FullyFaithful: !omitEmpty}
 	case spkMap:
-		// A nil map is silent. map[string]scalar has a present-empty form (an empty
-		// `[table]`); map[string]struct does not.
-		return repr{MayBeSilent: true, EmptyDistinct: !elemIsStructish(s.Elem)}
+		if elemIsStructish(s.Elem) || isMapType(s.Elem) {
+			// map[string]struct / map[string]NamedMap: entry-driven encode
+			// (compEncMapStruct / compEncMapMap gate on len > 0) → empty silent,
+			// though decode materializes a non-nil map from a bare [table].
+			return repr{MayBeSilent: true, SilentFaithful: false,
+				EncodeWitnessesEmpty: false, DecodeReadsEmpty: true, FullyFaithful: false}
+		}
+		// map[string]scalar: nil omits, non-nil (incl. empty) emits its [table]
+		// header. compSetMapScalar has no omitempty branch, so the tag does not
+		// widen the silent set here.
+		return repr{MayBeSilent: true, SilentFaithful: true,
+			EncodeWitnessesEmpty: true, DecodeReadsEmpty: true, FullyFaithful: true}
 	case spkStruct:
-		return repr{MayBeSilent: structMayBeSilent(s.InnerInfo), EmptyDistinct: false}
+		// A VALUE struct field is always faithful in itself: when its header is
+		// emitted it witnesses; when #89 skips the header the silent value is an
+		// all-absent-default body, which is exactly what decode-absent produces.
+		// Lossiness can only come from its children.
+		return repr{
+			MayBeSilent:    structMayBeSilent(s.InnerInfo, scoped),
+			SilentFaithful: true,
+			FullyFaithful:  structFullyFaithful(s.InnerInfo, scoped),
+		}
 	case spkDelegated:
-		return repr{MayBeSilent: structMayBeSilent(s.InnerInfo), EmptyDistinct: false}
+		// Delegated structs always emit their table header on encode.
+		return repr{MayBeSilent: false, SilentFaithful: true,
+			FullyFaithful: structFullyFaithful(s.InnerInfo, true)}
 	}
 	return repr{MayBeSilent: true}
 }
 
-// structMayBeSilent reports whether a struct can encode to zero tokens — true
-// iff EVERY field can simultaneously be silent. A single always-emitting field
-// (e.g. a non-omitempty scalar) makes the struct always witness its presence, so
-// a non-nil pointer to it always round-trips. This is the recursive crux: the
-// property is bottom-up over the struct's fields.
-func structMayBeSilent(si *StructInfo) bool {
+// reprPtr models pointer fields. Nil is silent and faithful (absent decodes to
+// nil). A NON-nil pointer witnesses via its scalar value or its struct table
+// header — except a root-relative same-package struct whose children are all
+// array-tables (#89 skips the header): values with an all-silent body then
+// collapse to nil on decode, the #122 cell.
+func reprPtr(p spkPtr, scoped bool) repr {
+	switch e := p.Elem.(type) {
+	case spkStruct:
+		if structHeaderSkipped(e.InnerInfo, scoped) {
+			return repr{MayBeSilent: true, SilentFaithful: false, FullyFaithful: false}
+		}
+		return repr{MayBeSilent: true, SilentFaithful: true,
+			FullyFaithful: structFullyFaithful(e.InnerInfo, scoped)}
+	case spkDelegated:
+		return repr{MayBeSilent: true, SilentFaithful: true,
+			FullyFaithful: structFullyFaithful(e.InnerInfo, true)}
+	default:
+		// *scalar: a non-nil pointer always emits `key = value`, zero included
+		// (compSetPrimitive's pointer path has no zero suppression).
+		return repr{MayBeSilent: true, SilentFaithful: true, FullyFaithful: true}
+	}
+}
+
+// structHeaderSkipped mirrors compEncodeAllArrayTables: a root-relative struct
+// whose every field is an array-of-tables (same-package or delegated, possibly
+// of pointer elements) gets no parent [table] header on encode — the [[a.b]]
+// headers imply it when entries exist, and nothing witnesses when they don't.
+// Scoped structs (inside an array-table entry or map sub-table) always keep
+// their header. nil InnerInfo (an unresolved skeleton) assumes the worst case.
+func structHeaderSkipped(si *StructInfo, scoped bool) bool {
+	if scoped {
+		return false
+	}
 	if si == nil {
-		return true // unresolved skeleton (fieldType path): assume the worst case
+		return true
+	}
+	if len(si.Fields) == 0 {
+		return false
 	}
 	for _, f := range si.Fields {
-		if !reprOf(f.Type, f.OmitEmpty).MayBeSilent {
+		s, ok := f.Type.(spkSlice)
+		if !ok || !elemIsStructish(s.Elem) {
+			return false
+		}
+	}
+	return true
+}
+
+// structMayBeSilent reports whether a struct field can encode to zero tokens.
+// With its header emitted it always witnesses; without one (the #89 skip) the
+// all-nil/empty body is silent. This replaces the first prototype's AND-over-
+// fields recursion, which the conformance harness disproved: a struct holding
+// only a nil *Server still witnesses via its own [table] header.
+func structMayBeSilent(si *StructInfo, scoped bool) bool {
+	return structHeaderSkipped(si, scoped)
+}
+
+// structFullyFaithful reports whether every value of the struct round-trips:
+// the conjunction of its fields' faithfulness. Fields of a value/pointer struct
+// keep their parent's position (table nesting extends the path); the entry
+// bodies of array-tables and struct-maps are scoped by their own reprOf cases.
+func structFullyFaithful(si *StructInfo, scoped bool) bool {
+	if si == nil {
+		return false // unresolved skeleton: cannot vouch for the body
+	}
+	for _, f := range si.Fields {
+		if !reprOf(f.Type, f.OmitEmpty, scoped).FullyFaithful {
 			return false
 		}
 	}
@@ -82,7 +205,8 @@ func structMayBeSilent(si *StructInfo) bool {
 }
 
 // elemIsStructish reports whether a slice/map element decodes as an array-of-
-// tables / sub-table (which has no present-empty form) rather than a scalar leaf.
+// tables / sub-table (which the encoder gives no present-empty form) rather
+// than a scalar leaf.
 func elemIsStructish(t spkType) bool {
 	switch s := t.(type) {
 	case spkStruct, spkDelegated:
@@ -94,10 +218,10 @@ func elemIsStructish(t spkType) bool {
 	}
 }
 
-// pointerStructRoundTrips reports whether EVERY non-nil value of *struct(si)
-// round-trips. False means some non-nil pointer — one whose struct body is in an
-// all-silent state — collapses to nil on decode (#122): the encoder cannot
-// witness its presence and a faithful generator must not produce it.
-func pointerStructRoundTrips(si *StructInfo) bool {
-	return !structMayBeSilent(si)
+// isMapType reports whether the element is itself a map (the
+// map[string]NamedMap shape, whose encoder is entry-driven like the struct
+// maps).
+func isMapType(t spkType) bool {
+	_, ok := t.(spkMap)
+	return ok
 }
