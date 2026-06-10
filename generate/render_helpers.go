@@ -72,11 +72,13 @@ func isSamePackageSliceStruct(fi FieldInfo) bool {
 	return ok && !strings.Contains(st.TypeName, ".")
 }
 
-// sliceStructName is the element struct's type name for a same-package
-// slice-struct field (the basis of its generated Handle type name).
-func sliceStructName(fi FieldInfo) string {
-	st, _ := sliceStructElem(fi)
-	return st.TypeName
+// handleTypeName names the generated entry-handle type for a top-level
+// same-package slice-struct field: owner struct + field (configServersHandle).
+// Handle types are file-scoped, so the name must be unique across both the
+// fields of one struct (two []Server fields) and the structs of one file (two
+// structs with an F0 []Sub field).
+func handleTypeName(owner, fieldGoName string) string {
+	return unexport(owner) + fieldGoName + "Handle"
 }
 
 // collectImportPaths returns the cross-package import paths referenced by the

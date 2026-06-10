@@ -245,18 +245,16 @@ func compModelArrayTable(ctx jenCtx, g *jen.Group, n cdArrayTable, tv *jen.State
 			b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Index().Add(jt.Clone()), jen.Len(v.Clone().Dot("Items")))
 		}
 		if n.TrackHandles {
-			hn := toLowerFirst(n.TypeName) + "Handle"
 			fn := toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name)
-			b.Id("d").Dot(fn).Op("=").Make(jen.Index().Id(hn), jen.Len(v.Clone().Dot("Items")))
+			b.Id("d").Dot(fn).Op("=").Make(jen.Index().Id(n.HandleType), jen.Len(v.Clone().Dot("Items")))
 		}
 		ev := "_e" + n.TDottedKey.VarSuffix()
 		b.For(jen.Id(n.IdxVar).Op(":=").Range().Add(v.Clone()).Dot("Items")).BlockFunc(func(lb *jen.Group) {
 			lb.Id(ev).Op(":=").Op("&").Add(v.Clone()).Dot("Items").Index(jen.Id(n.IdxVar))
 			lb.Add(jen.Id(ev).Dot("MarkSeen").Call())
 			if n.TrackHandles {
-				hn := toLowerFirst(n.TypeName) + "Handle"
 				fn := toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name)
-				lb.Id("d").Dot(fn).Index(jen.Id(n.IdxVar)).Op("=").Id(hn).Values(jen.Dict{jen.Id("node"): jen.Id(ev).Dot("Node")})
+				lb.Id("d").Dot(fn).Index(jen.Id(n.IdxVar)).Op("=").Id(n.HandleType).Values(jen.Dict{jen.Id("node"): jen.Id(ev).Dot("Node")})
 			}
 			if n.SlicePtr {
 				lb.Add(n.Tgt.Jen().Clone()).Index(jen.Id(n.IdxVar)).Op("=").Op("&").Add(jt.Clone()).Values()

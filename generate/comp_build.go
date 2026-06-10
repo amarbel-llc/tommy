@@ -70,16 +70,23 @@ func foldCompDecode(si *StructInfo, pos compPos, emitHandles bool) []cdNode {
 	for _, fi := range si.Fields {
 		siblingKeys[fi.TomlKey] = true
 	}
+	// handleOwner namespaces the generated entry-handle types by the directive
+	// struct (configServersHandle): handle types are file-scoped, so neither the
+	// element type nor the field name alone is collision-free across structs.
+	handleOwner := ""
+	if emitHandles {
+		handleOwner = si.Name
+	}
 	var out []cdNode
 	for _, fi := range si.Fields {
-		if n := foldCompDecodeField(fi, pos, emitHandles, siblingKeys); n != nil {
+		if n := foldCompDecodeField(fi, pos, handleOwner, siblingKeys); n != nil {
 			out = append(out, n)
 		}
 	}
 	return out
 }
 
-func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool, siblingKeys map[string]bool) cdNode {
+func foldCompDecodeField(fi FieldInfo, pos compPos, handleOwner string, siblingKeys map[string]bool) cdNode {
 	c := pos.child(fi.TomlKey, fi.GoName)
 
 	switch te := fi.Type.(type) {
@@ -111,7 +118,7 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool, siblingKey
 			}
 			return cdLeaf{Kind: cdLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: elem.TypeName, TypeName: te.TypeName, ImportPath: te.ImportPath, SlicePointer: false}
 		case spkStruct:
-			return compDecodeArrayTable(fi, elem, c, false, emitHandles)
+			return compDecodeArrayTable(fi, elem, c, false, handleOwner)
 		case spkDelegated:
 			return cdDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: elem.ImportPath, TypeName: elem.TypeName, SlicePtr: false, IdxVar: arrayIdxVar(c.arrayDepth)}
 		case spkPtr:
@@ -121,7 +128,7 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, emitHandles bool, siblingKey
 				// element type is on the inner scalar.
 				return cdLeaf{Kind: cdLeafSlicePrim, Tgt: c.tgt, TKey: c.tkey, ElemType: pe.TypeName, TypeName: te.TypeName, ImportPath: te.ImportPath, SlicePointer: true}
 			case spkStruct:
-				return compDecodeArrayTable(fi, pe, c, true, emitHandles)
+				return compDecodeArrayTable(fi, pe, c, true, handleOwner)
 			case spkDelegated:
 				return cdDelSlice{Tgt: c.tgt, TKey: StaticKey(fi.TomlKey), TDottedKey: c.tkey, ImportPath: pe.ImportPath, TypeName: pe.TypeName, SlicePtr: true, IdxVar: arrayIdxVar(c.arrayDepth)}
 			}
@@ -188,7 +195,7 @@ func compDecodeFlatChildren(inner *StructInfo, c compPos, tgt TargetPath, siblin
 		if isSliceOfStruct(f.Type) {
 			pos.tkey = c.tkey
 		}
-		if n := foldCompDecodeField(f, pos, false, nil); n != nil {
+		if n := foldCompDecodeField(f, pos, "", nil); n != nil {
 			if isSliceOfStruct(f.Type) {
 				// Scoped flat fallback (#105): this struct's [header] is absent, so
 				// its array-table field is searched in the parent scope. Use the key
@@ -277,7 +284,7 @@ func compDecodeNilGuard(fi FieldInfo, st spkStruct, c compPos, siblingKeys map[s
 	return cdNilGuard{Tgt: c.tgt, TypeName: st.TypeName, TKey: c.tkey, LocalVar: localVar, Children: children, FlatChildren: flat}
 }
 
-func compDecodeArrayTable(fi FieldInfo, st spkStruct, c compPos, slicePtr, emitHandles bool) cdNode {
+func compDecodeArrayTable(fi FieldInfo, st spkStruct, c compPos, slicePtr bool, handleOwner string) cdNode {
 	if st.InnerInfo == nil {
 		return nil
 	}
@@ -290,7 +297,8 @@ func compDecodeArrayTable(fi FieldInfo, st spkStruct, c compPos, slicePtr, emitH
 		TKey:         StaticKey(fi.TomlKey),
 		TDottedKey:   c.tkey,
 		SlicePtr:     slicePtr,
-		TrackHandles: emitHandles && !crossPkg,
+		TrackHandles: handleOwner != "" && !crossPkg,
+		HandleType:   handleTypeName(handleOwner, fi.GoName),
 		IdxVar:       iv,
 		EntryVar:     arrayEntryVar(c.arrayDepth),
 		Children:     foldCompDecode(st.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, seq: c.seq}, false),

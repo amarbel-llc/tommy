@@ -83,6 +83,7 @@ type cdArrayTable struct {
 	TDottedKey   TOMLKey // full dotted key
 	SlicePtr     bool
 	TrackHandles bool
+	HandleType   string // generated handle type name (handleTypeName); set iff TrackHandles
 	IdxVar       string
 	EntryVar     string
 	// ScopedFlatKey, when non-empty, is the lookup key the SCOPED renderer uses
