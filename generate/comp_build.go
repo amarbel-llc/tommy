@@ -290,18 +290,21 @@ func compDecodeArrayTable(fi FieldInfo, st spkStruct, c compPos, slicePtr bool, 
 	}
 	crossPkg := strings.Contains(st.TypeName, ".")
 	iv := arrayIdxVar(c.arrayDepth)
+	handleType := ""
+	if handleOwner != "" && !crossPkg {
+		handleType = handleTypeName(handleOwner, fi.GoName)
+	}
 	return cdArrayTable{
-		Tgt:          c.tgt,
-		TypeName:     st.TypeName,
-		ImportPath:   st.ImportPath,
-		TKey:         StaticKey(fi.TomlKey),
-		TDottedKey:   c.tkey,
-		SlicePtr:     slicePtr,
-		TrackHandles: handleOwner != "" && !crossPkg,
-		HandleType:   handleTypeName(handleOwner, fi.GoName),
-		IdxVar:       iv,
-		EntryVar:     arrayEntryVar(c.arrayDepth),
-		Children:     foldCompDecode(st.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, seq: c.seq}, false),
+		Tgt:        c.tgt,
+		TypeName:   st.TypeName,
+		ImportPath: st.ImportPath,
+		TKey:       StaticKey(fi.TomlKey),
+		TDottedKey: c.tkey,
+		SlicePtr:   slicePtr,
+		HandleType: handleType,
+		IdxVar:     iv,
+		EntryVar:   arrayEntryVar(c.arrayDepth),
+		Children:   foldCompDecode(st.InnerInfo, compPos{tkey: c.tkey, tgt: c.tgt.Index(iv), arrayDepth: c.arrayDepth + 1, seq: c.seq}, false),
 	}
 }
 

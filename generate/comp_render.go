@@ -354,21 +354,13 @@ func compEncNilGuard(ctx encCtx, n ceNilGuard, cv *jen.Statement) []jen.Code {
 func compEncArrayTable(ctx encCtx, n ceArrayTable, cv *jen.Statement) []jen.Code {
 	src := n.Tgt.Jen()
 	bk := n.TKey.BareKey()
-	// A nil element of a []*Struct has no TOML representation (no null): skip it
-	// on encode — the policy compEncMapStruct and compSlicePrimSet already apply —
-	// instead of dereferencing it and panicking.
-	skipNilElem := func(g *jen.Group) {
-		if n.SlicePtr {
-			g.If(src.Clone().Index(jen.Id(n.IdxVar)).Op("==").Nil()).Block(jen.Continue())
-		}
-	}
 	return []jen.Code{jen.BlockFunc(func(g *jen.Group) {
 		if n.TrackHandles {
 			// Top-level same-package []struct: reuse the decode-recorded entry
 			// handles; new entries append at the document root.
 			handleSlice := "d." + toLowerFirst(n.Tgt.Segs[len(n.Tgt.Segs)-1].Name)
 			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
-				skipNilElem(g)
+				skipNilElem(g, n.SlicePtr, src, n.IdxVar)
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
 				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(handleSlice))).Block(
 					jen.Id("container").Op("=").Id(handleSlice).Index(jen.Id(n.IdxVar)).Dot("node"),
@@ -389,7 +381,7 @@ func compEncArrayTable(ctx encCtx, n ceArrayTable, cv *jen.Statement) []jen.Code
 			g.Id(pv).Op(":=").Add(cv.Clone())
 			g.Id(existVar).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(ctx.rootVar.Clone(), jen.Id(pv), jen.Lit(bk))
 			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
-				skipNilElem(g)
+				skipNilElem(g, n.SlicePtr, src, n.IdxVar)
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
 				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
 					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),
@@ -407,7 +399,7 @@ func compEncArrayTable(ctx encCtx, n ceArrayTable, cv *jen.Statement) []jen.Code
 			existVar := "_exist" + n.TDottedKey.VarSuffix()
 			g.Id(existVar).Op(":=").Qual(cstPkg, "FindArrayTableNodes").Call(ctx.rootVar.Clone(), n.TDottedKey.Jen())
 			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
-				skipNilElem(g)
+				skipNilElem(g, n.SlicePtr, src, n.IdxVar)
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
 				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
 					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),
@@ -476,13 +468,6 @@ func compEncDelSlice(ctx encCtx, n ceDelSlice, cv *jen.Statement) []jen.Code {
 	existVar := "_exist" + n.TDottedKey.VarSuffix()
 	pv := "_ap" + n.TDottedKey.VarSuffix()
 
-	// Nil []*Struct elements are skipped, mirroring compEncArrayTable: TOML has
-	// no null, and the delegated EncodeFrom would dereference nil.
-	skipNilElem := func(g *jen.Group) {
-		if n.SlicePtr {
-			g.If(src.Clone().Index(jen.Id(n.IdxVar)).Op("==").Nil()).Block(jen.Continue())
-		}
-	}
 	entry := func(g *jen.Group) {
 		if n.SlicePtr {
 			g.If(jen.Err().Op(":=").Qual(n.ImportPath, encFn).Call(
@@ -500,7 +485,7 @@ func compEncDelSlice(ctx encCtx, n ceDelSlice, cv *jen.Statement) []jen.Code {
 			g.Id(pv).Op(":=").Add(cv.Clone())
 			g.Id(existVar).Op(":=").Qual(cstPkg, "FindChildArrayTableNodes").Call(ctx.rootVar.Clone(), jen.Id(pv), jen.Lit(bk))
 			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
-				skipNilElem(g)
+				skipNilElem(g, n.SlicePtr, src, n.IdxVar)
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
 				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
 					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),
@@ -512,7 +497,7 @@ func compEncDelSlice(ctx encCtx, n ceDelSlice, cv *jen.Statement) []jen.Code {
 		} else {
 			g.Id(existVar).Op(":=").Qual(cstPkg, "FindArrayTableNodes").Call(ctx.rootVar.Clone(), n.TDottedKey.Jen())
 			g.For(jen.Id(n.IdxVar).Op(":=").Range().Add(src.Clone())).BlockFunc(func(g *jen.Group) {
-				skipNilElem(g)
+				skipNilElem(g, n.SlicePtr, src, n.IdxVar)
 				g.Var().Id("container").Op("*").Qual(cstPkg, "Node")
 				g.If(jen.Id(n.IdxVar).Op("<").Len(jen.Id(existVar))).Block(
 					jen.Id("container").Op("=").Id(existVar).Index(jen.Id(n.IdxVar)),

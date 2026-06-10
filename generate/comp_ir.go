@@ -71,21 +71,23 @@ type cdNilGuard struct {
 }
 
 // cdArrayTable iterates [[TDottedKey]] entries. In receiver context for a
-// same-package element, TrackHandles stores the *cst.Node per entry on the
+// same-package element, the decoder stores the *cst.Node per entry on the
 // Document for round-trip-stable encode. IdxVar/EntryVar are the loop index and
 // entry-node variable names; they are depth-distinct ("i"/"_node", "i1"/"_node1",
 // …) so a nested array never shadows its enclosing one's index.
 type cdArrayTable struct {
-	Tgt          TargetPath
-	TypeName     string
-	ImportPath   string
-	TKey         TOMLKey // bare key
-	TDottedKey   TOMLKey // full dotted key
-	SlicePtr     bool
-	TrackHandles bool
-	HandleType   string // generated handle type name (handleTypeName); set iff TrackHandles
-	IdxVar       string
-	EntryVar     string
+	Tgt        TargetPath
+	TypeName   string
+	ImportPath string
+	TKey       TOMLKey // bare key
+	TDottedKey TOMLKey // full dotted key
+	SlicePtr   bool
+	// HandleType, when non-empty, is the generated entry-handle type name
+	// (handleTypeName) whose values the decoder records per entry — set only in
+	// receiver context for a same-package element.
+	HandleType string
+	IdxVar     string
+	EntryVar   string
 	// ScopedFlatKey, when non-empty, is the lookup key the SCOPED renderer uses
 	// instead of TKey.BareKey() — the array-table field's key qualified with its
 	// owning struct's segment ("extra.items"). Set only on flat-fallback nodes

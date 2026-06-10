@@ -159,3 +159,14 @@ func jenZeroLit(typeName string) *jen.Statement {
 		return jen.Lit("")
 	}
 }
+
+// skipNilElem heads every []*Struct encode loop (array-table and delegated
+// alike) with a nil-element guard: a nil element has no TOML representation
+// (no null), so it is skipped — the policy compEncMapStruct and
+// compSlicePrimSet already apply — instead of dereferenced (a panic before
+// 2026-06-09). No-op for non-pointer-element slices.
+func skipNilElem(g *jen.Group, slicePtr bool, src *jen.Statement, idxVar string) {
+	if slicePtr {
+		g.If(src.Clone().Index(jen.Id(idxVar)).Op("==").Nil()).Block(jen.Continue())
+	}
+}

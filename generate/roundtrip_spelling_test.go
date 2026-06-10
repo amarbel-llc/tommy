@@ -119,7 +119,7 @@ func spellingFuzzTestSource(testBodies string) string {
 	imp := "import (\n\t\"bytes\"\n\t\"fmt\"\n\t\"reflect\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n\n\t\"github.com/amarbel-llc/tommy/pkg/cst\"\n)\n\n"
 	coverage := "\tt.Logf(\"spelling fuzz: %d (case,variant) pairs rewrote the canonical encoding\", spellingChanged)\n\tif spellingChanged == 0 {\n\t\tt.Fatal(\"no variant rewrote the canonical encoding — the spelling fuzzer exercised nothing beyond canonical\")\n\t}\n"
 	return "package fuzz\n\n" + imp +
-		"func ptr[T any](v T) *T { return &v }\n\n" +
+		ptrHelperSrc +
 		dumpHelperSrc +
 		respellHelperSrc +
 		"func TestRoundTripSpelling(t *testing.T) {\n" + testBodies + coverage + "}\n"

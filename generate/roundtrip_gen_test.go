@@ -359,20 +359,22 @@ func tdToSpk(t *td) spkType {
 }
 
 // tdNilable reports whether a FIELD of this shape may be generated nil: every
-// reference kind is, since an absent key decodes back to nil. (Slice/map
+// reference kind is, since an absent key decodes back to nil. Derived through
+// tdToSpk so a new td kind is classified once, in the bridge. (Slice/map
 // ELEMENTS are never generated nil — TOML has no null — which genValue
 // guarantees structurally: nil injection happens only in the struct-field loop.)
 func tdNilable(t *td) bool {
-	switch t.kind {
-	case "ptr", "slice", "map", "mapmap", "namedmapstruct":
+	switch tdToSpk(t).(type) {
+	case spkPtr, spkSlice, spkMap:
 		return true
 	}
 	return false
 }
 
-// tdIsArrayTable reports whether the field encodes as an array-of-tables.
+// tdIsArrayTable reports whether the field encodes as an array-of-tables —
+// the same isSliceOfStruct predicate the codegen folds use, via the bridge.
 func tdIsArrayTable(t *td) bool {
-	return t.kind == "slice" && elemIsStructish(tdToSpk(t.elem))
+	return isSliceOfStruct(tdToSpk(t))
 }
 
 // genValue emits a Go composite literal populating t. Every slice/map gets two
@@ -434,19 +436,18 @@ func (g *shapeGen) genValueCtx(t *td, guardAT bool) string {
 				b.WriteString(", ")
 			}
 			fv := g.genValue(f.t)
-			// The nil/empty policy is DERIVED from the representability fold
+			// The nil/empty policy is derived from the shared shape predicates
 			// rather than hand-coded per kind (~1/4 nil, ~1/4 empty where each
 			// round-trips): nil is faithful for every reference field (absent →
-			// nil), except an array-table field under guardAT (see genValueCtx);
-			// present-empty is generated exactly where the encoder witnesses it
-			// (EncodeWitnessesEmpty — `= []` / a bare `[table]`, minus omitempty
-			// leaves, which collapse empty to absent).
-			r := reprOf(tdToSpk(f.t), f.omitEmpty, false)
-			nilOK := tdNilable(f.t) && !(guardAT && tdIsArrayTable(f.t))
+			// nil, tdNilable), except an array-table field under guardAT (see
+			// genValueCtx); present-empty is generated exactly where the fold
+			// says the encoder witnesses it (EncodeWitnessesEmpty — `= []` / a
+			// bare `[table]`, minus omitempty leaves, which collapse empty to
+			// absent).
 			switch p := g.rng.Intn(4); {
-			case p == 0 && nilOK:
+			case p == 0 && tdNilable(f.t) && !(guardAT && tdIsArrayTable(f.t)):
 				fv = "nil"
-			case p == 1 && r.EncodeWitnessesEmpty:
+			case p == 1 && reprOf(tdToSpk(f.t), f.omitEmpty, false).EncodeWitnessesEmpty:
 				fv = g.goType(f.t) + "{}"
 			}
 			b.WriteString(f.name + ": " + fv)
@@ -467,6 +468,10 @@ func fuzzEnvInt(name string, def int) int {
 }
 
 // dumpHelperSrc is injected into the generated fuzz test harness. The default
+// ptrHelperSrc is the &-of-literal helper injected into every generated fuzz /
+// conformance test source.
+const ptrHelperSrc = "func ptr[T any](v T) *T { return &v }\n\n"
+
 // %#v rendering prints pointer ADDRESSES (so two structurally-identical values
 // that differ only behind a pointer look the same in a mismatch report). dump
 // recursively dereferences pointers (showing nil vs &value), sorts map keys, and
@@ -622,7 +627,7 @@ func fuzzTestSource(testBodies string, extraImports ...string) string {
 	}
 	imp.WriteString(")\n\n")
 	return "package fuzz\n\n" + imp.String() +
-		"func ptr[T any](v T) *T { return &v }\n\n" +
+		ptrHelperSrc +
 		dumpHelperSrc +
 		"func TestRoundTrip(t *testing.T) {\n" + testBodies + "}\n"
 }

@@ -76,7 +76,9 @@ func isSamePackageSliceStruct(fi FieldInfo) bool {
 // same-package slice-struct field: owner struct + field (configServersHandle).
 // Handle types are file-scoped, so the name must be unique across both the
 // fields of one struct (two []Server fields) and the structs of one file (two
-// structs with an F0 []Sub field).
+// structs with an F0 []Sub field). Bare concatenation leaves a theoretical
+// residue (ServerList+Items vs Server+ListItems collide) — accepted as
+// vanishingly unlikely; it would surface as a generated-code redeclaration.
 func handleTypeName(owner, fieldGoName string) string {
 	return unexport(owner) + fieldGoName + "Handle"
 }

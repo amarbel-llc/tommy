@@ -201,7 +201,7 @@ func TestRepresentabilityConformance(t *testing.T) {
 	body.WriteString(reprConfExtraCells)
 
 	testSrc := "package reprconf\n\nimport (\n\t\"fmt\"\n\t\"reflect\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n)\n\n" +
-		"func ptr[T any](v T) *T { return &v }\n\n" + dumpHelperSrc +
+		ptrHelperSrc + dumpHelperSrc +
 		"func TestConformance(t *testing.T) {\n" + body.String() + "}\n"
 	writeFixture(t, dir, "conformance_test.go", testSrc)
 

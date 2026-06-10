@@ -70,7 +70,9 @@ type repr struct {
 	// FullyFaithful reports whether EVERY value of this shape round-trips
 	// (decode∘encode == id from an empty document). This is the predicate the
 	// fuzzer's generation policy derives from: a fully-faithful shape needs no
-	// value exclusions at all.
+	// value exclusions at all. One exemption from the quantifier: values holding
+	// nil container ELEMENTS ([]*scalar{nil} as much as []*struct{nil}) — TOML
+	// has no null, encode skips them, and no faithful generator produces them.
 	FullyFaithful bool
 }
 
@@ -101,7 +103,8 @@ func reprOf(t spkType, omitEmpty bool, scoped bool) repr {
 		return repr{MayBeSilent: true, SilentFaithful: !omitEmpty,
 			EncodeWitnessesEmpty: !omitEmpty, DecodeReadsEmpty: true, FullyFaithful: !omitEmpty}
 	case spkMap:
-		if elemIsStructish(s.Elem) || isMapType(s.Elem) {
+		_, elemIsMap := s.Elem.(spkMap) // map[string]NamedMap: entry-driven too
+		if elemIsStructish(s.Elem) || elemIsMap {
 			// map[string]struct / map[string]NamedMap: entry-driven encode
 			// (compEncMapStruct / compEncMapMap gate on len > 0) → empty silent,
 			// though decode materializes a non-nil map from a bare [table].
@@ -119,7 +122,7 @@ func reprOf(t spkType, omitEmpty bool, scoped bool) repr {
 		// all-absent-default body, which is exactly what decode-absent produces.
 		// Lossiness can only come from its children.
 		return repr{
-			MayBeSilent:    structMayBeSilent(s.InnerInfo, scoped),
+			MayBeSilent:    structHeaderSkipped(s.InnerInfo, scoped),
 			SilentFaithful: true,
 			FullyFaithful:  structFullyFaithful(s.InnerInfo, scoped),
 		}
@@ -160,6 +163,11 @@ func reprPtr(p spkPtr, scoped bool) repr {
 // headers imply it when entries exist, and nothing witnesses when they don't.
 // Scoped structs (inside an array-table entry or map sub-table) always keep
 // their header. nil InnerInfo (an unresolved skeleton) assumes the worst case.
+//
+// This skip is also the ONLY way a struct field can be silent: with its header
+// emitted a struct always witnesses regardless of its body. (The conformance
+// harness disproved the first prototype's AND-over-fields silence rule — a
+// struct holding only a nil *Server still witnesses via its own [table].)
 func structHeaderSkipped(si *StructInfo, scoped bool) bool {
 	if scoped {
 		return false
@@ -171,21 +179,11 @@ func structHeaderSkipped(si *StructInfo, scoped bool) bool {
 		return false
 	}
 	for _, f := range si.Fields {
-		s, ok := f.Type.(spkSlice)
-		if !ok || !elemIsStructish(s.Elem) {
+		if !isSliceOfStruct(f.Type) {
 			return false
 		}
 	}
 	return true
-}
-
-// structMayBeSilent reports whether a struct field can encode to zero tokens.
-// With its header emitted it always witnesses; without one (the #89 skip) the
-// all-nil/empty body is silent. This replaces the first prototype's AND-over-
-// fields recursion, which the conformance harness disproved: a struct holding
-// only a nil *Server still witnesses via its own [table] header.
-func structMayBeSilent(si *StructInfo, scoped bool) bool {
-	return structHeaderSkipped(si, scoped)
 }
 
 // structFullyFaithful reports whether every value of the struct round-trips:
@@ -216,12 +214,4 @@ func elemIsStructish(t spkType) bool {
 	default:
 		return false
 	}
-}
-
-// isMapType reports whether the element is itself a map (the
-// map[string]NamedMap shape, whose encoder is entry-driven like the struct
-// maps).
-func isMapType(t spkType) bool {
-	_, ok := t.(spkMap)
-	return ok
 }
