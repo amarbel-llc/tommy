@@ -88,6 +88,19 @@ function generate_output_compiles { # @test
   assert_success
 }
 
+# #134: freshly generated code must satisfy a downstream gofumpt gate with no
+# manual `gofmt -w` / `nix fmt` pass. `gofumpt -l` lists files it would rewrite;
+# empty output means the generated file is already gofumpt-canonical.
+function generate_output_is_gofumpt_clean { # @test
+  command -v gofumpt >/dev/null || skip "gofumpt not on PATH"
+  cd "$BATS_TEST_TMPDIR/proj"
+  run go generate ./...
+  assert_success
+  run gofumpt -l config_tommy.go
+  assert_success
+  assert_output ""
+}
+
 function generate_round_trip_preserves_comments { # @test
   cd "$BATS_TEST_TMPDIR/proj"
   go generate ./...

@@ -18,3 +18,8 @@ schema = 3
     version = 'v0.44.0'
     hash = 'sha256-xuj5FLtSJsAojLLTLXtPdLAIFNTKoVFbDMuqRXmj2W4='
     goVersion = '1.25.0'
+
+  [mod.'mvdan.cc/gofumpt']
+    version = 'v0.10.0'
+    hash = 'sha256-HPMtCqdfgOupeuLPgiU7UBszA3MQOP/W2KSwOSGFzs4='
+    goVersion = '1.25.0'

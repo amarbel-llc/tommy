@@ -67,8 +67,12 @@ let
         GOTOOLCHAIN = "local";
       };
       # Go toolchain (matching buildGoApplication's go) so generate.bats
-      # can invoke `go generate`, `go build`, `go test`.
-      nativeBuildInputs = [ pkgs-master.go ];
+      # can invoke `go generate`, `go build`, `go test`; gofumpt so it can
+      # assert generated output is gofumpt-canonical (#134).
+      nativeBuildInputs = [
+        pkgs-master.go
+        pkgs-master.gofumpt
+      ];
     };
 
   batsFiles = lib.filter (f: lib.hasSuffix ".bats" f) (

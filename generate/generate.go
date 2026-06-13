@@ -3,11 +3,13 @@ package generate
 import (
 	"bytes"
 	"fmt"
+	"go/version"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/imports"
+	gofumpt "mvdan.cc/gofumpt/format"
 )
 
 // OutputPath returns the generated-file path for a source file: <base>_tommy.go
@@ -46,6 +48,16 @@ func Render(dir, filename string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("goimports: %w\nraw output:\n%s", err, buf.String())
 	}
+
+	// goimports only runs gofmt, which leaves consecutive top-level declarations
+	// packed (no blank line between them). Consumers gate generated code on
+	// gofumpt, so format with gofumpt as a final pass (#134). LangVersion is the
+	// consumer module's Go version so the output matches the version their own
+	// gofumpt gate runs under, not just gofumpt's go1 default.
+	formatted, err = gofumpt.Source(formatted, gofumpt.Options{LangVersion: detectGoLangVersion(dir)})
+	if err != nil {
+		return nil, fmt.Errorf("gofumpt: %w\nraw output:\n%s", err, formatted)
+	}
 	return formatted, nil
 }
 
@@ -66,6 +78,40 @@ var goimportsOpts = &imports.Options{
 	TabIndent:  true,
 	TabWidth:   8,
 	FormatOnly: true,
+}
+
+// detectGoLangVersion returns the enclosing module's Go language version as a
+// go/version-valid string (e.g. "go1.26"), read from the `go` directive of the
+// nearest go.mod walking up from dir. gofumpt uses it to decide which
+// version-gated rules apply; matching the consumer module's version keeps
+// tommy's formatting in lock-step with the gofumpt gate that module runs.
+// Best-effort: returns "" (gofumpt's go1 default) when no go.mod or directive
+// is found, or the directive isn't a valid version.
+func detectGoLangVersion(dir string) string {
+	d, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	for {
+		data, err := os.ReadFile(filepath.Join(d, "go.mod"))
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && fields[0] == "go" {
+					if v := "go" + fields[1]; version.IsValid(v) {
+						return v
+					}
+					return ""
+				}
+			}
+			return "" // go.mod present but no `go` directive
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return "" // reached filesystem root without finding go.mod
+		}
+		d = parent
+	}
 }
 
 func detectPackageName(dir, filename string) (string, error) {

@@ -171,7 +171,7 @@
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-9MbbXy7F/Qy8NymMrtiLquhUDdVB2HY/8JrZNeRH18o=";
+          outputHash = "sha256-2VUHE0FE/062q5QHrgrSrpU3IEAMuANEn5nAQILPkeI=";
         };
 
         # Runs the rich Go ./generate integration suite (incl. the #81/#82
