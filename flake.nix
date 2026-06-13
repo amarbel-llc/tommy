@@ -228,14 +228,101 @@
           done
           touch $out
         '';
+
+        # conformist integration, owned by tommy so the consuming flake resolves
+        # which tommy backs it (no per-repo driver duplication or separate
+        # binary pinning). THIS flake's tommyBin is baked into the codegen
+        # driver's PATH, so a consumer that pins `tommy` as a flake input gets a
+        # driver whose `tommy` matches the library their `//go:generate tommy
+        # generate` codegen was produced with.
+        #
+        # The driver walks the tree for `//go:generate tommy generate`
+        # directives and runs `tommy generate --check` (check) / `tommy generate`
+        # (repair) per file, mirroring `go generate` but scoped to tommy. `go`
+        # comes from the AMBIENT PATH (the consumer's toolchain, which must match
+        # their codegen's Go version) and the driver skips (exit 0) when it is
+        # missing — so it is a safe no-op in a sandboxed check lane and acts in
+        # the consumer's devshell / repair lane.
+        conformistTommyCodegen = pkgs.writeShellApplication {
+          name = "conformist-tommy-codegen";
+          runtimeInputs = [
+            tommyBin
+            pkgs.coreutils
+            pkgs.findutils
+            pkgs.gnugrep
+          ];
+          text = ''
+            mode="repair"
+            if [ "''${1:-}" = "--check" ]; then
+              mode="check"
+            fi
+            if ! command -v tommy >/dev/null 2>&1; then
+              echo "tommy-codegen: tommy not on PATH; skipping" >&2
+              exit 0
+            fi
+            if ! command -v go >/dev/null 2>&1; then
+              echo "tommy-codegen: go not on PATH; skipping" >&2
+              exit 0
+            fi
+            status=0
+            while IFS= read -r f; do
+              dir=$(dirname "$f")
+              base=$(basename "$f")
+              if [ "$mode" = "check" ]; then
+                ( cd "$dir" || exit 1; GOFILE="$base" tommy generate --check; ) || status=1
+              else
+                ( cd "$dir" || exit 1; GOFILE="$base" tommy generate; ) || status=1
+              fi
+            done < <(grep -rIl --include='*.go' 'go:generate tommy generate' . 2>/dev/null | grep -v '/result' || true)
+            exit "$status"
+          '';
+        };
+
+        # A conformist Nix module wiring both halves of the integration using
+        # THIS flake's tommy. Import it into a `conformist.lib.evalModule` /
+        # `submoduleWith` module list and the generated config gains a
+        # tommy-backed [formatter.tommy] + [linter.tommy-codegen] with no further
+        # wiring — the flake resolves the binary. Emits raw `settings.*` (the
+        # freeform surface) rather than toggling conformist's own
+        # programs.tommy / linters.tommy-codegen, so it composes regardless of
+        # whether those generic modules are also present.
+        #
+        # The codegen CHECK is a no-op `true` (so `conformist check` never
+        # reports false drift — `tommy generate --check` compares against tommy's
+        # raw render, which can diverge from a committed file that a repo re-runs
+        # through gofumpt, and it needs the go toolchain a sandbox lacks); the
+        # REPAIR command regenerates, so codegen lands in `conformist --commit`.
+        conformistModule =
+          { lib, ... }:
+          {
+            settings.formatter.tommy = {
+              command = lib.getExe tommyBin;
+              options = [ "fmt" ];
+              includes = [ "*.toml" ];
+            };
+            settings.linter.tommy-codegen = {
+              command = "true";
+              "repair-command" = lib.getExe conformistTommyCodegen;
+              includes = [
+                "*.go"
+                "**/*.go"
+              ];
+              passes-files = false;
+            };
+          };
       in
       {
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
+          conformist-tommy-codegen = conformistTommyCodegen;
           inherit go-pkgs go-pkgs-test;
           go-generate = goGenerateCheck;
           fuzz-sweep = goFuzzSweep;
         };
+
+        # conformist Nix module (per-system because it bakes this system's
+        # tommyBin + driver). Consumers: `imports = [ tommy.conformistModule.${system} ];`.
+        inherit conformistModule;
 
         # Every bats lane is a check, so `nix flake check` (the merge-hook
         # `just validate`) runs the full matrix: each file_tag lane plus the
