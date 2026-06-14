@@ -73,7 +73,7 @@
 
         tommyBin = pkgs.buildGoApplication {
           pname = "tommy";
-          version = "0.4.5";
+          version = "0.4.6";
           # shortRev when the tree is clean; dirtyShortRev ("<sha>-dirty") when
           # it isn't — so a dirty build is distinguishable in `tommy version` and
           # the generated-file header (#125). Flakes expose neither on a non-git
@@ -252,9 +252,9 @@
             pkgs.gnugrep
           ];
           text = ''
-            mode="repair"
+            gen_args=(generate)
             if [ "''${1:-}" = "--check" ]; then
-              mode="check"
+              gen_args+=(--check)
             fi
             if ! command -v tommy >/dev/null 2>&1; then
               echo "tommy-codegen: tommy not on PATH; skipping" >&2
@@ -268,11 +268,7 @@
             while IFS= read -r f; do
               dir=$(dirname "$f")
               base=$(basename "$f")
-              if [ "$mode" = "check" ]; then
-                ( cd "$dir" || exit 1; GOFILE="$base" tommy generate --check; ) || status=1
-              else
-                ( cd "$dir" || exit 1; GOFILE="$base" tommy generate; ) || status=1
-              fi
+              ( cd "$dir" || exit 1; GOFILE="$base" tommy "''${gen_args[@]}"; ) || status=1
             done < <(grep -rIl --include='*.go' 'go:generate tommy generate' . 2>/dev/null | grep -v '/result' || true)
             exit "$status"
           '';
@@ -303,10 +299,10 @@
             settings.linter.tommy-codegen = {
               command = "true";
               "repair-command" = lib.getExe conformistTommyCodegen;
-              includes = [
-                "*.go"
-                "**/*.go"
-              ];
+              # `*.go` alone covers every depth: conformist compiles globs via
+              # gobwas/glob.Compile with no separator arg, so `*` matches across
+              # `/` (same single-pattern convention as conformist's own gofmt).
+              includes = [ "*.go" ];
               passes-files = false;
             };
           };
