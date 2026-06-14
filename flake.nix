@@ -284,9 +284,12 @@
         # whether those generic modules are also present.
         #
         # The codegen CHECK is a no-op `true` (so `conformist check` never
-        # reports false drift — `tommy generate --check` compares against tommy's
-        # raw render, which can diverge from a committed file that a repo re-runs
-        # through gofumpt, and it needs the go toolchain a sandbox lacks); the
+        # reports false drift): `tommy generate` needs the go toolchain
+        # (go/packages) that a sandboxed conformist check lane lacks, so it
+        # cannot run as a check there. Since #134 tommy gofumpt's its own output
+        # (version-matched to the consumer's go.mod), the generated code is
+        # gofumpt-canonical — so enforcing drift, if a consumer wants it, belongs
+        # in a go-available lane (`tommy generate` + `git diff`), not here. The
         # REPAIR command regenerates, so codegen lands in `conformist --commit`.
         conformistModule =
           { lib, ... }:
