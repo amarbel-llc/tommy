@@ -10943,6 +10943,7 @@ type Session struct {
 }
 
 type Direnv struct {
+	Envrc  []string          `+"`"+`toml:"envrc"`+"`"+`
 	Dotenv map[string]string `+"`"+`toml:"dotenv"`+"`"+`
 }
 
@@ -11072,6 +11073,25 @@ func TestEmptyArrayOfTables(t *testing.T) {
 	d := doc.Data()
 	if d.Apps == nil { t.Fatal("Apps = nil, want empty non-nil slice") }
 	if len(d.Apps) != 0 { t.Fatalf("len(Apps) = %d, want 0", len(d.Apps)) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+
+// Issue #137: a scalar key on the parent table preceding the [parent.subtable]
+// header must not drop the sub-table. The pointer-struct parent (Direnv) carries
+// both a scalar slice (envrc) and a map sub-table (dotenv); the report's failing
+// shape declares envrc before [direnv.dotenv]. The report inferred the trigger
+// was "scalar key on the parent before the sub-table header"; this pins that the
+// generated decoder reads dotenv regardless of the preceding scalar.
+func TestScalarBeforeSubtable(t *testing.T) {
+	input := []byte("[direnv]\nenvrc = [\"source_up\", \"use flake\"]\n\n[direnv.dotenv]\nPIGGY_STORE_DIR = \"/x\"\n")
+	doc, err := DecodeConfig(input)
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	if d.Direnv == nil { t.Fatal("Direnv is nil") }
+	if got := d.Direnv.Dotenv["PIGGY_STORE_DIR"]; got != "/x" {
+		t.Fatalf("Dotenv[PIGGY_STORE_DIR] = %q, want /x (sub-table silently dropped)", got)
+	}
+	if len(d.Direnv.Envrc) != 2 { t.Fatalf("Envrc = %v, want 2 entries", d.Direnv.Envrc) }
 	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
 }
 `)
