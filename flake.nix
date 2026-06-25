@@ -238,15 +238,27 @@
         #
         # The driver walks the tree for `//go:generate tommy generate`
         # directives and runs `tommy generate --check` (check) / `tommy generate`
-        # (repair) per file, mirroring `go generate` but scoped to tommy. `go`
-        # comes from the AMBIENT PATH (the consumer's toolchain, which must match
-        # their codegen's Go version) and the driver skips (exit 0) when it is
-        # missing — so it is a safe no-op in a sandboxed check lane and acts in
-        # the consumer's devshell / repair lane.
+        # (repair) per file, mirroring `go generate` but scoped to tommy.
+        #
+        # `go` is baked into runtimeInputs (pkgs-master.go) rather than taken
+        # from the ambient PATH, so the lane is hermetic and works in a BARE env
+        # — notably spinclass's git pre-commit / pre-merge hooks, which run the
+        # repair command with a plain os.Environ() (no devShell / direnv). An
+        # earlier version relied on ambient go and skipped (exit 0) when it was
+        # missing; that silently no-op'd the repair lane in exactly those bare
+        # hooks, letting codegen drift survive to the merge gate (tommy#138).
+        #
+        # Baking a pinned go is safe because `tommy generate`'s output is NOT
+        # sensitive to the go *toolchain* version: rendering and gofmt/gofumpt
+        # are libraries compiled into tommyBin, and gofumpt's LangVersion is read
+        # from the consumer module's go.mod on disk (detectGoLangVersion), not
+        # the toolchain. The ambient go was only ever used by go/packages
+        # (`go list`) for type metadata, which is version-insensitive here.
         conformistTommyCodegen = pkgs.writeShellApplication {
           name = "conformist-tommy-codegen";
           runtimeInputs = [
             tommyBin
+            pkgs-master.go
             pkgs.coreutils
             pkgs.findutils
             pkgs.gnugrep
@@ -258,10 +270,6 @@
             fi
             if ! command -v tommy >/dev/null 2>&1; then
               echo "tommy-codegen: tommy not on PATH; skipping" >&2
-              exit 0
-            fi
-            if ! command -v go >/dev/null 2>&1; then
-              echo "tommy-codegen: go not on PATH; skipping" >&2
               exit 0
             fi
             status=0
