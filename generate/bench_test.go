@@ -540,7 +540,8 @@ func BenchmarkDecodeOnly(b *testing.B) {
 
 	dir := b.TempDir()
 	writeFixtureB(b, dir, "go.mod", fmt.Sprintf(
-		"module example.com/bench\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => %s\n", repoRoot))
+		"module example.com/bench\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => %s\n", repoRoot,
+	))
 	writeFixtureB(b, dir, "config.go", benchGoFile)
 	writeFixtureB(b, dir, "bench_test.go", benchTestFile)
 

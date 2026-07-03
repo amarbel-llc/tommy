@@ -95,27 +95,35 @@ func reprOf(t spkType, omitEmpty bool, scoped bool) repr {
 			// Array-of-tables: entry-driven encode → empty is silent and collapses
 			// to nil, though decode reads an explicit `= []` (#1/#94). A pointer
 			// element can additionally be nil, which encode skips (lossy).
-			return repr{MayBeSilent: true, SilentFaithful: false,
-				EncodeWitnessesEmpty: false, DecodeReadsEmpty: true, FullyFaithful: false}
+			return repr{
+				MayBeSilent: true, SilentFaithful: false,
+				EncodeWitnessesEmpty: false, DecodeReadsEmpty: true, FullyFaithful: false,
+			}
 		}
 		// []scalar: nil omits (faithful), empty emits `= []` — unless omitempty,
 		// which collapses empty to absent (decodes nil ≠ empty: lossy at empty).
-		return repr{MayBeSilent: true, SilentFaithful: !omitEmpty,
-			EncodeWitnessesEmpty: !omitEmpty, DecodeReadsEmpty: true, FullyFaithful: !omitEmpty}
+		return repr{
+			MayBeSilent: true, SilentFaithful: !omitEmpty,
+			EncodeWitnessesEmpty: !omitEmpty, DecodeReadsEmpty: true, FullyFaithful: !omitEmpty,
+		}
 	case spkMap:
 		_, elemIsMap := s.Elem.(spkMap) // map[string]NamedMap: entry-driven too
 		if elemIsStructish(s.Elem) || elemIsMap {
 			// map[string]struct / map[string]NamedMap: entry-driven encode
 			// (compEncMapStruct / compEncMapMap gate on len > 0) → empty silent,
 			// though decode materializes a non-nil map from a bare [table].
-			return repr{MayBeSilent: true, SilentFaithful: false,
-				EncodeWitnessesEmpty: false, DecodeReadsEmpty: true, FullyFaithful: false}
+			return repr{
+				MayBeSilent: true, SilentFaithful: false,
+				EncodeWitnessesEmpty: false, DecodeReadsEmpty: true, FullyFaithful: false,
+			}
 		}
 		// map[string]scalar: nil omits, non-nil (incl. empty) emits its [table]
 		// header. compSetMapScalar has no omitempty branch, so the tag does not
 		// widen the silent set here.
-		return repr{MayBeSilent: true, SilentFaithful: true,
-			EncodeWitnessesEmpty: true, DecodeReadsEmpty: true, FullyFaithful: true}
+		return repr{
+			MayBeSilent: true, SilentFaithful: true,
+			EncodeWitnessesEmpty: true, DecodeReadsEmpty: true, FullyFaithful: true,
+		}
 	case spkStruct:
 		// A VALUE struct field is always faithful in itself: when its header is
 		// emitted it witnesses; when #89 skips the header the silent value is an
@@ -128,8 +136,10 @@ func reprOf(t spkType, omitEmpty bool, scoped bool) repr {
 		}
 	case spkDelegated:
 		// Delegated structs always emit their table header on encode.
-		return repr{MayBeSilent: false, SilentFaithful: true,
-			FullyFaithful: structFullyFaithful(s.InnerInfo, true)}
+		return repr{
+			MayBeSilent: false, SilentFaithful: true,
+			FullyFaithful: structFullyFaithful(s.InnerInfo, true),
+		}
 	}
 	return repr{MayBeSilent: true}
 }
@@ -145,11 +155,15 @@ func reprPtr(p spkPtr, scoped bool) repr {
 		if structHeaderSkipped(e.InnerInfo, scoped) {
 			return repr{MayBeSilent: true, SilentFaithful: false, FullyFaithful: false}
 		}
-		return repr{MayBeSilent: true, SilentFaithful: true,
-			FullyFaithful: structFullyFaithful(e.InnerInfo, scoped)}
+		return repr{
+			MayBeSilent: true, SilentFaithful: true,
+			FullyFaithful: structFullyFaithful(e.InnerInfo, scoped),
+		}
 	case spkDelegated:
-		return repr{MayBeSilent: true, SilentFaithful: true,
-			FullyFaithful: structFullyFaithful(e.InnerInfo, true)}
+		return repr{
+			MayBeSilent: true, SilentFaithful: true,
+			FullyFaithful: structFullyFaithful(e.InnerInfo, true),
+		}
 	default:
 		// *scalar: a non-nil pointer always emits `key = value`, zero included
 		// (compSetPrimitive's pointer path has no zero suppression).

@@ -7,7 +7,7 @@ setup() {
 }
 
 function fmt_normalizes_whitespace_around_equals { # @test
-  echo 'key   =   "value"' > "$BATS_TEST_TMPDIR/test.toml"
+  echo 'key   =   "value"' >"$BATS_TEST_TMPDIR/test.toml"
   run tommy fmt "$BATS_TEST_TMPDIR/test.toml"
   assert_success
   run cat "$BATS_TEST_TMPDIR/test.toml"
@@ -17,7 +17,7 @@ function fmt_normalizes_whitespace_around_equals { # @test
 # With stats-me opt-in (STATSD_* set) fmt must still succeed: telemetry is
 # fire-and-forget UDP, so a port with nothing listening must not perturb it.
 function fmt_with_stats_me_enabled_still_succeeds { # @test
-  echo 'key   =   "value"' > "$BATS_TEST_TMPDIR/test.toml"
+  echo 'key   =   "value"' >"$BATS_TEST_TMPDIR/test.toml"
   export STATSD_HOST=127.0.0.1
   export STATSD_PORT=18125
   run tommy fmt "$BATS_TEST_TMPDIR/test.toml"
@@ -27,19 +27,19 @@ function fmt_with_stats_me_enabled_still_succeeds { # @test
 }
 
 function fmt_check_exits_nonzero_for_unformatted { # @test
-  echo 'key   =   "value"' > "$BATS_TEST_TMPDIR/test.toml"
+  echo 'key   =   "value"' >"$BATS_TEST_TMPDIR/test.toml"
   run tommy fmt --check "$BATS_TEST_TMPDIR/test.toml"
   assert_failure
 }
 
 function fmt_check_exits_zero_for_formatted { # @test
-  echo 'key = "value"' > "$BATS_TEST_TMPDIR/test.toml"
+  echo 'key = "value"' >"$BATS_TEST_TMPDIR/test.toml"
   run tommy fmt --check "$BATS_TEST_TMPDIR/test.toml"
   assert_success
 }
 
 function fmt_preserves_comments { # @test
-  cat > "$BATS_TEST_TMPDIR/test.toml" <<'EOF'
+  cat >"$BATS_TEST_TMPDIR/test.toml" <<'EOF'
 # important comment
 key = "value"
 EOF

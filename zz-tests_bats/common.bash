@@ -37,7 +37,7 @@ setup_tommy_proj() {
     repo_root="$(cd "$(dirname "$BATS_TEST_FILE")/.." && pwd)"
   fi
 
-  cat > "$BATS_TEST_TMPDIR/proj/go.mod" <<EOF
+  cat >"$BATS_TEST_TMPDIR/proj/go.mod" <<EOF
 module example.com/batstest
 
 go 1.26

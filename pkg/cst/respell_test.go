@@ -27,7 +27,8 @@ func assertRespell(t *testing.T, fn func([]byte) ([]byte, error), in, want strin
 
 func TestRespellInlineTables(t *testing.T) {
 	t.Run("single-segment leaf table -> inline at root", func(t *testing.T) {
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[env]\nFOO = \"bar\"\nBAZ = \"qux\"\n",
 			"env = { FOO = \"bar\", BAZ = \"qux\" }\n",
 		)
@@ -36,14 +37,16 @@ func TestRespellInlineTables(t *testing.T) {
 	t.Run("two-level subtree -> nested inline value", func(t *testing.T) {
 		// [direnv] + [direnv.dotenv] folds into the whole subtree as one nested
 		// inline value (#111 deep-inline), not a partial header + inline-inner.
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[direnv]\n[direnv.dotenv]\nFOO = \"bar\"\n",
 			"direnv = { dotenv = { FOO = \"bar\" } }\n",
 		)
 	})
 
 	t.Run("leading scalar field folds before the sub-table", func(t *testing.T) {
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[direnv]\nname = \"x\"\n[direnv.dotenv]\nFOO = \"bar\"\n",
 			"direnv = { name = \"x\", dotenv = { FOO = \"bar\" } }\n",
 		)
@@ -51,7 +54,8 @@ func TestRespellInlineTables(t *testing.T) {
 
 	t.Run("three-level subtree -> fully nested inline value", func(t *testing.T) {
 		// The #111 target: deep nesting reaches a fully-inline nested struct.
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[a]\n[a.b]\n[a.b.c]\nk = \"v\"\n",
 			"a = { b = { c = { k = \"v\" } } }\n",
 		)
@@ -59,7 +63,8 @@ func TestRespellInlineTables(t *testing.T) {
 
 	t.Run("non-leaf super-table deep-inlined", func(t *testing.T) {
 		// [a] owns [a.b]: the whole subtree folds into one nested inline value.
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[a]\n[a.b]\nk = \"v\"\n",
 			"a = { b = { k = \"v\" } }\n",
 		)
@@ -69,7 +74,8 @@ func TestRespellInlineTables(t *testing.T) {
 		// A map field's entries appear as deeper headers ([a.m.key]) with no bare
 		// [a.m] header. Deep-inlining [a] must FOLD them (group by the implicit
 		// "m" segment), not drop them — the rewrite is value-preserving.
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[a]\nname = \"x\"\n[a.m.k1]\nik = \"v1\"\n[a.m.k2]\nik = \"v2\"\n",
 			"a = { name = \"x\", m = { k1 = { ik = \"v1\" }, k2 = { ik = \"v2\" } } }\n",
 		)
@@ -109,7 +115,8 @@ func TestRespellInlineTables(t *testing.T) {
 
 	t.Run("quoted value bytes preserved verbatim", func(t *testing.T) {
 		// A value with an embedded escape must survive byte-for-byte (no re-render).
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[env]\nK = \"a\\tb\"\n",
 			"env = { K = \"a\\tb\" }\n",
 		)
@@ -141,7 +148,8 @@ func TestRespellInlineTables(t *testing.T) {
 		// each is hoisted before any remaining header (here none remain), so a bare
 		// root key-value never binds to a preceding table (#107 regression). Order
 		// follows the single-segment leaders' document order.
-		assertRespell(t, RespellInlineTables,
+		assertRespell(
+			t, RespellInlineTables,
 			"[other]\n[other.sub]\nk = \"v\"\n[env]\nFOO = \"bar\"\n",
 			"other = { sub = { k = \"v\" } }\nenv = { FOO = \"bar\" }\n",
 		)
@@ -150,7 +158,8 @@ func TestRespellInlineTables(t *testing.T) {
 
 func TestRespellDottedKeys(t *testing.T) {
 	t.Run("single-segment leaf table -> dotted keys", func(t *testing.T) {
-		assertRespell(t, RespellDottedKeys,
+		assertRespell(
+			t, RespellDottedKeys,
 			"[inner]\nname = \"a\"\nport = 8080\n",
 			"inner.name = \"a\"\ninner.port = 8080\n",
 		)
@@ -200,14 +209,16 @@ func TestRespellDottedKeysHoistsBelowLateTable(t *testing.T) {
 	// A single-segment leaf table positioned AFTER another table must hoist its
 	// dotted keys ABOVE the first header — a root `a.x = v` after `[other]` would
 	// otherwise bind under [other], changing the value.
-	assertRespell(t, RespellDottedKeys,
+	assertRespell(
+		t, RespellDottedKeys,
 		"[[other]]\nk = \"v\"\n[a]\nx = 1\n",
 		"a.x = 1\n[[other]]\nk = \"v\"\n",
 	)
 }
 
 func TestRespellInlineArraysHoistsBelowLateTable(t *testing.T) {
-	assertRespell(t, RespellInlineArrays,
+	assertRespell(
+		t, RespellInlineArrays,
 		"[other]\nk = \"v\"\n[[xs]]\nh = \"a\"\n",
 		"xs = [ { h = \"a\" } ]\n[other]\nk = \"v\"\n",
 	)
@@ -218,7 +229,8 @@ func TestRespellImplicitParentsArrayScopeSafe(t *testing.T) {
 	// because a SIBLING entry has a same-keyed entry with deeper children: the
 	// "immediately-following header extends it" rule keeps it (its own scope has
 	// no deeper child). Only [xs.m.b], whose own sub-table follows it, collapses.
-	assertRespell(t, RespellImplicitParents,
+	assertRespell(
+		t, RespellImplicitParents,
 		"[[xs]]\n[xs.m.a]\n[xs.m.b]\n[xs.m.b.inner]\nk = \"v\"\n[[xs]]\n[xs.m.a]\n[xs.m.a.inner]\nk = \"w\"\n",
 		"[[xs]]\n[xs.m.a]\n[xs.m.b.inner]\nk = \"v\"\n[[xs]]\n[xs.m.a.inner]\nk = \"w\"\n",
 	)
@@ -226,21 +238,24 @@ func TestRespellImplicitParentsArrayScopeSafe(t *testing.T) {
 
 func TestRespellImplicitParents(t *testing.T) {
 	t.Run("empty parent of a sub-table is dropped", func(t *testing.T) {
-		assertRespell(t, RespellImplicitParents,
+		assertRespell(
+			t, RespellImplicitParents,
 			"[direnv]\n[direnv.dotenv]\nFOO = \"bar\"\n",
 			"[direnv.dotenv]\nFOO = \"bar\"\n",
 		)
 	})
 
 	t.Run("empty parent of an array-table is dropped", func(t *testing.T) {
-		assertRespell(t, RespellImplicitParents,
+		assertRespell(
+			t, RespellImplicitParents,
 			"[srv]\n[[srv.hosts]]\nname = \"a\"\n",
 			"[[srv.hosts]]\nname = \"a\"\n",
 		)
 	})
 
 	t.Run("chain of empty parents collapses", func(t *testing.T) {
-		assertRespell(t, RespellImplicitParents,
+		assertRespell(
+			t, RespellImplicitParents,
 			"[a]\n[a.b]\n[a.b.c]\nk = \"v\"\n",
 			"[a.b.c]\nk = \"v\"\n",
 		)
@@ -276,14 +291,16 @@ func TestRespellImplicitParents(t *testing.T) {
 
 func TestRespellInlineArrays(t *testing.T) {
 	t.Run("two leaf entries -> inline array of inline tables", func(t *testing.T) {
-		assertRespell(t, RespellInlineArrays,
+		assertRespell(
+			t, RespellInlineArrays,
 			"[[servers]]\nhost = \"a\"\n[[servers]]\nhost = \"b\"\n",
 			"servers = [ { host = \"a\" }, { host = \"b\" } ]\n",
 		)
 	})
 
 	t.Run("single entry", func(t *testing.T) {
-		assertRespell(t, RespellInlineArrays,
+		assertRespell(
+			t, RespellInlineArrays,
 			"[[servers]]\nhost = \"a\"\n",
 			"servers = [ { host = \"a\" } ]\n",
 		)
@@ -292,7 +309,8 @@ func TestRespellInlineArrays(t *testing.T) {
 	t.Run("empty entry inlines to empty table", func(t *testing.T) {
 		// A zero-valued [[servers]] entry has no body; it must inline to `{}` so the
 		// array rewrite fires deterministically regardless of entry contents.
-		assertRespell(t, RespellInlineArrays,
+		assertRespell(
+			t, RespellInlineArrays,
 			"[[servers]]\n[[servers]]\nhost = \"b\"\n",
 			"servers = [ {}, { host = \"b\" } ]\n",
 		)

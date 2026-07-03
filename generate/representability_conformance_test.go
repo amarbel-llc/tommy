@@ -67,7 +67,7 @@ func TestRepresentabilityConformance(t *testing.T) {
 			// A non-omitempty zero scalar is suppressed (no `b = false` in an
 			// empty doc) but decodes back to zero: silent AND faithful.
 			name: "zero-scalar-silent-faithful", shape: boolT,
-			predict: func(r repr) bool { return r.MayBeSilent && r.SilentFaithful },
+			predict:  func(r repr) bool { return r.MayBeSilent && r.SilentFaithful },
 			faithful: true, setLit: `c.B = false`, wantLit: `Config{}`, wireSilent: true,
 		},
 		{

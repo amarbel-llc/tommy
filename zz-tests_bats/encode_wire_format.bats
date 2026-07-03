@@ -20,7 +20,7 @@ setup() {
 function empty_non_omitempty_slices_emit_brackets { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -39,7 +39,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > wire_test.go <<'GOEOF'
+  cat >wire_test.go <<'GOEOF'
 package batstest
 
 import (
@@ -93,7 +93,7 @@ GOEOF
 function all_array_field_struct_omits_parent_table { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -113,7 +113,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > wire_test.go <<'GOEOF'
+  cat >wire_test.go <<'GOEOF'
 package batstest
 
 import (
@@ -170,7 +170,7 @@ GOEOF
 function map_struct_quoted_key_roundtrips { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -186,7 +186,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > wire_test.go <<'GOEOF'
+  cat >wire_test.go <<'GOEOF'
 package batstest
 
 import (

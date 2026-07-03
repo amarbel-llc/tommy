@@ -66,5 +66,5 @@ func fmtFile(path string, check bool) error {
 		return err
 	}
 
-	return os.WriteFile(path, output, 0644)
+	return os.WriteFile(path, output, 0o644)
 }

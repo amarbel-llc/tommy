@@ -22,13 +22,13 @@ function alias_field_imports_facade_not_internal { # @test
 
   mkdir -p internal/charlie/values pkgs/values
 
-  cat > internal/charlie/values/values.go <<'GOEOF'
+  cat >internal/charlie/values/values.go <<'GOEOF'
 package values
 
 type IntSlice []int
 GOEOF
 
-  cat > pkgs/values/main.go <<'GOEOF'
+  cat >pkgs/values/main.go <<'GOEOF'
 package values
 
 import internal "example.com/batstest/internal/charlie/values"
@@ -36,7 +36,7 @@ import internal "example.com/batstest/internal/charlie/values"
 type IntSlice = internal.IntSlice
 GOEOF
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 import "example.com/batstest/pkgs/values"

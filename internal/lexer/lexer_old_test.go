@@ -4,10 +4,10 @@ import "bytes"
 
 // lexerOld is the original []byte-based lexer, preserved for benchmarking.
 type lexerOld struct {
-	input  []byte
-	pos    int
-	state  lexerState
-	tokens []Token
+	input        []byte
+	pos          int
+	state        lexerState
+	tokens       []Token
 	bracketDepth int
 	braceDepth   int
 }

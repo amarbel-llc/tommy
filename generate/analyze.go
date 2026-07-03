@@ -992,7 +992,8 @@ func checkDelegationImportable(importerPath string, fi FieldInfo) error {
 	}
 	return fmt.Errorf(
 		"cannot delegate decoding of %s: its generated Decode/Encode methods live in internal package %q, which %q may not import (Go internal-package rule). This type is reached through a re-export alias over an internal package. Generate the facade in copy mode so the type is concrete in the public package, or mark the field `toml:\"-\"`",
-		typeName, importPath, importerPath)
+		typeName, importPath, importerPath,
+	)
 }
 
 // resolvingTypes tracks which struct types are currently being resolved
@@ -1029,7 +1030,7 @@ func resolveStructByName(pkg *packages.Package, name string) (StructInfo, error)
 						}
 					}
 					// Non-struct types (interfaces, etc.) have no TOML fields to promote.
-				return StructInfo{}, nil
+					return StructInfo{}, nil
 				}
 				return analyzeStruct(pkg, name, structType)
 			}

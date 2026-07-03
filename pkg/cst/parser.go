@@ -88,7 +88,8 @@ func (p *parser) parseArrayTable() *Node {
 
 	// [[ is a single token (TokenDoubleBracketOpen) — emit as two NodeBracketOpen
 	openTok := p.advance()
-	table.Children = append(table.Children,
+	table.Children = append(
+		table.Children,
 		&Node{Kind: NodeBracketOpen, Raw: openTok.Raw[:1]},
 		&Node{Kind: NodeBracketOpen, Raw: openTok.Raw[1:2]},
 	)
@@ -98,7 +99,8 @@ func (p *parser) parseArrayTable() *Node {
 	// Expect ]]
 	if tok, ok := p.peek(); ok && tok.Kind == lexer.TokenDoubleBracketClose {
 		closeTok := p.advance()
-		table.Children = append(table.Children,
+		table.Children = append(
+			table.Children,
 			&Node{Kind: NodeBracketClose, Raw: closeTok.Raw[:1]},
 			&Node{Kind: NodeBracketClose, Raw: closeTok.Raw[1:2]},
 		)

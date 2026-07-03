@@ -9,7 +9,7 @@ setup() {
   # sandbox); shared with encode_wire_format.bats via common.bash.
   setup_tommy_proj
 
-  cat > "$BATS_TEST_TMPDIR/proj/config.go" <<'GOEOF'
+  cat >"$BATS_TEST_TMPDIR/proj/config.go" <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -37,7 +37,7 @@ function generate_check_detects_stale_output { # @test
 
   run go generate ./...
   assert_success
-  assert_output --partial "writing"   # the run-log diagnostic line
+  assert_output --partial "writing" # the run-log diagnostic line
   assert [ -f config_tommy.go ]
 
   export GOFILE=config.go
@@ -47,7 +47,7 @@ function generate_check_detects_stale_output { # @test
   assert_success
 
   # A drifted generated file → --check fails loudly, no write.
-  printf '\n// drift\n' >> config_tommy.go
+  printf '\n// drift\n' >>config_tommy.go
   run tommy generate --check
   assert_failure
   assert_output --partial "out of date"
@@ -105,7 +105,7 @@ function generate_round_trip_preserves_comments { # @test
   cd "$BATS_TEST_TMPDIR/proj"
   go generate ./...
 
-  cat > roundtrip_test.go <<'GOEOF'
+  cat >roundtrip_test.go <<'GOEOF'
 package batstest
 
 import (
@@ -147,7 +147,7 @@ function generate_zero_value_not_appended { # @test
   cd "$BATS_TEST_TMPDIR/proj"
   go generate ./...
 
-  cat > zeroval_test.go <<'GOEOF'
+  cat >zeroval_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -191,7 +191,7 @@ function generate_is_idempotent { # @test
 function generate_inline_table_map_string_string_decodes { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -208,7 +208,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > inline_test.go <<'GOEOF'
+  cat >inline_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -240,7 +240,7 @@ GOEOF
 function generate_inline_table_struct_decodes { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -258,7 +258,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > inline_test.go <<'GOEOF'
+  cat >inline_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -290,7 +290,7 @@ GOEOF
 function generate_inline_table_map_struct_decodes { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -307,7 +307,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > inline_test.go <<'GOEOF'
+  cat >inline_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -331,7 +331,7 @@ GOEOF
 function generate_inline_table_map_map_decodes { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 type Group map[string]string
@@ -345,7 +345,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > inline_test.go <<'GOEOF'
+  cat >inline_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -369,7 +369,7 @@ GOEOF
 function generate_inline_table_nested_struct_decodes { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -390,7 +390,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > inline_test.go <<'GOEOF'
+  cat >inline_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -419,7 +419,7 @@ GOEOF
 function generate_inline_inner_under_header_decodes { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 type Labels map[string]string
@@ -452,7 +452,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > inline_test.go <<'GOEOF'
+  cat >inline_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -488,7 +488,7 @@ GOEOF
 function generate_empty_array_of_tables_decodes { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -504,7 +504,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > empty_array_test.go <<'GOEOF'
+  cat >empty_array_test.go <<'GOEOF'
 package batstest
 
 import "testing"
@@ -540,7 +540,7 @@ GOEOF
 function generate_duplicate_inline_key_rejected { # @test
   cd "$BATS_TEST_TMPDIR/proj"
 
-  cat > config.go <<'GOEOF'
+  cat >config.go <<'GOEOF'
 package batstest
 
 //go:generate tommy generate
@@ -557,7 +557,7 @@ GOEOF
   run go generate ./...
   assert_success
 
-  cat > inline_test.go <<'GOEOF'
+  cat >inline_test.go <<'GOEOF'
 package batstest
 
 import (

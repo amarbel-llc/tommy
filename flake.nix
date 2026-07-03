@@ -18,6 +18,10 @@
       inputs.utils.follows = "utils";
       inputs.bats.follows = "bats";
     };
+    igloo.inputs.treefmt-nix.follows = "bats/treefmt-nix";
+    tap.inputs.treefmt-nix.follows = "bats/treefmt-nix";
+    utils.inputs.systems.follows = "igloo/systems";
+    igloo.inputs.nixpkgs-master.follows = "nixpkgs-master";
   };
 
   outputs =
@@ -42,10 +46,14 @@
         # downstream consumers that want to run tommy's tests. `extras`
         # keeps doc/*.scd in both outputs so the man-page postInstall
         # can find them. See amarbel-llc/nixpkgs#42, #46.
-        inherit (pkgs.mkGoPkgs {
-          src = self;
-          extras = [ "^doc/.*\\.scd$" ];
-        }) go-pkgs go-pkgs-test;
+        inherit
+          (pkgs.mkGoPkgs {
+            src = self;
+            extras = [ "^doc/.*\\.scd$" ];
+          })
+          go-pkgs
+          go-pkgs-test
+          ;
 
         # Vendor tree assembled from gomod2nix.toml for the offline
         # bats fixture below. tommy has no local `replace` directives
@@ -54,7 +62,9 @@
         tommyVendorEnv = pkgs.mkVendorEnv {
           go = pkgs-master.go;
           modulesStruct = builtins.fromTOML (builtins.readFile ./gomod2nix.toml);
-          goMod = { replace = { }; };
+          goMod = {
+            replace = { };
+          };
           pwd = ./.;
         };
 
@@ -179,24 +189,27 @@
         # the bats matrix's breadth doesn't reach. Builds from go-pkgs-test
         # (the test-inclusive source) with TOMMY_TEST_OFFLINE so the synthetic
         # modules resolve from goModCache without network. See #83.
-        goGenerateCheck = pkgs-master.runCommand "tommy-go-generate" {
-          nativeBuildInputs = [ pkgs-master.go ];
-        } ''
-          export HOME=$TMPDIR
-          export GOPATH=$TMPDIR/gopath
-          export GOCACHE=$TMPDIR/gocache
-          cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
-          export GOMODCACHE=$TMPDIR/modcache
-          export GOFLAGS=-mod=mod
-          export GOPROXY=off
-          export GOSUMDB=off
-          export GOTOOLCHAIN=local
-          export TOMMY_TEST_OFFLINE=1
-          cp -r --no-preserve=mode ${go-pkgs-test} ./src
-          cd ./src
-          go test ./generate/...
-          touch $out
-        '';
+        goGenerateCheck =
+          pkgs-master.runCommand "tommy-go-generate"
+            {
+              nativeBuildInputs = [ pkgs-master.go ];
+            }
+            ''
+              export HOME=$TMPDIR
+              export GOPATH=$TMPDIR/gopath
+              export GOCACHE=$TMPDIR/gocache
+              cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
+              export GOMODCACHE=$TMPDIR/modcache
+              export GOFLAGS=-mod=mod
+              export GOPROXY=off
+              export GOSUMDB=off
+              export GOTOOLCHAIN=local
+              export TOMMY_TEST_OFFLINE=1
+              cp -r --no-preserve=mode ${go-pkgs-test} ./src
+              cd ./src
+              go test ./generate/...
+              touch $out
+            '';
 
         # Multi-seed fuzz sweep. The go-generate check above runs the three
         # generative fuzzers (TestRoundTripFuzz, TestRoundTripFuzzDelegation,
@@ -207,27 +220,30 @@
         # build-time constant here; for ad-hoc local widening past it use the
         # network-mode debug-fuzz-*-sweep just recipes (which take an n= arg).
         fuzzSweepSeeds = 10;
-        goFuzzSweep = pkgs-master.runCommand "tommy-fuzz-sweep" {
-          nativeBuildInputs = [ pkgs-master.go ];
-        } ''
-          export HOME=$TMPDIR
-          export GOPATH=$TMPDIR/gopath
-          export GOCACHE=$TMPDIR/gocache
-          cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
-          export GOMODCACHE=$TMPDIR/modcache
-          export GOFLAGS=-mod=mod
-          export GOPROXY=off
-          export GOSUMDB=off
-          export GOTOOLCHAIN=local
-          export TOMMY_TEST_OFFLINE=1
-          cp -r --no-preserve=mode ${go-pkgs-test} ./src
-          cd ./src
-          for s in $(seq 1 ${toString fuzzSweepSeeds}); do
-            echo "=== fuzz seed $s ==="
-            TOMMY_FUZZ_SEED=$s go test -run '^TestRoundTrip' ./generate/ -count=1
-          done
-          touch $out
-        '';
+        goFuzzSweep =
+          pkgs-master.runCommand "tommy-fuzz-sweep"
+            {
+              nativeBuildInputs = [ pkgs-master.go ];
+            }
+            ''
+              export HOME=$TMPDIR
+              export GOPATH=$TMPDIR/gopath
+              export GOCACHE=$TMPDIR/gocache
+              cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
+              export GOMODCACHE=$TMPDIR/modcache
+              export GOFLAGS=-mod=mod
+              export GOPROXY=off
+              export GOSUMDB=off
+              export GOTOOLCHAIN=local
+              export TOMMY_TEST_OFFLINE=1
+              cp -r --no-preserve=mode ${go-pkgs-test} ./src
+              cd ./src
+              for s in $(seq 1 ${toString fuzzSweepSeeds}); do
+                echo "=== fuzz seed $s ==="
+                TOMMY_FUZZ_SEED=$s go test -run '^TestRoundTrip' ./generate/ -count=1
+              done
+              touch $out
+            '';
 
         # conformist integration, owned by tommy so the consuming flake resolves
         # which tommy backs it (no per-repo driver duplication or separate

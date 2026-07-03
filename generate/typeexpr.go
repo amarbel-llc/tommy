@@ -32,12 +32,14 @@ type spkScalar struct {
 	ElemType   string // prim wrapper: "pkg.Type" underlying-name conversion
 	ImportPath string // prim wrapper / cross-pkg codec
 }
-type spkPtr struct{ Elem spkType }
-type spkSlice struct {
-	Elem       spkType
-	TypeName   string // named slice-alias wrapper ("pkg.IntSlice"); "" if anonymous
-	ImportPath string
-}
+type (
+	spkPtr   struct{ Elem spkType }
+	spkSlice struct {
+		Elem       spkType
+		TypeName   string // named slice-alias wrapper ("pkg.IntSlice"); "" if anonymous
+		ImportPath string
+	}
+)
 type spkMap struct {
 	Elem       spkType
 	TypeName   string // named map-alias wrapper ("pkg.Labels"); "" if anonymous
