@@ -18,7 +18,7 @@ setup() {
 # subpackages resolve locally, so only tommy needs vendoring. (Cross-module
 # compile-illegality is covered by the Go suite; here we assert the import.)
 function alias_field_imports_facade_not_internal { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   mkdir -p internal/charlie/values pkgs/values
 

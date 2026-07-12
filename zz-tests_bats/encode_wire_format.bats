@@ -18,7 +18,7 @@ setup() {
 # both the primitive-slice and TextMarshaler-slice encode paths (madder's
 # `Encryption []markl.Id` is the latter).
 function empty_non_omitempty_slices_emit_brackets { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -91,7 +91,7 @@ GOEOF
 # the headerless output must still round-trip — exercising the non-pointer
 # struct's flat-key decode fallback.
 function all_array_field_struct_omits_parent_table { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -168,7 +168,7 @@ GOEOF
 # dot) must serialize its sub-table header quoted ([servers."a.b"]) and decode
 # back as a single map key, not nest as servers→a→b.
 function map_struct_quoted_key_roundtrips { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest

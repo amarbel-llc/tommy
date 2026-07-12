@@ -2,3 +2,4 @@
 
 [hooks]
 pre-merge = "just"
+pre-commit = "conformist-pre-commit"

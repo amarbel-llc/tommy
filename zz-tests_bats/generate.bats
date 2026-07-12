@@ -22,7 +22,7 @@ GOEOF
 }
 
 function generate_creates_companion_file { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   run go generate ./...
   assert_success
   assert [ -f config_tommy.go ]
@@ -33,7 +33,7 @@ function generate_creates_companion_file { # @test
 # file without writing, fail when it drifts (consumer-ergonomics; the run-log
 # would have caught maneater's output-filename mismatch).
 function generate_check_detects_stale_output { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   run go generate ./...
   assert_success
@@ -56,7 +56,7 @@ function generate_check_detects_stale_output { # @test
 # With stats-me opt-in (STATSD_* set) generation must still succeed: telemetry is
 # fire-and-forget UDP, so a port with nothing listening must not perturb it.
 function generate_with_stats_me_enabled_still_succeeds { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   export STATSD_HOST=127.0.0.1
   export STATSD_PORT=18125
   run go generate ./...
@@ -65,7 +65,7 @@ function generate_with_stats_me_enabled_still_succeeds { # @test
 }
 
 function generate_output_contains_decode_function { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   run go generate ./...
   assert_success
   run grep -c "func DecodeConfig(" config_tommy.go
@@ -73,7 +73,7 @@ function generate_output_contains_decode_function { # @test
 }
 
 function generate_output_contains_encode_method { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   run go generate ./...
   assert_success
   run grep -c "func (d \*ConfigDocument) Encode" config_tommy.go
@@ -81,7 +81,7 @@ function generate_output_contains_encode_method { # @test
 }
 
 function generate_output_compiles { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   run go generate ./...
   assert_success
   run go build ./...
@@ -93,7 +93,7 @@ function generate_output_compiles { # @test
 # empty output means the generated file is already gofumpt-canonical.
 function generate_output_is_gofumpt_clean { # @test
   command -v gofumpt >/dev/null || skip "gofumpt not on PATH"
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   run go generate ./...
   assert_success
   run gofumpt -l config_tommy.go
@@ -102,7 +102,7 @@ function generate_output_is_gofumpt_clean { # @test
 }
 
 function generate_round_trip_preserves_comments { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   go generate ./...
 
   cat >roundtrip_test.go <<'GOEOF'
@@ -144,7 +144,7 @@ GOEOF
 }
 
 function generate_zero_value_not_appended { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
   go generate ./...
 
   cat >zeroval_test.go <<'GOEOF'
@@ -174,7 +174,7 @@ GOEOF
 }
 
 function generate_is_idempotent { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   go generate ./...
   cp config_tommy.go "$BATS_TEST_TMPDIR/first.go"
@@ -189,7 +189,7 @@ function generate_is_idempotent { # @test
 # sub-table form (`[parent.k]`). Covers the top-level map and a map nested
 # under a parent struct (the spinclass [direnv.dotenv] case).
 function generate_inline_table_map_string_string_decodes { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -238,7 +238,7 @@ GOEOF
 # #108 axis 1: a nested struct / *struct field written as an inline table
 # (`inner = { name = "a" }`) must decode and be consumed, like the sub-table form.
 function generate_inline_table_struct_decodes { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -288,7 +288,7 @@ GOEOF
 # #108 axis 1: a map[string]struct field written as a nested inline table
 # (`actions = { build = { command = "make" } }`) must decode and be consumed.
 function generate_inline_table_map_struct_decodes { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -329,7 +329,7 @@ GOEOF
 # #108 axis 1: a map[string]NamedMap field written as a nested inline table
 # (`groups = { editors = { vim = "x" } }`) must decode and be consumed.
 function generate_inline_table_map_map_decodes { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -367,7 +367,7 @@ GOEOF
 # must decode the nested struct field too — the inline body is decoded
 # scope-relative so deeper inline tables resolve within it.
 function generate_inline_table_nested_struct_decodes { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -417,7 +417,7 @@ GOEOF
 # *struct (compNilGuard), a struct (compInTable), a map[string]struct
 # (compMapStruct) and a map[string]NamedMap (compMapMap) in one shape.
 function generate_inline_inner_under_header_decodes { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -486,7 +486,7 @@ GOEOF
 # empty-array leaf rather than skip it — which left the field nil AND reported
 # "servers" as undecoded. A populated [[servers]] must keep working.
 function generate_empty_array_of_tables_decodes { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest
@@ -538,7 +538,7 @@ GOEOF
 # cst.CheckNoDuplicateKeys after parse. Before this the second inline key was
 # silently dropped.
 function generate_duplicate_inline_key_rejected { # @test
-  cd "$BATS_TEST_TMPDIR/proj"
+  cd "$BATS_TEST_TMPDIR/proj" || exit
 
   cat >config.go <<'GOEOF'
 package batstest

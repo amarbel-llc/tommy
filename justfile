@@ -1,14 +1,48 @@
-default: validate build test
+default: lint validate build test
 
 # === aggregates ===
+
+lint: lint-fmt lint-worktree
 
 validate: validate-nix
 
 build: build-nix
 
-test: test-bats-nix test-go-generate-nix
+test: test-bats-nix test-go-generate-nix test-fuzz-sweep-nix
+
+codemod: codemod-fmt
 
 clean: clean-go-cache clean-go-modcache
+
+# === lint ===
+
+# Read-only formatting + the eng presets' file-based linters, via the sandboxed
+# checks.formatting derivation.
+[group('lint')]
+lint-fmt:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  system=$(nix eval --raw --impure --expr 'builtins.currentSystem')
+  nix build ".#checks.${system}.formatting" --no-link --print-build-logs
+
+# Impure eng checks (git remotes, sweatfile, agents-md, gomod2nix) against the
+# working tree; conformist comes from the devShell PATH.
+[group('lint')]
+lint-worktree:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cfg=$(nix build --no-link --print-out-paths '.#conformist-impure-config')
+  conformist check --config-file "$cfg" --tree-root .
+
+# === codemod ===
+
+[group('codemod')]
+codemod-fmt: codemod-fmt-tree
+
+# Format the tree in place (repair mode) via `nix fmt`.
+[group('codemod')]
+codemod-fmt-tree:
+  nix fmt
 
 # === pre-build ===
 
@@ -26,6 +60,7 @@ validate-nix:
 
 # === build ===
 
+# Build the tommy binary via nix.
 [group('build')]
 build-nix:
   nix build --show-trace --print-build-logs
@@ -40,9 +75,9 @@ test-bats-nix:
   # go/packages.Load network the nix sandbox can't provide.
   nix build .#bats-default --no-link --print-build-logs
 
-# Filter to a single tagged lane (e.g. `just test-bats-nix-tag fmt`).
-[group('post-build')]
-test-bats-nix-tag tag:
+# Drill into a single tagged bats lane (e.g. `just debug-bats-nix-tag fmt`).
+[group('debug')]
+debug-bats-nix-tag tag:
   nix build .#bats-{{tag}} --no-link --print-build-logs
 
 # Run the Go ./generate integration suite offline in the nix sandbox. The
@@ -69,10 +104,12 @@ test-fuzz-sweep-nix:
 update-gomod2nix:
   gomod2nix
 
+# Remove the Go build cache.
 [group('maintenance')]
 clean-go-cache:
   go clean -cache
 
+# Remove the Go module download cache.
 [group('maintenance')]
 clean-go-modcache:
   go clean -modcache
@@ -126,14 +163,17 @@ deploy-release new_version:
 
 # === debug ===
 
+# Drill into one or more integration tests by name pattern; see also debug-test.
 [group('debug')]
 debug-integration pattern='TestIntegration':
   go test -run '{{pattern}}' ./generate/ -v -count=1
 
+# Drill into one or more nesting tests by name pattern.
 [group('debug')]
 debug-nesting pattern='TestNesting':
   go test -run '{{pattern}}' ./generate/ -v -count=1
 
+# Print pass/fail counts and failing test names for the integration suite.
 [group('debug')]
 debug-summary:
   #!/usr/bin/env bash
@@ -236,6 +276,7 @@ debug-offline-fails:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
     go test ./generate/ -count=1 2>&1 | grep -E 'FAIL|panic|--- FAIL|undefined|cannot use' || true
 
+# Emit the generated *_tommy.go for a nesting test; inspect generated code.
 [group('debug')]
 debug-nesting-gen test_name:
   #!/usr/bin/env bash
@@ -247,6 +288,7 @@ debug-nesting-gen test_name:
     [ -f "$f" ] && echo "=== $f ===" && cat "$f"
   done
 
+# Scaffold a scratch Go module, run tommy generate on it, and print the output.
 [group('debug')]
 debug-gen:
   #!/usr/bin/env bash
@@ -279,6 +321,7 @@ debug-gen:
   cd "$dir" && GOFILE=config.go ./tommy generate
   cat "$dir/config_tommy.go"
 
+# Run the backend benchmark test to compare codegen backends.
 [group('debug')]
 debug-bench:
   go test -run TestBenchmarkBackends ./generate/ -v -count=1

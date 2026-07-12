@@ -8,7 +8,8 @@ require_bin TOMMY_BIN tommy
 
 # Put tommy's directory on PATH so `go generate` finds it.
 if [[ -n ${TOMMY_BIN:-} ]]; then
-  export PATH="$(dirname "$(realpath "$TOMMY_BIN")"):$PATH"
+  PATH="$(dirname "$(realpath "$TOMMY_BIN")"):$PATH"
+  export PATH
 fi
 
 # setup_tommy_proj scaffolds a synthetic downstream Go module under

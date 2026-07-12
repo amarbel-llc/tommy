@@ -22,10 +22,17 @@
     tap.inputs.treefmt-nix.follows = "bats/treefmt-nix";
     utils.inputs.systems.follows = "igloo/systems";
     igloo.inputs.nixpkgs-master.follows = "nixpkgs-master";
+    conformist = {
+      url = "git+https://code.linenisgreat.com/conformist.git";
+      inputs.igloo.follows = "igloo";
+      inputs.nixpkgs-master.follows = "nixpkgs-master";
+      inputs.utils.follows = "utils";
+    };
   };
 
   outputs =
     {
+      conformist,
       self,
       igloo,
       nixpkgs-master,
@@ -33,6 +40,15 @@
       bats,
       tap,
     }:
+    let
+      # version.env at repo root is the single source of truth for the release
+      # version. The fork's buildGoApplication auto-injects -X main.version from
+      # this; keeping it out of the flake avoids a version-bump always dirtying
+      # the derivation. See eng-versioning(7).
+      tommyVersion = builtins.head (
+        builtins.match ".*TOMMY_VERSION=([^\n]+).*" (builtins.readFile ./version.env)
+      );
+    in
     utils.lib.eachDefaultSystem (
       system:
       let
@@ -83,7 +99,7 @@
 
         tommyBin = pkgs.buildGoApplication {
           pname = "tommy";
-          version = "0.4.7";
+          version = tommyVersion;
           # shortRev when the tree is clean; dirtyShortRev ("<sha>-dirty") when
           # it isn't — so a dirty build is distinguishable in `tommy version` and
           # the generated-file header (#125). Flakes expose neither on a non-git
@@ -333,6 +349,23 @@
               passes-files = false;
             };
           };
+
+        conformistPkg = conformist.packages.${system}.default;
+
+        eval = conformist.lib.evalModule pkgs {
+          imports = [
+            conformist.lib.presets.eng
+            conformist.lib.presets.eng-go
+            ./conformist.nix
+          ];
+          package = conformistPkg;
+        };
+
+        impureEval = conformist.lib.evalModule pkgs {
+          imports = [ conformist.lib.presets.eng-impure ];
+          package = conformistPkg;
+          projectRootFile = "flake.nix";
+        };
       in
       {
         packages = batsLib.batsLaneOutputs // {
@@ -341,6 +374,9 @@
           inherit go-pkgs go-pkgs-test;
           go-generate = goGenerateCheck;
           fuzz-sweep = goFuzzSweep;
+          conformist-impure-config = impureEval.config.build.configFile;
+          conformist-pre-commit = eval.config.build.preCommit;
+          conformist-repair = eval.config.build.repair;
         };
 
         # conformist Nix module (per-system because it bakes this system's
@@ -355,6 +391,7 @@
         checks = batsLib.batsLaneOutputs // {
           go-generate = goGenerateCheck;
           fuzz-sweep = goFuzzSweep;
+          formatting = eval.config.build.check self;
         };
 
         devShells.default = pkgs-master.mkShell {
@@ -369,8 +406,13 @@
             bats.packages.${system}.bats
             bats.packages.${system}.batman
             tap.packages.${system}.tap-dancer
+            conformistPkg
+            eval.config.build.preCommit
+            eval.config.build.repair
           ];
         };
+
+        formatter = eval.config.build.wrapper;
       }
     );
 }

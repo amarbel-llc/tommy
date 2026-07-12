@@ -40,6 +40,7 @@ type (
 		ImportPath string
 	}
 )
+
 type spkMap struct {
 	Elem       spkType
 	TypeName   string // named map-alias wrapper ("pkg.Labels"); "" if anonymous
