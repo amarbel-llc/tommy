@@ -2,7 +2,7 @@
   description = "Tommy: a TOML library for Go";
 
   inputs = {
-    igloo.url = "git+https://code.linenisgreat.com/igloo.git";
+    igloo.url = "git+https://github.com/amarbel-llc/igloo.git";
     nixpkgs-master.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     utils.url = "https://flakehub.com/f/numtide/flake-utils/0.1.102";
     bats = {
@@ -23,7 +23,7 @@
     utils.inputs.systems.follows = "igloo/systems";
     igloo.inputs.nixpkgs-master.follows = "nixpkgs-master";
     conformist = {
-      url = "git+https://code.linenisgreat.com/conformist.git";
+      url = "git+https://github.com/amarbel-llc/conformist.git";
       inputs.igloo.follows = "igloo";
       inputs.nixpkgs-master.follows = "nixpkgs-master";
       inputs.utils.follows = "utils";
