@@ -18,8 +18,7 @@
       inputs.utils.follows = "utils";
       inputs.bats.follows = "bats";
     };
-    igloo.inputs.treefmt-nix.follows = "bats/treefmt-nix";
-    tap.inputs.treefmt-nix.follows = "bats/treefmt-nix";
+    tap.inputs.treefmt-nix.follows = "igloo/treefmt-nix";
     utils.inputs.systems.follows = "igloo/systems";
     igloo.inputs.nixpkgs-master.follows = "nixpkgs-master";
     conformist = {
