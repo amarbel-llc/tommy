@@ -27,6 +27,7 @@
       inputs.nixpkgs-master.follows = "nixpkgs-master";
       inputs.utils.follows = "utils";
     };
+    bats.inputs.conformist.follows = "conformist";
   };
 
   outputs =
