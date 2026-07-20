@@ -27,7 +27,7 @@
 
 ```
 cd /home/sasha/eng/repos/tommy
-go mod init github.com/amarbel-llc/tommy
+go mod init code.linenisgreat.com/tommy
 ```
 
 **Step 2: Create minimal CLI entrypoint**
@@ -370,7 +370,7 @@ package parser
 import (
 	"testing"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/cst"
 )
 
 func TestParseSimpleKeyValue(t *testing.T) {
@@ -522,7 +522,7 @@ Create `pkg/cst/parse.go`:
 ```go
 package cst
 
-import "github.com/amarbel-llc/tommy/internal/parser"
+import "code.linenisgreat.com/tommy/internal/parser"
 
 func Parse(input []byte) (*Node, error) {
 	return parser.Parse(input)
@@ -680,7 +680,7 @@ Create `pkg/document/document.go`:
 ```go
 package document
 
-import "github.com/amarbel-llc/tommy/pkg/cst"
+import "code.linenisgreat.com/tommy/pkg/cst"
 
 type Document struct {
 	root *cst.Node
@@ -844,7 +844,7 @@ Create `pkg/marshal/marshal.go`:
 ```go
 package marshal
 
-import "github.com/amarbel-llc/tommy/pkg/document"
+import "code.linenisgreat.com/tommy/pkg/document"
 
 type DocumentHandle struct {
 	doc *document.Document
@@ -955,7 +955,7 @@ Create `internal/formatter/formatter.go`:
 ```go
 package formatter
 
-import "github.com/amarbel-llc/tommy/pkg/cst"
+import "code.linenisgreat.com/tommy/pkg/cst"
 
 func Format(input []byte) []byte {
 	doc, err := cst.Parse(input)
@@ -1023,7 +1023,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/amarbel-llc/tommy/internal/formatter"
+	"code.linenisgreat.com/tommy/internal/formatter"
 )
 
 func runFmt(args []string) int {

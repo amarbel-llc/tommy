@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/cst"
 )
 
 // Format parses TOML input to a CST, applies formatting rules, and returns

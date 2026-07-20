@@ -288,9 +288,9 @@ func TestIntegrationValidation(t *testing.T) {
         "",
         "go 1.26",
         "",
-        "require github.com/amarbel-llc/tommy v0.0.0",
+        "require code.linenisgreat.com/tommy v0.0.0",
         "",
-        "replace github.com/amarbel-llc/tommy => " + repoRoot,
+        "replace code.linenisgreat.com/tommy => " + repoRoot,
         "",
     }, "\n"))
 

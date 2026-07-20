@@ -1,7 +1,7 @@
 package cst
 
 import (
-	"github.com/amarbel-llc/tommy/internal/lexer"
+	"code.linenisgreat.com/tommy/internal/lexer"
 )
 
 // parserOld is the original slice-based parser, preserved for benchmarking

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"io"
 
-	"github.com/amarbel-llc/tommy/internal/ringbuf"
+	"code.linenisgreat.com/tommy/internal/ringbuf"
 )
 
 type lexerState int

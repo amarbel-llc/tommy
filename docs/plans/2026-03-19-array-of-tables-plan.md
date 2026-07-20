@@ -1178,7 +1178,7 @@ func encodeFieldValue(fv reflect.Value) any {
 }
 ```
 
-Add `"github.com/amarbel-llc/tommy/pkg/cst"` to the import block in marshal.go.
+Add `"code.linenisgreat.com/tommy/pkg/cst"` to the import block in marshal.go.
 
 **Step 4: Run tests to verify they pass**
 

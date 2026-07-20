@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/amarbel-llc/tommy/internal/stats"
+	"code.linenisgreat.com/tommy/internal/stats"
 )
 
 var (

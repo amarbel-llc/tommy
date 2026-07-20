@@ -116,7 +116,7 @@ func roundTripSpellingCaseBody(name, value string) string {
 // fuzz_test.go, importing pkg/cst (for the Respell* calls) and "bytes"
 // alongside the shared helpers, and injecting checkSpelling.
 func spellingFuzzTestSource(testBodies string) string {
-	imp := "import (\n\t\"bytes\"\n\t\"fmt\"\n\t\"reflect\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n\n\t\"github.com/amarbel-llc/tommy/pkg/cst\"\n)\n\n"
+	imp := "import (\n\t\"bytes\"\n\t\"fmt\"\n\t\"reflect\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n\n\t\"code.linenisgreat.com/tommy/pkg/cst\"\n)\n\n"
 	coverage := "\tt.Logf(\"spelling fuzz: %d (case,variant) pairs rewrote the canonical encoding\", spellingChanged)\n\tif spellingChanged == 0 {\n\t\tt.Fatal(\"no variant rewrote the canonical encoding — the spelling fuzzer exercised nothing beyond canonical\")\n\t}\n"
 	return "package fuzz\n\n" + imp +
 		ptrHelperSrc +
@@ -156,8 +156,8 @@ func TestRoundTripSpellingFuzz(t *testing.T) {
 	}
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/fuzz", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, dir, "config.go", configSrc)
 	writeFixture(t, dir, "fuzz_test.go", testSrc)

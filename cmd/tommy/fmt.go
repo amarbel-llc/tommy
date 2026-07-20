@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/amarbel-llc/tommy/internal/formatter"
+	"code.linenisgreat.com/tommy/internal/formatter"
 )
 
 func runFmt(args []string) int {

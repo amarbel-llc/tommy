@@ -934,8 +934,8 @@ package {{.Package}}
 import (
     "fmt"
 
-    "github.com/amarbel-llc/tommy/pkg/cst"
-    "github.com/amarbel-llc/tommy/pkg/document"
+    "code.linenisgreat.com/tommy/pkg/cst"
+    "code.linenisgreat.com/tommy/pkg/document"
 )
 
 // Ensure imports are used.
@@ -1476,7 +1476,7 @@ import (
     "fmt"
     "os"
 
-    "github.com/amarbel-llc/tommy/generate"
+    "code.linenisgreat.com/tommy/generate"
 )
 
 func runGenerate(args []string) int {
@@ -1554,9 +1554,9 @@ func TestIntegrationRoundTrip(t *testing.T) {
 
 go 1.25.6
 
-require github.com/amarbel-llc/tommy v0.0.0
+require code.linenisgreat.com/tommy v0.0.0
 
-replace github.com/amarbel-llc/tommy => `+repoRoot(t)+`
+replace code.linenisgreat.com/tommy => `+repoRoot(t)+`
 `)
 
     writeFixture(t, dir, "config.go", `package main
@@ -1682,9 +1682,9 @@ func TestIntegrationArrayOfTables(t *testing.T) {
 
 go 1.25.6
 
-require github.com/amarbel-llc/tommy v0.0.0
+require code.linenisgreat.com/tommy v0.0.0
 
-replace github.com/amarbel-llc/tommy => `+repoRoot(t)+`
+replace code.linenisgreat.com/tommy => `+repoRoot(t)+`
 `)
 
     writeFixture(t, dir, "config.go", `package main
@@ -1780,9 +1780,9 @@ func TestIntegrationCustomAndPointerTypes(t *testing.T) {
 
 go 1.25.6
 
-require github.com/amarbel-llc/tommy v0.0.0
+require code.linenisgreat.com/tommy v0.0.0
 
-replace github.com/amarbel-llc/tommy => `+repoRoot(t)+`
+replace code.linenisgreat.com/tommy => `+repoRoot(t)+`
 `)
 
     writeFixture(t, dir, "types.go", `package main

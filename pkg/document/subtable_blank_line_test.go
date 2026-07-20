@@ -3,7 +3,7 @@ package document
 import (
 	"testing"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/cst"
 )
 
 // TestSubtableReSetPreservesBlankLineSeparator regression-tests issue #75:

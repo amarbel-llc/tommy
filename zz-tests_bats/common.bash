@@ -43,9 +43,9 @@ module example.com/batstest
 
 go 1.26
 
-require github.com/amarbel-llc/tommy v0.0.0
+require code.linenisgreat.com/tommy v0.0.0
 
-replace github.com/amarbel-llc/tommy => $repo_root
+replace code.linenisgreat.com/tommy => $repo_root
 EOF
 
   # Offline build path (nix sandbox): build the synthetic module's vendor/
@@ -56,7 +56,7 @@ EOF
     local proj_vendor="$BATS_TEST_TMPDIR/proj/vendor"
     cp -rL "$repo_root/vendor" "$proj_vendor"
     chmod -R u+w "$proj_vendor"
-    local tommy_vendor_path="$proj_vendor/github.com/amarbel-llc/tommy"
+    local tommy_vendor_path="$proj_vendor/code.linenisgreat.com/tommy"
     mkdir -p "$tommy_vendor_path"
     cp -L "$repo_root/go.mod" "$repo_root/go.sum" "$tommy_vendor_path/"
     local d

@@ -3,7 +3,7 @@ package document
 import (
 	"strings"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/cst"
 )
 
 // GetComment returns the comment line(s) immediately above the given key.

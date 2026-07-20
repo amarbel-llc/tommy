@@ -298,8 +298,8 @@ debug-gen:
   cat > "$dir/go.mod" << 'GOMOD'
   module example.com/jent
   go 1.26
-  require github.com/amarbel-llc/tommy v0.0.0
-  replace github.com/amarbel-llc/tommy => {{justfile_directory()}}
+  require code.linenisgreat.com/tommy v0.0.0
+  replace code.linenisgreat.com/tommy => {{justfile_directory()}}
   GOMOD
   cat > "$dir/config.go" << 'GOEOF'
   package jent

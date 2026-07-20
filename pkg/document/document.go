@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/cst"
 )
 
 var ErrNotFound = fmt.Errorf("not found")

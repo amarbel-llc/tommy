@@ -24,7 +24,7 @@ were, blank lines don't move, and whitespace around `=` signs is untouched.
 ## Install
 
 ``` sh
-go install github.com/amarbel-llc/tommy/cmd/tommy@latest
+go install code.linenisgreat.com/tommy/cmd/tommy@latest
 ```
 
 Or with Nix:
@@ -115,7 +115,7 @@ output, err := doc.Encode()
 For simpler cases without code generation:
 
 ``` go
-import "github.com/amarbel-llc/tommy/pkg/marshal"
+import "code.linenisgreat.com/tommy/pkg/marshal"
 
 var cfg Config
 handle, err := marshal.UnmarshalDocument(input, &cfg)
@@ -129,7 +129,7 @@ output, err := marshal.MarshalDocument(handle, &cfg)
 For direct key-value manipulation:
 
 ``` go
-import "github.com/amarbel-llc/tommy/pkg/document"
+import "code.linenisgreat.com/tommy/pkg/document"
 
 doc, err := document.Parse(input)
 port, err := document.Get[int](doc, "server.port")

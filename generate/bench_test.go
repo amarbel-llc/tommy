@@ -427,8 +427,8 @@ func TestBenchmarkBackends(t *testing.T) {
 
 		writeFixture(t, dir, "go.mod", strings.Join([]string{
 			"module example.com/bench", "", "go 1.26", "",
-			"require github.com/amarbel-llc/tommy v0.0.0", "",
-			"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+			"require code.linenisgreat.com/tommy v0.0.0", "",
+			"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 		}, "\n"))
 
 		writeFixture(t, dir, "config.go", benchGoFile)
@@ -540,7 +540,7 @@ func BenchmarkDecodeOnly(b *testing.B) {
 
 	dir := b.TempDir()
 	writeFixtureB(b, dir, "go.mod", fmt.Sprintf(
-		"module example.com/bench\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => %s\n", repoRoot,
+		"module example.com/bench\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => %s\n", repoRoot,
 	))
 	writeFixtureB(b, dir, "config.go", benchGoFile)
 	writeFixtureB(b, dir, "bench_test.go", benchTestFile)

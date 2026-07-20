@@ -96,7 +96,7 @@ codegen error at *tommy generate* time.
 # SUPPORTED INTERFACES
 
 *TOMLUnmarshaler*, *TOMLMarshaler*
-	Declared in *github.com/amarbel-llc/tommy/pkg/tommy*. A type that
+	Declared in *code.linenisgreat.com/tommy/pkg/tommy*. A type that
 	implements these is classified as *FieldCustom*.
 
 *encoding.TextMarshaler*, *encoding.TextUnmarshaler*

@@ -3,7 +3,7 @@ package cst
 import (
 	"io"
 
-	"github.com/amarbel-llc/tommy/internal/lexer"
+	"code.linenisgreat.com/tommy/internal/lexer"
 )
 
 type parser struct {

@@ -13,8 +13,8 @@ import (
 // op-specific; they outlived the cutover (#84).
 
 const (
-	cstPkg = "github.com/amarbel-llc/tommy/pkg/cst"
-	docPkg = "github.com/amarbel-llc/tommy/pkg/document"
+	cstPkg = "code.linenisgreat.com/tommy/pkg/cst"
+	docPkg = "code.linenisgreat.com/tommy/pkg/document"
 )
 
 // jenCtx carries context for decode rendering within one function scope:

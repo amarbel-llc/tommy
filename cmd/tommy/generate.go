@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/amarbel-llc/tommy/generate"
+	"code.linenisgreat.com/tommy/generate"
 )
 
 func runGenerate(args []string) int {

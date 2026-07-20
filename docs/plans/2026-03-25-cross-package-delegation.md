@@ -183,9 +183,9 @@ func TestIntegrationDecodeIntoEncodeFrom(t *testing.T) {
         "",
         "go 1.26",
         "",
-        "require github.com/amarbel-llc/tommy v0.0.0",
+        "require code.linenisgreat.com/tommy v0.0.0",
         "",
-        "replace github.com/amarbel-llc/tommy => " + repoRoot,
+        "replace code.linenisgreat.com/tommy => " + repoRoot,
         "",
     }, "\n"))
 
@@ -207,7 +207,7 @@ type Settings struct {
 import (
     "testing"
 
-    "github.com/amarbel-llc/tommy/pkg/document"
+    "code.linenisgreat.com/tommy/pkg/document"
 )
 
 func TestDecodeIntoRoundTrip(t *testing.T) {
@@ -542,9 +542,9 @@ func TestIntegrationCrossPackageDelegation(t *testing.T) {
         "",
         "go 1.26",
         "",
-        "require github.com/amarbel-llc/tommy v0.0.0",
+        "require code.linenisgreat.com/tommy v0.0.0",
         "",
-        "replace github.com/amarbel-llc/tommy => " + repoRoot,
+        "replace code.linenisgreat.com/tommy => " + repoRoot,
         "",
     }, "\n"))
     writeFixture(t, extDir, "options.go", `package options
@@ -574,12 +574,12 @@ type PrintOptions struct {
         "go 1.26",
         "",
         "require (",
-        "\tgithub.com/amarbel-llc/tommy v0.0.0",
+        "\tcode.linenisgreat.com/tommy v0.0.0",
         "\texample.com/test/options v0.0.0",
         ")",
         "",
         "replace (",
-        "\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+        "\tcode.linenisgreat.com/tommy => " + repoRoot,
         "\texample.com/test/options => ../options",
         ")",
         "",

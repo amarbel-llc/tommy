@@ -574,8 +574,8 @@ func TestRoundTripFuzz(t *testing.T) {
 	}
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/fuzz", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, dir, "config.go", configSrc)
 	writeFixture(t, dir, "fuzz_test.go", testSrc)
@@ -807,8 +807,8 @@ func TestRoundTripFuzzDelegation(t *testing.T) {
 	}
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/fuzz", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, dir, "config.go", configSrc)
 	writeFixture(t, dir, "fuzz_test.go", testSrc)

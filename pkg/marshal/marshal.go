@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
-	"github.com/amarbel-llc/tommy/pkg/document"
+	"code.linenisgreat.com/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/document"
 )
 
 // DocumentHandle holds the CST-backed document for round-trip editing.

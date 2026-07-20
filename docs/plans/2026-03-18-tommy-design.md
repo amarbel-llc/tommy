@@ -195,7 +195,7 @@ needed because tommy is purely additive.
 ## Project Structure
 
 ```
-tommy/                         # standalone repo (github.com/amarbel-llc/tommy)
+tommy/                         # standalone repo (code.linenisgreat.com/tommy)
 ├── flake.nix
 ├── go.mod
 ├── gomod2nix.toml

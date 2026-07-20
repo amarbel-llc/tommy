@@ -40,9 +40,9 @@ func TestIntegrationRoundTrip(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -160,7 +160,7 @@ func TestIntegrationNestedMapMapScoping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/mm\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/mm\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package mm
 
 type Labels map[string]string
@@ -240,7 +240,7 @@ func TestIntegrationFlatFallbackSiblingKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/ff\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/ff\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package ff
 
 type Inner struct {
@@ -298,7 +298,7 @@ func TestIntegrationNestedAllArrayStructEncodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/naas\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/naas\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package naas
 
 //go:generate tommy generate
@@ -377,7 +377,7 @@ func TestIntegrationNonStringIntSlices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/slices98\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/slices98\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package slices98
 
 //go:generate tommy generate
@@ -447,7 +447,7 @@ func TestIntegrationScopedDuplicateTableErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/scopedup\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/scopedup\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package scopedup
 
 type Sub struct {
@@ -510,7 +510,7 @@ func TestIntegrationSizedScalarSlices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/sized96\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/sized96\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package sized96
 
 //go:generate tommy generate
@@ -584,7 +584,7 @@ func TestIntegrationQuotedMapStringKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/qmk\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/qmk\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package qmk
 
 //go:generate tommy generate
@@ -645,7 +645,7 @@ func TestIntegrationNilEmptyMapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/nem\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/nem\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package nem
 
 //go:generate tommy generate
@@ -716,7 +716,7 @@ func TestIntegrationFlatFallbackTableValuedInner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, dir, "go.mod", "module example.com/fftv\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, dir, "go.mod", "module example.com/fftv\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, dir, "config.go", `package fftv
 
 type Inner struct {
@@ -779,9 +779,9 @@ func TestIntegrationDuplicateTableErrors(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -865,9 +865,9 @@ func TestIntegrationDuplicateKeyErrors(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -951,9 +951,9 @@ func TestIntegrationAllArrayFieldStructNoEmptyTable(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1053,9 +1053,9 @@ func TestIntegrationSizedIntegers(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1170,9 +1170,9 @@ func TestIntegrationSlicePointerPrimitive(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1263,9 +1263,9 @@ func TestIntegrationMapStringPointerStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1364,9 +1364,9 @@ func TestIntegrationPointerStructWithSliceStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1485,9 +1485,9 @@ func TestIntegrationImplicitParentTable(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1600,9 +1600,9 @@ func TestIntegrationArrayOfTables(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1686,9 +1686,9 @@ func TestIntegrationCustomAndPointerTypes(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -1811,9 +1811,9 @@ func TestIntegrationMoxyMigration(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -2079,9 +2079,9 @@ func TestIntegrationFlatKeyFallback(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -2235,9 +2235,9 @@ func TestIntegrationMapStringString(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -2452,9 +2452,9 @@ func TestIntegrationPointerStructEncode(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -2541,9 +2541,9 @@ func TestIntegrationTomlDash(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -2623,9 +2623,9 @@ func TestIntegrationOmitempty(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -2777,9 +2777,9 @@ func TestIntegrationEmptySliceWithoutOmitempty(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -2905,9 +2905,9 @@ func TestIntegrationZeroValuePrimitiveSkip(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3004,9 +3004,9 @@ func TestIntegrationArrayOfTablesAppend(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3115,9 +3115,9 @@ func TestOmitemptyPrimitiveZeroDropped(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3219,9 +3219,9 @@ func TestIntegrationMultiline(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3323,9 +3323,9 @@ func TestIntegrationTextMarshaler(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3445,9 +3445,9 @@ func TestIntegrationEmbeddedStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3560,9 +3560,9 @@ func TestIntegrationMapStringStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3677,9 +3677,9 @@ func TestIntegrationNestedMapStringStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3809,9 +3809,9 @@ func TestIntegrationSliceTextMarshaler(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -3937,9 +3937,9 @@ func TestIntegrationUint64(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -4043,9 +4043,9 @@ func TestIntegrationNestedArrayOfTablesInStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -4139,9 +4139,9 @@ func TestIntegrationNestedArrayOfTablesInSlice(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -4268,12 +4268,12 @@ type Config struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/base v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/base => ../base",
 		")",
 		"",
@@ -4361,12 +4361,12 @@ type Version int
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/types v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/types => ../types",
 		")",
 		"",
@@ -4451,9 +4451,9 @@ func TestIntegrationBlankIdentifierField(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -4537,12 +4537,12 @@ func (t *Tag) UnmarshalText(b []byte) error { t.value = string(b); return nil }
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/types v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/types => ../types",
 		")",
 		"",
@@ -4632,9 +4632,9 @@ func TestIntegrationSliceTextMarshalerCrossPackageImportMixed(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -4732,9 +4732,9 @@ func TestIntegrationNoUnusedImportsForTextMarshalerFields(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -4792,9 +4792,9 @@ func TestIntegrationSliceTextMarshalerTypeAlias(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -4890,10 +4890,10 @@ type IntSlice = internal.IntSlice
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"require example.com/facade v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"replace example.com/facade => ../facade",
 		"",
 	}, "\n"))
@@ -4972,10 +4972,10 @@ type Labels = internal.Labels
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"require example.com/facade v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"replace example.com/facade => ../facade",
 		"",
 	}, "\n"))
@@ -5035,9 +5035,9 @@ func TestIntegrationCrossPackageNamedStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, otherDir, "config.go", `package other
@@ -5061,12 +5061,12 @@ type Config struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/other v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/other => ../other",
 		")",
 		"",
@@ -5159,9 +5159,9 @@ func TestIntegrationMapStringCrossPackageStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, otherDir, "action.go", `package other
@@ -5185,12 +5185,12 @@ type Action struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/other v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/other => ../other",
 		")",
 		"",
@@ -5282,9 +5282,9 @@ func TestIntegrationCrossPackageTypeAlias(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, otherDir, "types.go", `package other
@@ -5313,12 +5313,12 @@ type Wrapper struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/other v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/other => ../other",
 		")",
 		"",
@@ -5402,9 +5402,9 @@ func TestIntegrationMapStringNamedMapType(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -5489,9 +5489,9 @@ func TestIntegrationSlicePointerToStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -5595,12 +5595,12 @@ type IntSlice []int
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/other v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/other => ../other",
 		")",
 		"",
@@ -5680,9 +5680,9 @@ func TestIntegrationValidation(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -5778,9 +5778,9 @@ func TestIntegrationDecodeIntoEncodeFrom(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -5802,8 +5802,8 @@ type Settings struct {
 import (
 	"testing"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
-	"github.com/amarbel-llc/tommy/pkg/document"
+	"code.linenisgreat.com/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/document"
 )
 
 func decompose(t *testing.T, src []byte) *cst.Value {
@@ -5883,9 +5883,9 @@ func TestIntegrationDelegatedImplicitParent(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, extDir, "options.go", `package options
@@ -5911,12 +5911,12 @@ type Action struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/options v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/options => ../options",
 		")",
 		"",
@@ -6003,9 +6003,9 @@ func TestIntegrationCrossPackageDelegation(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, extDir, "options.go", `package options
@@ -6034,12 +6034,12 @@ type PrintOptions struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/options v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/options => ../options",
 		")",
 		"",
@@ -6132,9 +6132,9 @@ func TestIntegrationPointerCrossPackageDelegation(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, extDir, "script.go", `package scriptcfg
@@ -6160,12 +6160,12 @@ type ScriptConfig struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/scriptcfg v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/scriptcfg => ../scriptcfg",
 		")",
 		"",
@@ -6283,12 +6283,12 @@ func (t *tagStruct) UnmarshalText(b []byte) error { t.value = string(b); return 
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/ids v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/ids => ../ids",
 		")",
 		"",
@@ -6315,13 +6315,13 @@ type Defaults struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/defaults v0.0.0",
 		"\texample.com/test/ids v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/defaults => ../defaults",
 		"\texample.com/test/ids => ../ids",
 		")",
@@ -6371,9 +6371,9 @@ func TestIntegrationRegenerateOverExistingTommyFiles(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, leafDir, "config.go", `package leaf
@@ -6432,9 +6432,9 @@ func TestIntegrationGoGenerateAllMultiPackage(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -6553,9 +6553,9 @@ func TestIntegrationCommentAPI(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -6658,9 +6658,9 @@ func TestIntegrationEncodeFromEmptyDocument(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -6836,9 +6836,9 @@ func TestIntegrationEncodeFromEmptyPointerStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -6948,9 +6948,9 @@ func TestIntegrationEncodeFromEmptyDelegatedStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, extDir, "db.go", `package dbcfg
@@ -6974,12 +6974,12 @@ type Database struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/dbcfg v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/dbcfg => ../dbcfg",
 		")",
 		"",
@@ -7069,9 +7069,9 @@ func TestIntegrationEncodeFromEmptyPointerDelegatedStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, extDir, "log.go", `package logcfg
@@ -7095,12 +7095,12 @@ type LogConfig struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/logcfg v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/logcfg => ../logcfg",
 		")",
 		"",
@@ -7188,9 +7188,9 @@ func TestIntegrationEncodeFromEmptyNestedStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -7307,9 +7307,9 @@ func TestIntegrationSliceOfCrossPackageStructWithUnexportedNested(t *testing.T) 
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, extDir, "options.go", `package options_print
@@ -7339,12 +7339,12 @@ type V1 struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/options_print v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/options_print => ../options_print",
 		")",
 		"",
@@ -7440,7 +7440,7 @@ func TestIntegrationDelegatedNestedTableScoping(t *testing.T) {
 		t.Fatal(err)
 	}
 	extDir := filepath.Join(dir, "options_print")
-	writeFixture(t, extDir, "go.mod", "module example.com/test99/options_print\n\ngo 1.26\n\nrequire github.com/amarbel-llc/tommy v0.0.0\n\nreplace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+	writeFixture(t, extDir, "go.mod", "module example.com/test99/options_print\n\ngo 1.26\n\nrequire code.linenisgreat.com/tommy v0.0.0\n\nreplace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, extDir, "options.go", `package options_print
 
 //go:generate tommy generate
@@ -7458,7 +7458,7 @@ type V1 struct {
 		t.Fatalf("Generate options_print: %v", err)
 	}
 	consumerDir := filepath.Join(dir, "repo_configs")
-	writeFixture(t, consumerDir, "go.mod", "module example.com/test99/repo_configs\n\ngo 1.26\n\nrequire (\n\tgithub.com/amarbel-llc/tommy v0.0.0\n\texample.com/test99/options_print v0.0.0\n)\n\nreplace (\n\tgithub.com/amarbel-llc/tommy => "+repoRoot+"\n\texample.com/test99/options_print => ../options_print\n)\n")
+	writeFixture(t, consumerDir, "go.mod", "module example.com/test99/repo_configs\n\ngo 1.26\n\nrequire (\n\tcode.linenisgreat.com/tommy v0.0.0\n\texample.com/test99/options_print v0.0.0\n)\n\nreplace (\n\tcode.linenisgreat.com/tommy => "+repoRoot+"\n\texample.com/test99/options_print => ../options_print\n)\n")
 	writeFixture(t, consumerDir, "config.go", `package repo_configs
 
 import "example.com/test99/options_print"
@@ -7532,8 +7532,8 @@ func TestIntegrationSliceOfAliasedUnexportedStructDirect(t *testing.T) {
 	// Package with type alias to unexported struct
 	idsDir := filepath.Join(dir, "ids")
 	writeFixture(t, idsDir, "go.mod", "module example.com/test/ids\n\ngo 1.26\n\n"+
-		"require github.com/amarbel-llc/tommy v0.0.0\n\n"+
-		"replace github.com/amarbel-llc/tommy => "+repoRoot+"\n")
+		"require code.linenisgreat.com/tommy v0.0.0\n\n"+
+		"replace code.linenisgreat.com/tommy => "+repoRoot+"\n")
 	writeFixture(t, idsDir, "ids.go", `package ids
 
 type tagStruct struct {
@@ -7561,12 +7561,12 @@ type TagWrapper struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/ids v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/ids => ../ids",
 		")",
 		"",
@@ -7653,9 +7653,9 @@ func TestIntegrationEmbeddedNonStructWithTomlIgnoreTag(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -7706,9 +7706,9 @@ func TestIntegrationMapStringCrossPackageStructWithUnexported(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, pkgaDir, "pkga.go", `package pkga
@@ -7737,12 +7737,12 @@ type ScriptConfig struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/pkga v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/pkga => ../pkga",
 		")",
 		"",
@@ -7845,12 +7845,12 @@ type IntSlice []int
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/pkga v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/pkga => ../pkga",
 		")",
 		"",
@@ -7940,9 +7940,9 @@ func TestIntegrationMapStringCrossPackageStructDelegation(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, pkgaDir, "pkga.go", `package pkga
@@ -7975,12 +7975,12 @@ func (a Action) Validate() error {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/pkga v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/pkga => ../pkga",
 		")",
 		"",
@@ -8086,8 +8086,8 @@ func TestIntegrationNilPtrDelegatedSliceNoPhantom(t *testing.T) {
 	pkgaDir := filepath.Join(dir, "pkga")
 	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
 		"module example.com/test/pkga", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, pkgaDir, "pkga.go", `package pkga
 
@@ -8103,8 +8103,8 @@ type Thing struct {
 	pkgbDir := filepath.Join(dir, "pkgb")
 	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
 		"module example.com/test/pkgb", "", "go 1.26", "",
-		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/pkga v0.0.0", ")", "",
-		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/pkga => ../pkga", ")", "",
+		"require (", "\tcode.linenisgreat.com/tommy v0.0.0", "\texample.com/test/pkga v0.0.0", ")", "",
+		"replace (", "\tcode.linenisgreat.com/tommy => " + repoRoot, "\texample.com/test/pkga => ../pkga", ")", "",
 	}, "\n"))
 	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
 
@@ -8184,8 +8184,8 @@ func TestIntegrationDelegatedMapInStructMap(t *testing.T) {
 	pkgaDir := filepath.Join(dir, "pkga")
 	writeFixture(t, pkgaDir, "go.mod", strings.Join([]string{
 		"module example.com/test/pkga", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, pkgaDir, "pkga.go", `package pkga
 
@@ -8201,8 +8201,8 @@ type Thing struct {
 	pkgbDir := filepath.Join(dir, "pkgb")
 	writeFixture(t, pkgbDir, "go.mod", strings.Join([]string{
 		"module example.com/test/pkgb", "", "go 1.26", "",
-		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/pkga v0.0.0", ")", "",
-		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/pkga => ../pkga", ")", "",
+		"require (", "\tcode.linenisgreat.com/tommy v0.0.0", "\texample.com/test/pkga v0.0.0", ")", "",
+		"replace (", "\tcode.linenisgreat.com/tommy => " + repoRoot, "\texample.com/test/pkga => ../pkga", ")", "",
 	}, "\n"))
 	writeFixture(t, pkgbDir, "pkgb.go", `package pkgb
 
@@ -8288,9 +8288,9 @@ func TestIntegrationMapStringCrossPackageStructQuotedKey(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, pkgaDir, "pkga.go", `package pkga
@@ -8313,12 +8313,12 @@ type Action struct {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/pkga v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/pkga => ../pkga",
 		")",
 		"",
@@ -8412,9 +8412,9 @@ func TestIntegrationCrossPackageMapTypeAlias(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, pkgaDir, "pkga.go", `package pkga
@@ -8439,12 +8439,12 @@ type ScriptMap map[string]Script
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/pkga v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/pkga => ../pkga",
 		")",
 		"",
@@ -8530,9 +8530,9 @@ func TestIntegrationCrossPackageOmitemptyTextMarshaler(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, innerDir, "inner.go", `package inner
@@ -8568,12 +8568,12 @@ func (c *CustomType) UnmarshalText(b []byte) error {
 		"go 1.26",
 		"",
 		"require (",
-		"\tgithub.com/amarbel-llc/tommy v0.0.0",
+		"\tcode.linenisgreat.com/tommy v0.0.0",
 		"\texample.com/test/inner v0.0.0",
 		")",
 		"",
 		"replace (",
-		"\tgithub.com/amarbel-llc/tommy => " + repoRoot,
+		"\tcode.linenisgreat.com/tommy => " + repoRoot,
 		"\texample.com/test/inner => ../inner",
 		")",
 		"",
@@ -8693,9 +8693,9 @@ func TestIntegrationSamePackageOmitemptyTextMarshaler(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 	writeFixture(t, dir, "config.go", `package samepkg
@@ -8820,9 +8820,9 @@ func TestIntegrationEncodeFromNilPointerStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -8926,9 +8926,9 @@ func TestIntegrationEncodeFromScratchPrimitiveAfterStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -9018,9 +9018,9 @@ func TestIntegrationEncodeFromScratchPrimitiveAfterSliceStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -9105,9 +9105,9 @@ func TestIntegrationEncodeFromScratchMultipleStructsThenPrimitive(t *testing.T) 
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -9203,9 +9203,9 @@ func TestIntegrationEncodeFromScratchNestedSubTableOrdering(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -9302,8 +9302,8 @@ func nestingGoMod(t *testing.T, dir, repoRoot, mod string) {
 	t.Helper()
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/" + mod, "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 }
 
@@ -9718,8 +9718,8 @@ func TestNestingSliceStructDelegatedField(t *testing.T) {
 	extDir := filepath.Join(dir, "srvext")
 	writeFixture(t, extDir, "go.mod", strings.Join([]string{
 		"module example.com/test/srvext", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, extDir, "settings.go", `package srvext
 //go:generate tommy generate
@@ -9735,8 +9735,8 @@ type Settings struct {
 	consumerDir := filepath.Join(dir, "consumer")
 	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
 		"module example.com/test/consumer", "", "go 1.26", "",
-		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/srvext v0.0.0", ")", "",
-		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/srvext => ../srvext", ")", "",
+		"require (", "\tcode.linenisgreat.com/tommy v0.0.0", "\texample.com/test/srvext v0.0.0", ")", "",
+		"replace (", "\tcode.linenisgreat.com/tommy => " + repoRoot, "\texample.com/test/srvext => ../srvext", ")", "",
 	}, "\n"))
 	writeFixture(t, consumerDir, "app.go", `package consumer
 import "example.com/test/srvext"
@@ -9796,8 +9796,8 @@ func TestNestingSliceStructDelegatedSliceAndMap(t *testing.T) {
 	extDir := filepath.Join(dir, "srvext")
 	writeFixture(t, extDir, "go.mod", strings.Join([]string{
 		"module example.com/test/srvext", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 	writeFixture(t, extDir, "ext.go", `package srvext
 //go:generate tommy generate
@@ -9817,8 +9817,8 @@ type Meta struct {
 	consumerDir := filepath.Join(dir, "consumer")
 	writeFixture(t, consumerDir, "go.mod", strings.Join([]string{
 		"module example.com/test/consumer", "", "go 1.26", "",
-		"require (", "\tgithub.com/amarbel-llc/tommy v0.0.0", "\texample.com/test/srvext v0.0.0", ")", "",
-		"replace (", "\tgithub.com/amarbel-llc/tommy => " + repoRoot, "\texample.com/test/srvext => ../srvext", ")", "",
+		"require (", "\tcode.linenisgreat.com/tommy v0.0.0", "\texample.com/test/srvext v0.0.0", ")", "",
+		"replace (", "\tcode.linenisgreat.com/tommy => " + repoRoot, "\texample.com/test/srvext => ../srvext", ")", "",
 	}, "\n"))
 	writeFixture(t, consumerDir, "app.go", `package consumer
 import "example.com/test/srvext"
@@ -9923,8 +9923,8 @@ func TestIntegrationMapStringStructNestedSubTable(t *testing.T) {
 
 	writeFixture(t, dir, "go.mod", strings.Join([]string{
 		"module example.com/issue60", "", "go 1.26", "",
-		"require github.com/amarbel-llc/tommy v0.0.0", "",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot, "",
+		"require code.linenisgreat.com/tommy v0.0.0", "",
+		"replace code.linenisgreat.com/tommy => " + repoRoot, "",
 	}, "\n"))
 
 	writeFixture(t, dir, "config.go", `package issue60
@@ -10042,9 +10042,9 @@ func TestIntegrationOptionalNestedTableMissing(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10159,9 +10159,9 @@ func TestIntegrationInlineTableStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10260,9 +10260,9 @@ func TestIntegrationInlineTableMapStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10351,9 +10351,9 @@ func TestIntegrationInlineTableMapMap(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10441,9 +10441,9 @@ func TestIntegrationInlineTableNestedStruct(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10537,9 +10537,9 @@ func TestIntegrationInlineUnderHeader(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10655,9 +10655,9 @@ func TestIntegrationDuplicateInlineKeyRejected(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10746,9 +10746,9 @@ func TestIntegrationStaleGeneratedFileDoesNotBlockRegen(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10764,7 +10764,7 @@ type Config struct {
 	// version deleted: it does not compile and must not block regen.
 	writeFixture(t, dir, "config_tommy.go", `package staleregen
 
-import "github.com/amarbel-llc/tommy/pkg/cst"
+import "code.linenisgreat.com/tommy/pkg/cst"
 
 var _ = cst.FindChildTable
 `)
@@ -10814,9 +10814,9 @@ func TestIntegrationDifferentialDecode(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10850,7 +10850,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/amarbel-llc/tommy/pkg/marshal"
+	"code.linenisgreat.com/tommy/pkg/marshal"
 )
 
 func TestDifferentialDecode(t *testing.T) {
@@ -10918,9 +10918,9 @@ func TestIntegrationStandaloneDottedHeader(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
@@ -10966,8 +10966,8 @@ type App struct {
 import (
 	"testing"
 
-	"github.com/amarbel-llc/tommy/pkg/cst"
-	"github.com/amarbel-llc/tommy/pkg/document"
+	"code.linenisgreat.com/tommy/pkg/cst"
+	"code.linenisgreat.com/tommy/pkg/document"
 )
 
 // Pointer-struct parent (cdNilGuard), standalone dotted header — the spinclass
@@ -11128,9 +11128,9 @@ func TestIntegrationInlineTableMapStringString(t *testing.T) {
 		"",
 		"go 1.26",
 		"",
-		"require github.com/amarbel-llc/tommy v0.0.0",
+		"require code.linenisgreat.com/tommy v0.0.0",
 		"",
-		"replace github.com/amarbel-llc/tommy => " + repoRoot,
+		"replace code.linenisgreat.com/tommy => " + repoRoot,
 		"",
 	}, "\n"))
 
