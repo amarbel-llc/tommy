@@ -61,7 +61,7 @@ awareness of the preservation machinery needed.
 
 The code generator is not yet fully type-exhaustive --- support for additional
 Go type patterns is being added as needed. See the [open
-issues](https://github.com/amarbel-llc/tommy/issues) for what's planned and in
+issues](https://code.linenisgreat.com/tommy/issues) for what's planned and in
 progress.
 
 This matters for config files that humans maintain: version-controlled TOML with
