@@ -72,39 +72,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1784636744,
-        "narHash": "sha256-u0tZYEa6ghkURgHbf//oYtUvvGJFfTKyl6GeinkBs6w=",
+        "lastModified": 1784649683,
+        "narHash": "sha256-q3/pXh1iyYqb3TCkZfMLYgY3bFMLP+X0h6CrraWdZCA=",
         "type": "tarball",
-        "url": "https://code.linenisgreat.com/conformist/archive/ccb03d96ee4535cb0c5d65b1c6856bc24c947d86.tar.gz"
-      },
-      "original": {
-        "type": "tarball",
-        "url": "https://code.linenisgreat.com/conformist/archive/master.tar.gz"
-      }
-    },
-    "conformist_2": {
-      "inputs": {
-        "igloo": [
-          "tap",
-          "purse-first",
-          "igloo"
-        ],
-        "nixpkgs-master": [
-          "tap",
-          "purse-first",
-          "nixpkgs-master"
-        ],
-        "utils": [
-          "tap",
-          "purse-first",
-          "utils"
-        ]
-      },
-      "locked": {
-        "lastModified": 1784310418,
-        "narHash": "sha256-XqxuDSgy6rZSvQOprEQeLGqzI/d/2evH1cf9Wc+D5i8=",
-        "type": "tarball",
-        "url": "https://code.linenisgreat.com/conformist/archive/9abf54eeb6df0d544de7602e6007391d3c28f0dc.tar.gz"
+        "url": "https://code.linenisgreat.com/conformist/archive/e04044f7f9df19e9df18156f800165bc9e28881a.tar.gz"
       },
       "original": {
         "type": "tarball",
@@ -113,11 +84,11 @@
     },
     "crane": {
       "locked": {
-        "lastModified": 1783203018,
-        "narHash": "sha256-G6R9IT/xwFuu+CYBWDUAok6AdC4ERC4ZfPPFtEpxnZE=",
+        "lastModified": 1784564969,
+        "narHash": "sha256-TkTWNhJV/8Wk3czlbz4bwHZkFCaCHPsOy+oJe4PUiXg=",
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "80db5bdc391be8a1794f6d8a2d56e3a84ebcede2",
+        "rev": "7930f6c291de6f83c257839d434592aa085f290a",
         "type": "github"
       },
       "original": {
@@ -159,17 +130,14 @@
         ]
       },
       "locked": {
-        "lastModified": 1782656014,
-        "narHash": "sha256-/JTvDNbl9p6rK7XfFib9cbYJB6a3Td0nLW33tGOZMmI=",
-        "owner": "amarbel-llc",
-        "repo": "gomod2nix",
-        "rev": "f2530333078779ff6565f2312ad891e82b233076",
-        "type": "github"
+        "lastModified": 1784579654,
+        "narHash": "sha256-vaw+hPvOopq4vquCEjMprARNruHUg1r4SpAa3TPmCbg=",
+        "type": "tarball",
+        "url": "https://code.linenisgreat.com/gomod2nix/archive/9d7c339010c6e915463a50fd938686d278f79f15.tar.gz"
       },
       "original": {
-        "owner": "amarbel-llc",
-        "repo": "gomod2nix",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://code.linenisgreat.com/gomod2nix/archive/master.tar.gz"
       }
     },
     "igloo": {
@@ -183,10 +151,10 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1784469602,
-        "narHash": "sha256-S+E6tjeZeZnpDI3ChJt6q6Xu4Jp28TKKlo7oCQT2cZE=",
+        "lastModified": 1784650356,
+        "narHash": "sha256-1t7KRC4W/Z6XW92QMbfi9CBPatFAAADKLJbAePiE+AA=",
         "type": "tarball",
-        "url": "https://code.linenisgreat.com/igloo/archive/0cfaeeafc73006abe61217cfb798905bb8b9f71e.tar.gz"
+        "url": "https://code.linenisgreat.com/igloo/archive/b33e4110475773b342a44570b8912c7c684d065e.tar.gz"
       },
       "original": {
         "type": "tarball",
@@ -211,7 +179,9 @@
     },
     "purse-first": {
       "inputs": {
-        "conformist": "conformist_2",
+        "conformist": [
+          "conformist"
+        ],
         "gomod2nix": [
           "tap",
           "gomod2nix"
@@ -230,17 +200,14 @@
         ]
       },
       "locked": {
-        "lastModified": 1784561670,
-        "narHash": "sha256-rCmYppRS2JEBbAXFnHg54I9ecY9AO94ruFgdUvdYd7U=",
-        "owner": "amarbel-llc",
-        "repo": "purse-first",
-        "rev": "20f89c28ebf95f9ed6bab2f13101d7af8d27cb03",
-        "type": "github"
+        "lastModified": 1784650531,
+        "narHash": "sha256-gq3zaLsOR33Z3QaGkOANO5ASmCzmtwD5qfRperKzw5c=",
+        "type": "tarball",
+        "url": "https://code.linenisgreat.com/purse-first/archive/dbe6d87fc660ea8f673df38d8d7895699cc7b446.tar.gz"
       },
       "original": {
-        "owner": "amarbel-llc",
-        "repo": "purse-first",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://code.linenisgreat.com/purse-first/archive/master.tar.gz"
       }
     },
     "root": {
@@ -261,11 +228,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1783488441,
-        "narHash": "sha256-jmWf+H3iC/0z7/mmvTovaJx1E/LME1QyHkyk+AFfJPk=",
+        "lastModified": 1784611586,
+        "narHash": "sha256-OfqgY+0hp/zseZB7uyH0U8kIDPS4scZZCyAurEplvG0=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "7dc3a177a239ed879c5581a80f6dc246c7e102f1",
+        "rev": "14f58845249f3552a89b07772626b8d3c632fa86",
         "type": "github"
       },
       "original": {
@@ -313,10 +280,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1784580232,
-        "narHash": "sha256-nvzipo7RLxeOBAI7aR38Y8qiOtl2O/vOVRVNhlBO98I=",
+        "lastModified": 1784652457,
+        "narHash": "sha256-gn2BcnsozkkwMoFnt7yy3xmAFGa1jXRKMV9G8vkNVg8=",
         "type": "tarball",
-        "url": "https://code.linenisgreat.com/tap/archive/7a510bc6fdcdc505d740abe89d8746bad2364cf1.tar.gz"
+        "url": "https://code.linenisgreat.com/tap/archive/1eea67c52ea51dbea114ae677e57ab628b9f38ca.tar.gz"
       },
       "original": {
         "type": "tarball",
@@ -331,11 +298,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1780220602,
-        "narHash": "sha256-eynAfOmbmxJnkp7YewvCEbShNnnYJ9gLLqkzsYtBPeM=",
+        "lastModified": 1784369104,
+        "narHash": "sha256-47cxbcZODibHv3rELFQ9vZly0vUNkND/atn/U7HLeb0=",
         "owner": "numtide",
         "repo": "treefmt-nix",
-        "rev": "db947814a175b7ca6ded66e21383d938df01c227",
+        "rev": "df3c0640565d04a0261253cdd89fce78ec50168a",
         "type": "github"
       },
       "original": {

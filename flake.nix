@@ -19,6 +19,7 @@
       inputs.bats.follows = "bats";
     };
     tap.inputs.treefmt-nix.follows = "igloo/treefmt-nix";
+    tap.inputs.purse-first.inputs.conformist.follows = "conformist";
     utils.inputs.systems.follows = "igloo/systems";
     igloo.inputs.nixpkgs-master.follows = "nixpkgs-master";
     conformist = {
