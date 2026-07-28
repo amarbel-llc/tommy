@@ -18,6 +18,8 @@ clean: clean-go-cache clean-go-modcache
 
 # Read-only formatting + the eng presets' file-based linters, via the sandboxed
 # checks.formatting derivation.
+#
+# check formatting and the eng file-based linters
 [group('lint')]
 lint-fmt:
   #!/usr/bin/env bash
@@ -27,6 +29,8 @@ lint-fmt:
 
 # Impure eng checks (git remotes, sweatfile, agents-md, gomod2nix) against the
 # working tree; conformist comes from the devShell PATH.
+#
+# run the impure eng conformist checks against the working tree
 [group('lint')]
 lint-worktree:
   #!/usr/bin/env bash
@@ -84,6 +88,8 @@ debug-bats-nix-tag tag:
 # synthetic modules resolve from a pinned module cache with no network — the
 # deep Go-level generator coverage (the bats lanes cover the end-to-end CLI).
 # See #83.
+#
+# run the Go ./generate suite offline in the nix sandbox
 [group('post-build')]
 test-go-generate-nix:
   nix build .#go-generate --no-link --print-build-logs
@@ -93,6 +99,8 @@ test-go-generate-nix:
 # across the seed range baked into the flake's fuzz-sweep check. Already part of
 # `just validate` (it is a flake check); this runs it in isolation. For ad-hoc
 # local widening past the baked-in seed count use the debug-fuzz-*-sweep recipes.
+#
+# run the multi-seed fuzz sweep in the nix sandbox
 [group('post-build')]
 test-fuzz-sweep-nix:
   nix build .#fuzz-sweep --no-link --print-build-logs
@@ -195,6 +203,8 @@ debug-summary:
 # Run one Go test verbose (agent dev-loop: drill into a single failure). pkg
 # defaults to ./generate/; pass e.g. ./pkg/document/ or ./pkg/marshal/ for a
 # library unit test (those need no network, unlike the ./generate/ suite).
+#
+# run one Go test verbose
 [group('debug')]
 debug-test test_name pkg='./generate/':
   go test -run '^{{test_name}}$' {{pkg}} -v -count=1 || true
@@ -203,6 +213,8 @@ debug-test test_name pkg='./generate/':
 # imposes (GOPROXY=off + TOMMY_TEST_OFFLINE against the already-populated local
 # module cache). Quick way to reproduce an offline-resolution failure without a
 # full `nix build .#go-generate`.
+#
+# run one ./generate test under the nix check's offline env
 [group('debug')]
 debug-offline-test test_name:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
@@ -211,6 +223,8 @@ debug-offline-test test_name:
 # Run the round-trip fuzzer for ONE seed with a small case count, showing the
 # full failure (want/got/TOML) so a single mismatch can be inspected. The sweep's
 # grep truncates and overflows on large dumps; this is the drill-down companion.
+#
+# run the round-trip fuzzer for one seed with full failure output
 [group('debug')]
 debug-fuzz-one seed='1' cases='4':
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
@@ -220,6 +234,8 @@ debug-fuzz-one seed='1' cases='4':
 # Drill-down companion for the cross-package delegation fuzzer (#105), same as
 # debug-fuzz-one but for TestRoundTripFuzzDelegation (delegated dep targets at
 # arbitrary nesting depth).
+#
+# run the cross-package delegation fuzzer for one seed
 [group('debug')]
 debug-fuzz-delegation-one seed='1' cases='4':
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
@@ -232,6 +248,8 @@ debug-fuzz-delegation-one seed='1' cases='4':
 # spelling is logged xfail/xpass and never fails. Default cases=32 so the
 # coverage guard (>=1 respell must fire) isn't tripped by a small all-deep-shape
 # sample; raise it to widen.
+#
+# run the spelling-rewrite fuzzer for one seed
 [group('debug')]
 debug-fuzz-spelling-one seed='1' cases='32':
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
@@ -241,6 +259,8 @@ debug-fuzz-spelling-one seed='1' cases='32':
 # Sweep the spelling-rewrite fuzzer (#107) across N seeds. CI runs seed 1 only;
 # this is for local widening — a certain XPASS on any seed (a decoder gap closed
 # for a shape seed 1 didn't cover) fails loudly here.
+#
+# sweep the spelling-rewrite fuzzer across N seeds
 [group('debug')]
 debug-fuzz-spelling-sweep n='12':
   #!/usr/bin/env bash
@@ -257,6 +277,8 @@ debug-fuzz-spelling-sweep n='12':
 # TestRoundTripFuzzDelegation, #105) across N seeds (each a different random shape
 # set) to flush codegen bugs in untested type-shape combinations. CI runs seed 1
 # only; this is for local widening. The unanchored -run matches both fuzzers.
+#
+# sweep both round-trip fuzzers across N seeds
 [group('debug')]
 debug-fuzz-sweep n='12':
   #!/usr/bin/env bash
@@ -271,6 +293,8 @@ debug-fuzz-sweep n='12':
 
 # Run the whole ./generate suite under the nix go-generate check's offline env
 # and surface only failures/build errors — fast triage for codegen regressions.
+#
+# run the whole ./generate suite offline and surface only failures
 [group('debug')]
 debug-offline-fails:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
