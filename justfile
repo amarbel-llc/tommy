@@ -43,14 +43,14 @@ lint-worktree:
 [group('codemod')]
 codemod-fmt: codemod-fmt-tree
 
-# Format the tree in place (repair mode) via `nix fmt`.
+# format the tree in place (repair mode) via `nix fmt`
 [group('codemod')]
 codemod-fmt-tree:
   nix fmt
 
 # === pre-build ===
 
-# Schema-validate the flake and build every checks.${system}.* output.
+# schema-validate the flake and build every checks.${system}.* output
 [group('pre-build')]
 validate-nix:
   # Forces tommyBin to build (its checkPhase runs the Go library
@@ -64,14 +64,14 @@ validate-nix:
 
 # === build ===
 
-# Build the tommy binary via nix.
+# build the tommy binary via nix
 [group('build')]
 build-nix:
   nix build --show-trace --print-build-logs
 
 # === post-build ===
 
-# Bats end-to-end tests in the nix sandbox.
+# run the bats end-to-end tests in the nix sandbox
 [group('post-build')]
 test-bats-nix:
   # Generator coverage lives here exclusively — the Go-side
@@ -79,7 +79,9 @@ test-bats-nix:
   # go/packages.Load network the nix sandbox can't provide.
   nix build .#bats-default --no-link --print-build-logs
 
-# Drill into a single tagged bats lane (e.g. `just debug-bats-nix-tag fmt`).
+# Example: `just debug-bats-nix-tag fmt`.
+#
+# drill into a single tagged bats lane
 [group('debug')]
 debug-bats-nix-tag tag:
   nix build .#bats-{{tag}} --no-link --print-build-logs
@@ -107,22 +109,24 @@ test-fuzz-sweep-nix:
 
 # === maintenance ===
 
-# Regenerate gomod2nix.toml. Run after changing go.mod.
+# Run after changing go.mod.
+#
+# regenerate gomod2nix.toml
 [group('maintenance')]
 update-gomod2nix:
   gomod2nix
 
-# Remove the Go build cache.
+# remove the Go build cache
 [group('maintenance')]
 clean-go-cache:
   go clean -cache
 
-# Remove the Go module download cache.
+# remove the Go module download cache
 [group('maintenance')]
 clean-go-modcache:
   go clean -modcache
 
-# Bump the version in flake.nix
+# bump the version in flake.nix
 [group('maintenance')]
 bump-version new_version:
   #!/usr/bin/env bash
@@ -135,7 +139,7 @@ bump-version new_version:
   sed -i.bak 's/version = "'"$current"'"/version = "{{new_version}}"/' flake.nix && rm flake.nix.bak
   echo "$current → {{new_version}}"
 
-# Create a signed git tag for the current version and push it to origin
+# create a signed git tag for the current version and push it to origin
 [group('maintenance')]
 deploy-tag:
   #!/usr/bin/env bash
@@ -151,7 +155,9 @@ deploy-tag:
   git push origin "$tag"
   echo "pushed tag $tag"
 
-# Bump version, commit, push master, signed tag + push. Must be run from master.
+# Must be run from master.
+#
+# bump version, commit, push master, signed tag + push
 [group('maintenance')]
 deploy-release new_version:
   #!/usr/bin/env bash
@@ -171,17 +177,19 @@ deploy-release new_version:
 
 # === debug ===
 
-# Drill into one or more integration tests by name pattern; see also debug-test.
+# See also debug-test.
+#
+# drill into one or more integration tests by name pattern
 [group('debug')]
 debug-integration pattern='TestIntegration':
   go test -run '{{pattern}}' ./generate/ -v -count=1
 
-# Drill into one or more nesting tests by name pattern.
+# drill into one or more nesting tests by name pattern
 [group('debug')]
 debug-nesting pattern='TestNesting':
   go test -run '{{pattern}}' ./generate/ -v -count=1
 
-# Print pass/fail counts and failing test names for the integration suite.
+# print pass/fail counts and failing test names for the integration suite
 [group('debug')]
 debug-summary:
   #!/usr/bin/env bash
@@ -300,7 +308,9 @@ debug-offline-fails:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
     go test ./generate/ -count=1 2>&1 | grep -E 'FAIL|panic|--- FAIL|undefined|cannot use' || true
 
-# Emit the generated *_tommy.go for a nesting test; inspect generated code.
+# Inspect generated code.
+#
+# emit the generated *_tommy.go for a nesting test
 [group('debug')]
 debug-nesting-gen test_name:
   #!/usr/bin/env bash
@@ -312,7 +322,7 @@ debug-nesting-gen test_name:
     [ -f "$f" ] && echo "=== $f ===" && cat "$f"
   done
 
-# Scaffold a scratch Go module, run tommy generate on it, and print the output.
+# scaffold a scratch Go module, run tommy generate on it, and print the output
 [group('debug')]
 debug-gen:
   #!/usr/bin/env bash
@@ -345,7 +355,7 @@ debug-gen:
   cd "$dir" && GOFILE=config.go ./tommy generate
   cat "$dir/config_tommy.go"
 
-# Run the backend benchmark test to compare codegen backends.
+# run the backend benchmark test to compare codegen backends
 [group('debug')]
 debug-bench:
   go test -run TestBenchmarkBackends ./generate/ -v -count=1
