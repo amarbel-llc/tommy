@@ -249,9 +249,14 @@ func compSetMapScalar(ctx encCtx, n ceMapScalar, cv *jen.Statement) []jen.Code {
 	// Faithful nil/empty (#21): a nil map omits the [table]; a non-nil map —
 	// including an empty one — emits the `[table]` header (EnsureChildTable creates
 	// it even with no entries), so a present-empty map round-trips as non-nil
-	// rather than collapsing to an absent-table nil.
+	// rather than collapsing to an absent-table nil. With omitempty an empty map
+	// writes nothing unless its [table] already exists, which is then cleared.
+	cond := src.Clone().Op("!=").Nil()
+	if n.OmitEmpty {
+		cond = jen.Len(src.Clone()).Op(">").Lit(0).Op("||").Qual(cstPkg, "FindChildTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk)).Op("!=").Nil()
+	}
 	return []jen.Code{
-		jen.If(src.Clone().Op("!=").Nil()).BlockFunc(func(g *jen.Group) {
+		jen.If(cond).BlockFunc(func(g *jen.Group) {
 			g.Id("tableNode").Op(":=").Qual(cstPkg, "EnsureChildTable").Call(ctx.rootVar.Clone(), cv.Clone(), jen.Lit(bk))
 			g.Qual(cstPkg, "DeleteAllValues").Call(jen.Id("tableNode"))
 			g.For(jen.List(jen.Id("k"), jen.Id("v")).Op(":=").Range().Add(src.Clone())).Block(

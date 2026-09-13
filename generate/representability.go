@@ -72,7 +72,9 @@ type repr struct {
 	// fuzzer's generation policy derives from: a fully-faithful shape needs no
 	// value exclusions at all. One exemption from the quantifier: values holding
 	// nil container ELEMENTS ([]*scalar{nil} as much as []*struct{nil}) — TOML
-	// has no null, encode skips them, and no faithful generator produces them.
+	// has no null, so encode skips them (or, for a nil []string in
+	// map[string][]string, writes `k = []`, which decodes as empty), and no
+	// faithful generator produces them.
 	FullyFaithful bool
 }
 
@@ -117,12 +119,12 @@ func reprOf(t spkType, omitEmpty bool, scoped bool) repr {
 				EncodeWitnessesEmpty: false, DecodeReadsEmpty: true, FullyFaithful: false,
 			}
 		}
-		// map[string]scalar: nil omits, non-nil (incl. empty) emits its [table]
-		// header. compSetMapScalar has no omitempty branch, so the tag does not
-		// widen the silent set here.
+		// map[string]scalar / map[string][]string: nil omits, non-nil (incl. empty)
+		// emits its [table] header — unless omitempty, which collapses empty to
+		// absent (decodes nil ≠ empty: lossy at empty), as for []scalar.
 		return repr{
-			MayBeSilent: true, SilentFaithful: true,
-			EncodeWitnessesEmpty: true, DecodeReadsEmpty: true, FullyFaithful: true,
+			MayBeSilent: true, SilentFaithful: !omitEmpty,
+			EncodeWitnessesEmpty: !omitEmpty, DecodeReadsEmpty: true, FullyFaithful: !omitEmpty,
 		}
 	case spkStruct:
 		// A VALUE struct field is always faithful in itself: when its header is

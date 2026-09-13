@@ -147,7 +147,7 @@ func (g *shapeGen) sliceScalarType() string {
 
 // genType picks a random field shape from the surface the codegen actually
 // supports: scalars {string,int,bool,float64}, []scalar/[]*scalar over
-// {string,int}, map[string]string, map[string]NamedMap (a named map[string]string
+// {string,int}, map[string]string, map[string][]string, map[string]NamedMap (a named map[string]string
 // alias, the FieldMapStringMapStringString kind), structs/pointers/slices/maps of
 // structs recursing. (Bare map[string]map[string]string, map[string]<non-string>,
 // and non-string/int element slices are not supported by the current classifier +
@@ -178,6 +178,7 @@ func (g *shapeGen) genType(depth int) *td {
 		shSliceScalar
 		shSlicePtrScalar
 		shMapScalar
+		shMapSliceScalar
 		shMapMap
 		shStruct
 		shPtrStruct
@@ -186,7 +187,7 @@ func (g *shapeGen) genType(depth int) *td {
 		shMapStruct
 		shMapPtrStruct
 	)
-	leaf := []int{shScalar, shPtrScalar, shSliceScalar, shSlicePtrScalar, shMapScalar, shMapMap}
+	leaf := []int{shScalar, shPtrScalar, shSliceScalar, shSlicePtrScalar, shMapScalar, shMapSliceScalar, shMapMap}
 	all := append(append([]int{}, leaf...), shStruct, shPtrStruct, shSliceStruct, shSlicePtrStruct, shMapStruct, shMapPtrStruct)
 
 	choices := all
@@ -206,6 +207,8 @@ func (g *shapeGen) genType(depth int) *td {
 		return &td{kind: "slice", elem: &td{kind: "ptr", elem: sliceScal()}}
 	case shMapScalar:
 		return &td{kind: "map", elem: &td{kind: "scalar", scalar: "string"}}
+	case shMapSliceScalar:
+		return &td{kind: "map", elem: &td{kind: "slice", elem: &td{kind: "scalar", scalar: "string"}}}
 	case shMapMap:
 		return g.genMapMap()
 	case shStruct:

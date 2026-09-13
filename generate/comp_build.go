@@ -399,7 +399,7 @@ func foldCompEncodeField(fi FieldInfo, pos compPos, emitHandles bool) ceNode {
 		case spkScalar, spkSlice:
 			// cst.SetAny encodes a []string value as a `k = [...]` leaf, so the
 			// string-slice map shares the scalar-map encoder.
-			return ceMapScalar{Tgt: c.tgt, TKey: c.tkey}
+			return ceMapScalar{Tgt: c.tgt, TKey: c.tkey, OmitEmpty: fi.OmitEmpty}
 		case spkMap:
 			return ceMapMap{Tgt: c.tgt, TKey: c.tkey, TypeName: te.TypeName}
 		case spkStruct:

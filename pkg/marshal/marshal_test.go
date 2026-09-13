@@ -83,12 +83,12 @@ func TestOmitemptyInArrayEntries(t *testing.T) {
 	f.Title = ""
 	f.Profile[0].Model = ""
 	f.Profile[0].Retries = 0
-	f.Profile = append(f.Profile, OmitProfile{Name: "b", Tags: []string{}})
+	f.Profile = append(f.Profile, OmitProfile{Name: "b", Tags: []string{}, Env: map[string]string{}})
 	out, err := MarshalDocument(doc, &f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, unwanted := range []string{"title", "model", "retries", "tags"} {
+	for _, unwanted := range []string{"title", "model", "retries", "tags", "env"} {
 		if strings.Contains(string(out), unwanted) {
 			t.Fatalf("omitempty zero field %q still written:\n%s", unwanted, out)
 		}
@@ -100,6 +100,27 @@ func TestOmitemptyInArrayEntries(t *testing.T) {
 	want := OmitFile{Profile: []OmitProfile{{Name: "a"}, {Name: "b"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v\ntoml:\n%s", got, out)
+	}
+}
+
+func TestOmitemptyEmptyMapClearsExistingTable(t *testing.T) {
+	input := []byte("[[profile]]\nname = \"a\"\n\n[profile.env]\nFOO = \"bar\"\n")
+	var f OmitFile
+	doc, err := UnmarshalDocument(input, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Profile[0].Env = map[string]string{}
+	out, err := MarshalDocument(doc, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got OmitFile
+	if _, err := UnmarshalDocument(out, &got); err != nil {
+		t.Fatalf("re-unmarshal: %v\n%s", err, out)
+	}
+	if len(got.Profile[0].Env) != 0 {
+		t.Fatalf("stale keys survived: %#v\n%s", got.Profile[0].Env, out)
 	}
 }
 

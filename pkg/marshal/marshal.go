@@ -318,8 +318,8 @@ func fieldOmitEmpty(field reflect.StructField) bool {
 }
 
 // encodeField follows the generated encoders' omitempty rules: a zero scalar is
-// removed, and an empty slice is only written when its key already exists. Maps
-// ignore omitempty, as the generated map encoder does.
+// removed, and an empty slice or map is only written when its key or [table]
+// already exists.
 func encodeField(doc *document.Document, fv reflect.Value, key string, omitEmpty bool) error {
 	switch fv.Kind() {
 	case reflect.Slice:
@@ -329,7 +329,7 @@ func encodeField(doc *document.Document, fv reflect.Value, key string, omitEmpty
 		return encodeSliceField(doc, fv, key)
 	case reflect.Map:
 		// A nil map omits its [table]; a non-nil one (even empty) emits it.
-		if fv.IsNil() {
+		if fv.IsNil() || (omitEmpty && fv.Len() == 0 && doc.FindTable(key) == nil) {
 			return nil
 		}
 		return encodeMapEntries(doc.EnsureTable(key), fv, key)
@@ -464,7 +464,7 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 			fieldVal := elem.Field(j)
 			omitEmpty := fieldOmitEmpty(field)
 			if fieldVal.Kind() == reflect.Map {
-				if fieldVal.IsNil() {
+				if fieldVal.IsNil() || (omitEmpty && fieldVal.Len() == 0 && cst.FindChildTable(doc.Root(), container, name) == nil) {
 					continue
 				}
 				if err := encodeMapEntries(cst.EnsureChildTable(doc.Root(), container, name), fieldVal, name); err != nil {

@@ -103,12 +103,11 @@ func TestRepresentabilityConformance(t *testing.T) {
 			faithful: true, setLit: `c.Mc = map[string]string{}`, wantLit: `Config{Mc: map[string]string{}}`, wire: "[mc]",
 		},
 		{
-			// omitempty is a LEAF-only option: ceMapScalar never carries it
-			// (comp_build threads OmitEmpty into ceLeaf only), so an omitempty
-			// scalar map still witnesses present-empty.
-			name: "empty-map-scalar-omitempty-ignored", shape: spkMap{Elem: stringT}, omitEmpty: true,
+			// omitempty collapses an empty scalar map to absent, as it does for
+			// []scalar: lossy at empty, by request.
+			name: "empty-map-scalar-omitempty", shape: spkMap{Elem: stringT}, omitEmpty: true,
 			predict:  func(r repr) bool { return r.EncodeWitnessesEmpty },
-			faithful: true, setLit: `c.McOE = map[string]string{}`, wantLit: `Config{McOE: map[string]string{}}`, wire: "[mc_oe]",
+			faithful: false, setLit: `c.McOE = map[string]string{}`, wireSilent: true,
 		},
 		{
 			// map[string][]string shares the scalar-map encoder (#141): its bare
@@ -303,6 +302,35 @@ const reprConfExtraCells = `	t.Run("decode-reads-empty-array-of-tables", func(t 
 	expect := map[string]*Server{"k": {}}
 	if !reflect.DeepEqual(d2.Data().MSP, expect) {
 		t.Fatalf("expect %s got %s\ntoml:\n%s", dump(expect), dump(d2.Data().MSP), out)
+	}
+	})
+	t.Run("omitempty-empty-map-clears-existing-table", func(t *testing.T) {
+	// omitempty only suppresses a table that isn't already there: an existing
+	// [mc_oe] is cleared rather than left holding its stale keys.
+	d, err := DecodeConfig([]byte("[mc_oe]\nk = \"v\"\n"))
+	if err != nil { t.Fatal(err) }
+	d.Data().McOE = map[string]string{}
+	out, err := d.Encode()
+	if err != nil { t.Fatalf("encode: %v", err) }
+	d2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\ntoml:\n%s", err, out) }
+	if len(d2.Data().McOE) != 0 {
+		t.Fatalf("stale keys survived: %s\ntoml:\n%s", dump(d2.Data().McOE), out)
+	}
+	})
+	t.Run("nil-map-slice-element-becomes-empty", func(t *testing.T) {
+	// A nil []string value in map[string][]string encodes as k = [] (cst.SetAny)
+	// and decodes as a non-nil empty slice: lossy at the element, pinned here.
+	d, err := DecodeConfig([]byte(""))
+	if err != nil { t.Fatal(err) }
+	d.Data().MSS = map[string][]string{"k": nil}
+	out, err := d.Encode()
+	if err != nil { t.Fatalf("encode: %v", err) }
+	d2, err := DecodeConfig(out)
+	if err != nil { t.Fatalf("re-decode: %v\ntoml:\n%s", err, out) }
+	expect := map[string][]string{"k": {}}
+	if !reflect.DeepEqual(d2.Data().MSS, expect) {
+		t.Fatalf("expect %s got %s\ntoml:\n%s", dump(expect), dump(d2.Data().MSS), out)
 	}
 	})
 `

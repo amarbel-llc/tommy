@@ -228,8 +228,9 @@ type ceArrayTable struct {
 }
 
 type ceMapScalar struct {
-	Tgt  TargetPath
-	TKey TOMLKey
+	Tgt       TargetPath
+	TKey      TOMLKey
+	OmitEmpty bool
 }
 
 type ceMapMap struct {

@@ -827,21 +827,28 @@ func kvInsertIndex(container *Node) int {
 
 // --- Table creation with positional scoping ---
 
-// EnsureChildTable finds or creates a [key] table as a child of parent.
-// Unlike the document API's EnsureTable which always appends at root end,
-// this inserts the new table immediately after parent in root.Children,
-// fixing scoping for tables inside array-table entries.
-func EnsureChildTable(root *Node, parent *Node, key string) *Node {
+// FindChildTable returns the [key] table that is a child of parent, or nil. It
+// searches only within parent's scope (between parent and the next same-level
+// entry), so multiple [[array]] entries are told apart.
+func FindChildTable(root *Node, parent *Node, key string) *Node {
 	fullKey := qualifiedKey(parent, key)
-
-	// Search only within parent's scope (between parent and the next
-	// same-level entry) to handle multiple [[array]] entries correctly.
 	startIdx, endIdx := parentScope(root, parent)
 	for i := startIdx; i < endIdx; i++ {
 		child := root.Children[i]
 		if child.Kind == NodeTable && TableHeaderKey(child) == fullKey {
 			return child
 		}
+	}
+	return nil
+}
+
+// EnsureChildTable finds or creates a [key] table as a child of parent.
+// Unlike the document API's EnsureTable which always appends at root end,
+// this inserts the new table immediately after parent in root.Children,
+// fixing scoping for tables inside array-table entries.
+func EnsureChildTable(root *Node, parent *Node, key string) *Node {
+	if existing := FindChildTable(root, parent, key); existing != nil {
+		return existing
 	}
 
 	// Create new table node. Build the header per-segment (parent's segments,
