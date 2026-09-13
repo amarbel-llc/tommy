@@ -217,9 +217,7 @@ func normalizeTrailingNewlines(data []byte) []byte {
 func splitLines(data []byte) []string {
 	s := string(data)
 	// Remove trailing newline before split to avoid empty last element
-	if strings.HasSuffix(s, "\n") {
-		s = s[:len(s)-1]
-	}
+	s = strings.TrimSuffix(s, "\n")
 	if s == "" {
 		return nil
 	}

@@ -66,6 +66,7 @@ func Analyze(dir, filename string) ([]StructInfo, error) {
 
 	pkg := pkgs[0]
 	if len(pkg.Errors) > 0 {
+		//nolint:ST1005 // multi-sentence guidance shown to the user as-is
 		return nil, fmt.Errorf("package does not type-check after ignoring generated *_tommy.go files: %v\n\n"+
 			"tommy generate ignores its own output, so this means non-generated code in the package fails to "+
 			"compile. If that code consumes the generated Decode/Encode API, isolate the //go:generate struct "+

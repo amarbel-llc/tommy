@@ -187,7 +187,12 @@ default, which needs the `ca-derivations` nix feature, with the
 buildGoApplication build still reachable as `.#default.passthru.bga`. The godyn
 package graph is derived at eval time from `gomod2nix.toml`, so no graph is
 committed. Unit tests for `./pkg` and `./internal` run per package in the
-`go-tests` check, and `go-vet` vets every package. After changing Go
+`go-tests` check, `go-vet` vets every package, and `go-lint` runs godyn-lint
+(vet plus staticcheck's defaults; `//nolint` is honored). The `go-generate` and
+`fuzz-sweep` checks are godyn test runs of `./generate` too: `testFiles` places
+the module files the synthetic modules build against at `..`, and `testPreRun`
+stages `goModCache`. godyn keeps no output for passing runs; `just
+debug-godyn-generate-verbose` reruns that test binary verbosely. After changing Go
 dependencies, run `gomod2nix` to regenerate `gomod2nix.toml`. The flake follows
 the stable-first nixpkgs convention (see parent `eng/CLAUDE.md`).
 

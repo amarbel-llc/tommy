@@ -327,6 +327,34 @@ debug-offline-fails:
   GOPROXY=off GOFLAGS=-mod=mod GOSUMDB=off TOMMY_TEST_OFFLINE=1 \
     go test ./generate/ -count=1 2>&1 | grep -E 'FAIL|panic|--- FAIL|undefined|cannot use' || true
 
+# godyn keeps no output for a passing test run, so this reruns the go-generate
+# check's own test binary verbosely, in a writable copy of its run tree with the
+# check's offline env, and prints the top-level results. Extra flags go to the
+# binary (e.g. -test.run=^TestRoundTrip); TOMMY_FUZZ_SEED passes through.
+#
+# run the godyn ./generate test binary verbose
+[group('debug')]
+debug-godyn-generate-verbose *flags:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  system=$(nix eval --raw --impure --expr builtins.currentSystem)
+  run=$(nix eval --raw ".#checks.${system}.go-generate.drvPath")
+  inputs=$(nix derivation show "$run" | jq -r '(.derivations // .) | to_entries[0].value | (.inputDrvs // .inputs.drvs) | keys[]')
+  out() { nix build --no-link --print-out-paths "$(grep -- "$1" <<<"$inputs")^out"; }
+  bin=$(out godyn-testbin-)/generate.test
+  tree=$(out godyn-testtree-)
+  cache=$(out tommy-go-modcache)
+  go=$(out '-go-[0-9]')
+  work=$(mktemp -d)
+  trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
+  cp -r --no-preserve=mode "$tree" "$work/tree"
+  cp -r --no-preserve=mode "$cache" "$work/modcache"
+  cd "$work/tree/generate"
+  env PATH="$go/bin:$PATH" HOME="$work" GOPATH="$work/gopath" GOCACHE="$work/gocache" \
+    GOMODCACHE="$work/modcache" GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off \
+    GOTOOLCHAIN=local TOMMY_TEST_OFFLINE=1 \
+    "$bin" -test.v {{flags}} 2>&1 | grep -E '^(--- (PASS|SKIP|FAIL)|PASS$|FAIL$)'
+
 # Inspect generated code.
 #
 # emit the generated *_tommy.go for a nesting test

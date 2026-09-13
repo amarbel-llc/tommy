@@ -71,19 +71,6 @@
           go-pkgs-test
           ;
 
-        # Vendor tree assembled from gomod2nix.toml for the offline
-        # bats fixture below. tommy has no local `replace` directives
-        # in go.mod, so an empty replace map is correct (and avoids
-        # depending on gomod2nix's internal `parseGoMod`).
-        tommyVendorEnv = pkgs.mkVendorEnv {
-          go = pkgs-master.go;
-          modulesStruct = builtins.fromTOML (builtins.readFile ./gomod2nix.toml);
-          goMod = {
-            replace = { };
-          };
-          pwd = ./.;
-        };
-
         # Tommy source + populated vendor/ in one tree. generate.bats
         # references this via TOMMY_FIXTURE_DIR (set by bats.nix); the
         # synthetic downstream module `replace`s tommy here and copies
@@ -94,7 +81,7 @@
           mkdir -p $out
           cp -r ${go-pkgs}/. $out/
           chmod -R u+w $out
-          cp -rL ${tommyVendorEnv} $out/vendor
+          cp -rL ${tommyBin.passthru.native.passthru.vendorEnv} $out/vendor
         '';
 
         # shortRev when the tree is clean; dirtyShortRev ("<sha>-dirty") when
@@ -239,66 +226,77 @@
           outputHash = "sha256-2VUHE0FE/062q5QHrgrSrpU3IEAMuANEn5nAQILPkeI=";
         };
 
-        # Runs the rich Go ./generate integration suite (incl. the #81/#82
-        # regression tests) offline on the default (jen) backend — the depth
-        # the bats matrix's breadth doesn't reach. Builds from go-pkgs-test
-        # (the test-inclusive source) with TOMMY_TEST_OFFLINE so the synthetic
-        # modules resolve from goModCache without network. See #83.
-        goGenerateCheck =
-          pkgs-master.runCommand "tommy-go-generate"
-            {
-              nativeBuildInputs = [ pkgs-master.go ];
+        # A godyn test run of ./generate, the rich integration suite (incl. the
+        # #81/#82 regression tests) the bats matrix's breadth doesn't reach. Its
+        # tests scaffold synthetic modules that `replace` tommy with the module
+        # root (`..` of the package) and build ./cmd/tommy there, so the run tree
+        # carries the module files those builds read. They shell out to go
+        # offline against goModCache (TOMMY_TEST_OFFLINE), so each run stages a
+        # writable copy of it. Instances differing only in testEnv/testFlags share
+        # the test binary (content-addressed) and repeat just the run. See #83.
+        tommyGenerateRun =
+          {
+            testEnv ? { },
+            testFlags ? [ ],
+          }:
+          (pkgs.buildGodynModule {
+            pname = "tommy";
+            version = tommyVersion;
+            commit = tommyCommit;
+            src = go-pkgs-test;
+            modules = ./gomod2nix.toml;
+            tests = true;
+            nativeCheckInputs = [ pkgs-master.go ];
+            testFiles.generate = [
+              "go.mod"
+              "go.sum"
+              "cmd"
+              "internal"
+              "pkg"
+            ];
+            testEnv = {
+              GOFLAGS = "-mod=mod";
+              GOPROXY = "off";
+              GOSUMDB = "off";
+              GOTOOLCHAIN = "local";
+              TOMMY_TEST_OFFLINE = "1";
             }
-            ''
-              export HOME=$TMPDIR
-              export GOPATH=$TMPDIR/gopath
-              export GOCACHE=$TMPDIR/gocache
+            // testEnv;
+            testPreRun = ''
+              export HOME=$TMPDIR GOPATH=$TMPDIR/gopath GOCACHE=$TMPDIR/gocache
               cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
               export GOMODCACHE=$TMPDIR/modcache
-              export GOFLAGS=-mod=mod
-              export GOPROXY=off
-              export GOSUMDB=off
-              export GOTOOLCHAIN=local
-              export TOMMY_TEST_OFFLINE=1
-              cp -r --no-preserve=mode ${go-pkgs-test} ./src
-              cd ./src
-              go test ./generate/...
-              touch $out
             '';
+            inherit testFlags;
+          }).passthru.tests."code.linenisgreat.com/tommy/generate";
+
+        goGenerateCheck = tommyGenerateRun { };
 
         # Multi-seed fuzz sweep. The go-generate check above runs the three
         # generative fuzzers (TestRoundTripFuzz, TestRoundTripFuzzDelegation,
         # TestRoundTripSpellingFuzz) at seed 1 only; this check loops the seed so
         # CI fuzzes many random type-shape sets per merge, not just seed 1 —
         # catching codegen/decoder bugs in shape combinations seed 1 misses (the
-        # #105/#107/#108 class). Same offline env as go-generate. Seed count is a
-        # build-time constant here; for ad-hoc local widening past it use the
-        # network-mode debug-fuzz-*-sweep just recipes (which take an n= arg).
+        # #105/#107/#108 class). Seed count is a build-time constant here; for
+        # ad-hoc local widening past it use the network-mode debug-fuzz-*-sweep
+        # just recipes (which take an n= arg).
         fuzzSweepSeeds = 10;
-        goFuzzSweep =
-          pkgs-master.runCommand "tommy-fuzz-sweep"
-            {
-              nativeBuildInputs = [ pkgs-master.go ];
-            }
-            ''
-              export HOME=$TMPDIR
-              export GOPATH=$TMPDIR/gopath
-              export GOCACHE=$TMPDIR/gocache
-              cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
-              export GOMODCACHE=$TMPDIR/modcache
-              export GOFLAGS=-mod=mod
-              export GOPROXY=off
-              export GOSUMDB=off
-              export GOTOOLCHAIN=local
-              export TOMMY_TEST_OFFLINE=1
-              cp -r --no-preserve=mode ${go-pkgs-test} ./src
-              cd ./src
-              for s in $(seq 1 ${toString fuzzSweepSeeds}); do
-                echo "=== fuzz seed $s ==="
-                TOMMY_FUZZ_SEED=$s go test -run '^TestRoundTrip' ./generate/ -count=1
-              done
-              touch $out
-            '';
+        goFuzzSweep = pkgs.runCommandLocal "tommy-fuzz-sweep" { } (
+          ": > $out\n"
+          + pkgs.lib.concatMapStringsSep "\n" (
+            s:
+            let
+              run = tommyGenerateRun {
+                testEnv.TOMMY_FUZZ_SEED = toString s;
+                testFlags = [
+                  "-test.run=^TestRoundTrip"
+                  "-test.count=1"
+                ];
+              };
+            in
+            "echo 'seed ${toString s}:' >> $out; cat ${run}/result >> $out"
+          ) (pkgs.lib.range 1 fuzzSweepSeeds)
+        );
 
         # conformist integration, owned by tommy so the consuming flake resolves
         # which tommy backs it (no per-repo driver duplication or separate
@@ -430,15 +428,22 @@
         checks =
           batsLib.batsLaneOutputs
           // {
-            go-generate = goGenerateCheck;
-            fuzz-sweep = goFuzzSweep;
             formatting = eval.config.build.check self;
           }
-          # godyn's per-package tests and vet. On the bga backend the unit tests
-          # run in tommyBin's checkPhase instead, which the bats lanes build.
+          # godyn's per-package tests, vet and lint. On the bga backend the unit
+          # tests run in tommyBin's checkPhase instead, which the bats lanes build.
           // pkgs.lib.optionalAttrs (tommyBin.passthru.backend == "native") {
             go-tests = tommyGoTests;
+            go-generate = goGenerateCheck;
+            fuzz-sweep = goFuzzSweep;
             go-vet = tommyBin.passthru.vetAll;
+            go-lint = pkgs.buildGodynLint {
+              pname = "tommy";
+              version = tommyVersion;
+              commit = tommyCommit;
+              src = go-pkgs-test;
+              modules = ./gomod2nix.toml;
+            };
           };
 
         devShells.default = pkgs-master.mkShell {
