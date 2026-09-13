@@ -93,9 +93,8 @@ build-nix:
 # run the bats end-to-end tests in the nix sandbox
 [group('post-build')]
 test-bats-nix:
-  # Generator coverage lives here exclusively — the Go-side
-  # ./generate/... tests scaffold synthetic modules and need
-  # go/packages.Load network the nix sandbox can't provide.
+  # End-to-end CLI coverage of the generator. The Go-side ./generate
+  # suite runs offline in the godyn go-generate check (test-go-generate-nix).
   nix build .#bats-default --no-link --print-build-logs
 
 # Example: `just debug-bats-nix-tag fmt`.
