@@ -60,6 +60,49 @@ func marshalRoundTrip(t *testing.T, input []byte, edit func(*ProfilesFile)) (Pro
 	return got, out
 }
 
+type OmitProfile struct {
+	Name    string            `toml:"name"`
+	Model   string            `toml:"model,omitempty"`
+	Tags    []string          `toml:"tags,omitempty"`
+	Env     map[string]string `toml:"env,omitempty"`
+	Retries int               `toml:"retries,omitempty"`
+}
+
+type OmitFile struct {
+	Title   string        `toml:"title,omitempty"`
+	Profile []OmitProfile `toml:"profile"`
+}
+
+func TestOmitemptyInArrayEntries(t *testing.T) {
+	input := []byte("title = \"t\"\n\n[[profile]]\nname = \"a\"\nmodel = \"old\"\nretries = 3\n")
+	var f OmitFile
+	doc, err := UnmarshalDocument(input, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Title = ""
+	f.Profile[0].Model = ""
+	f.Profile[0].Retries = 0
+	f.Profile = append(f.Profile, OmitProfile{Name: "b", Tags: []string{}})
+	out, err := MarshalDocument(doc, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"title", "model", "retries", "tags"} {
+		if strings.Contains(string(out), unwanted) {
+			t.Fatalf("omitempty zero field %q still written:\n%s", unwanted, out)
+		}
+	}
+	var got OmitFile
+	if _, err := UnmarshalDocument(out, &got); err != nil {
+		t.Fatalf("re-unmarshal: %v\n%s", err, out)
+	}
+	want := OmitFile{Profile: []OmitProfile{{Name: "a"}, {Name: "b"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v\ntoml:\n%s", got, out)
+	}
+}
+
 func TestRoundTripSliceFieldInArrayEntry(t *testing.T) {
 	marshalRoundTrip(t, []byte("[[profile]]\nname = \"a\"\n"), func(f *ProfilesFile) {
 		f.Profile[0].ContextServers = []string{"moxy", "caldav"}

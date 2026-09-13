@@ -304,7 +304,7 @@ func encodeStruct(doc *document.Document, rv reflect.Value, prefix string) error
 			continue
 		}
 
-		if err := encodeField(doc, fv, key); err != nil {
+		if err := encodeField(doc, fv, key, fieldOmitEmpty(field)); err != nil {
 			return err
 		}
 	}
@@ -312,7 +312,36 @@ func encodeStruct(doc *document.Document, rv reflect.Value, prefix string) error
 	return nil
 }
 
-func encodeField(doc *document.Document, fv reflect.Value, key string) error {
+func fieldOmitEmpty(field reflect.StructField) bool {
+	_, opts, _ := strings.Cut(field.Tag.Get("toml"), ",")
+	return slices.Contains(strings.Split(opts, ","), "omitempty")
+}
+
+// encodeField follows the generated encoders' omitempty rules: a zero scalar is
+// removed, and an empty slice is only written when its key already exists. Maps
+// ignore omitempty, as the generated map encoder does.
+func encodeField(doc *document.Document, fv reflect.Value, key string, omitEmpty bool) error {
+	switch fv.Kind() {
+	case reflect.Slice:
+		if omitEmpty && fv.Len() == 0 && !doc.Has(key) {
+			return nil
+		}
+		return encodeSliceField(doc, fv, key)
+	case reflect.Map:
+		// A nil map omits its [table]; a non-nil one (even empty) emits it.
+		if fv.IsNil() {
+			return nil
+		}
+		return encodeMapEntries(doc.EnsureTable(key), fv, key)
+	}
+
+	if omitEmpty && fv.IsZero() && encodeFieldValue(fv) != nil {
+		if doc.Has(key) {
+			return doc.Delete(key)
+		}
+		return nil
+	}
+
 	var val any
 
 	switch fv.Kind() {
@@ -329,14 +358,6 @@ func encodeField(doc *document.Document, fv reflect.Value, key string) error {
 		val = fv.Float()
 	case reflect.Bool:
 		val = fv.Bool()
-	case reflect.Slice:
-		return encodeSliceField(doc, fv, key)
-	case reflect.Map:
-		// A nil map omits its [table]; a non-nil one (even empty) emits it.
-		if fv.IsNil() {
-			return nil
-		}
-		return encodeMapEntries(doc.EnsureTable(key), fv, key)
 	default:
 		return fmt.Errorf("unsupported field type %s for key %q", fv.Kind(), key)
 	}
@@ -441,6 +462,7 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 				continue
 			}
 			fieldVal := elem.Field(j)
+			omitEmpty := fieldOmitEmpty(field)
 			if fieldVal.Kind() == reflect.Map {
 				if fieldVal.IsNil() {
 					continue
@@ -451,8 +473,9 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 				continue
 			}
 			if fieldVal.Kind() == reflect.Slice {
-				// As in encodeField, a nil slice writes nothing unless the key is already there.
-				if fieldVal.IsNil() && !doc.HasInContainer(container, name) {
+				// As in encodeField: a nil (or, with omitempty, empty) slice writes
+				// nothing unless the key is already there.
+				if (fieldVal.IsNil() || (omitEmpty && fieldVal.Len() == 0)) && !doc.HasInContainer(container, name) {
 					continue
 				}
 				sv, ok := primitiveSliceValue(fieldVal)
@@ -462,6 +485,10 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 				if err := doc.SetInContainer(container, name, sv); err != nil {
 					return err
 				}
+				continue
+			}
+			if omitEmpty && fieldVal.IsZero() && encodeFieldValue(fieldVal) != nil {
+				cst.DeleteValue(container, name)
 				continue
 			}
 			if fieldVal.Kind() == reflect.String && document.IsMultilineStringInContainer(container, name) {
