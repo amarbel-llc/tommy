@@ -111,6 +111,13 @@ func TestRepresentabilityConformance(t *testing.T) {
 			faithful: true, setLit: `c.McOE = map[string]string{}`, wantLit: `Config{McOE: map[string]string{}}`, wire: "[mc_oe]",
 		},
 		{
+			// map[string][]string shares the scalar-map encoder (#141): its bare
+			// [table] witnesses present-empty.
+			name: "empty-map-string-slice", shape: spkMap{Elem: spkSlice{Elem: stringT}},
+			predict:  func(r repr) bool { return r.EncodeWitnessesEmpty },
+			faithful: true, setLit: `c.MSS = map[string][]string{}`, wantLit: `Config{MSS: map[string][]string{}}`, wire: "[mss]",
+		},
+		{
 			// map[string]struct is entry-driven: empty is silent → nil.
 			name: "empty-map-struct", shape: spkMap{Elem: serverT},
 			predict:  func(r repr) bool { return r.EncodeWitnessesEmpty },
@@ -225,6 +232,7 @@ type Config struct {
 	PServers []*Server         ` + "`toml:\"pservers\"`" + `
 	Mc      map[string]string  ` + "`toml:\"mc\"`" + `
 	McOE    map[string]string  ` + "`toml:\"mc_oe,omitempty\"`" + `
+	MSS     map[string][]string ` + "`toml:\"mss\"`" + `
 	MS      map[string]Server  ` + "`toml:\"ms\"`" + `
 	MSP     map[string]*Server ` + "`toml:\"msp\"`" + `
 	MM      map[string]Named   ` + "`toml:\"mm\"`" + `

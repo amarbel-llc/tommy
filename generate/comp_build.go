@@ -138,6 +138,8 @@ func foldCompDecodeField(fi FieldInfo, pos compPos, handleOwner string, siblingK
 		switch elem := te.Elem.(type) {
 		case spkScalar:
 			return cdMapScalar{Tgt: c.tgt, TKey: c.tkey}
+		case spkSlice:
+			return cdMapScalar{Tgt: c.tgt, TKey: c.tkey, StringSlice: true}
 		case spkMap:
 			return cdMapMap{Tgt: c.tgt, TKey: c.tkey, TypeName: te.TypeName, ImportPath: te.ImportPath}
 		case spkStruct:
@@ -394,7 +396,9 @@ func foldCompEncodeField(fi FieldInfo, pos compPos, emitHandles bool) ceNode {
 
 	case spkMap:
 		switch elem := te.Elem.(type) {
-		case spkScalar:
+		case spkScalar, spkSlice:
+			// cst.SetAny encodes a []string value as a `k = [...]` leaf, so the
+			// string-slice map shares the scalar-map encoder.
 			return ceMapScalar{Tgt: c.tgt, TKey: c.tkey}
 		case spkMap:
 			return ceMapMap{Tgt: c.tgt, TKey: c.tkey, TypeName: te.TypeName}

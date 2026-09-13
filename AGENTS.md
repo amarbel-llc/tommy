@@ -149,7 +149,8 @@ encode/decode codegen paths:
 - `FieldSliceStruct` --- `[]Server` (array-of-tables)
 - `FieldCustom` --- implements `TOMLUnmarshaler`/`TOMLMarshaler`
 - `FieldTextMarshaler` --- implements `encoding.TextMarshaler`/`TextUnmarshaler`
-- `FieldMapStringString` --- `map[string]string`
+- `FieldMapStringString` --- `map[string]string`, and `map[string][]string`
+  (a `[table]` of string arrays; shares the string-map encoder)
 - `FieldMapStringStruct` --- `map[string]SomeStruct`
 - `FieldMapStringMapStringString` --- `map[string]NamedMapAlias`
 - `FieldSliceTextMarshaler` --- `[]TextMarshalerType`

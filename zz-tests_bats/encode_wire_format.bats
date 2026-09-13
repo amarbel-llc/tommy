@@ -164,6 +164,63 @@ GOEOF
   assert_output --partial "ok"
 }
 
+# #141: a map[string][]string field is a [table] of string arrays. Entries
+# serialize as `k = [...]`, an empty entry as `k = []` (decoding back non-nil),
+# and a quote-requiring key stays one key.
+function map_string_slice_wire_format { # @test
+  cd "$BATS_TEST_TMPDIR/proj" || exit
+
+  cat >config.go <<'GOEOF'
+package batstest
+
+//go:generate tommy generate
+type Config struct {
+	Excluded map[string][]string `toml:"excluded"`
+}
+GOEOF
+
+  run go generate ./...
+  assert_success
+
+  cat >wire_test.go <<'GOEOF'
+package batstest
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestMapStringSliceWire(t *testing.T) {
+	doc, err := DecodeConfig([]byte(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Data().Excluded = map[string][]string{"moxy": {"grit", "folio"}, "a.b": {}}
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"[excluded]", `moxy = ["grit", "folio"]`, `"a.b" = []`} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("want %q in output, got:\n%s", want, out)
+		}
+	}
+	doc2, err := DecodeConfig(out)
+	if err != nil {
+		t.Fatalf("re-decode: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(doc2.Data().Excluded, doc.Data().Excluded) {
+		t.Fatalf("round-trip: got %#v\n%s", doc2.Data().Excluded, out)
+	}
+}
+GOEOF
+
+  run go test ./...
+  assert_success
+  assert_output --partial "ok"
+}
+
 # Regression for #103: a map[string]Struct key that needs TOML quoting (here a
 # dot) must serialize its sub-table header quoted ([servers."a.b"]) and decode
 # back as a single map key, not nest as servers→a→b.

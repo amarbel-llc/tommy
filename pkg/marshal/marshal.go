@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 
 	"code.linenisgreat.com/tommy/pkg/cst"
@@ -166,9 +167,34 @@ func decodeFieldValue(v *cst.Value, fv reflect.Value, key string) error {
 		fv.SetBool(b)
 	case reflect.Slice:
 		return decodeSliceValue(v, fv, key)
+	case reflect.Map:
+		return decodeMapValue(v, fv, key)
 	default:
 		return fmt.Errorf("unsupported field type %s for key %q", fv.Kind(), key)
 	}
+	return nil
+}
+
+// decodeMapValue decodes a string-keyed map from a table, decoding each entry
+// as the map's element type.
+func decodeMapValue(v *cst.Value, fv reflect.Value, key string) error {
+	mt := fv.Type()
+	if mt.Key().Kind() != reflect.String {
+		return fmt.Errorf("unsupported map key type %s for key %q (only string keys supported)", mt.Key().Kind(), key)
+	}
+	if v.Kind != cst.VTable {
+		return typeErr(key, "table")
+	}
+	m := reflect.MakeMapWithSize(mt, len(v.Fields))
+	for i := range v.Fields {
+		f := &v.Fields[i]
+		elem := reflect.New(mt.Elem()).Elem()
+		if err := decodeFieldValue(&f.Val, elem, qualifiedKey(key, f.Key)); err != nil {
+			return err
+		}
+		m.SetMapIndex(reflect.ValueOf(f.Key).Convert(mt.Key()), elem)
+	}
+	fv.Set(m)
 	return nil
 }
 
@@ -305,6 +331,12 @@ func encodeField(doc *document.Document, fv reflect.Value, key string) error {
 		val = fv.Bool()
 	case reflect.Slice:
 		return encodeSliceField(doc, fv, key)
+	case reflect.Map:
+		// A nil map omits its [table]; a non-nil one (even empty) emits it.
+		if fv.IsNil() {
+			return nil
+		}
+		return encodeMapEntries(doc.EnsureTable(key), fv, key)
 	default:
 		return fmt.Errorf("unsupported field type %s for key %q", fv.Kind(), key)
 	}
@@ -318,29 +350,76 @@ func encodeField(doc *document.Document, fv reflect.Value, key string) error {
 }
 
 func encodeSliceField(doc *document.Document, fv reflect.Value, key string) error {
-	elemType := fv.Type().Elem()
+	if fv.Type().Elem().Kind() == reflect.Struct {
+		return encodeStructSliceField(doc, fv, key)
+	}
+	val, ok := primitiveSliceValue(fv)
+	if !ok {
+		return fmt.Errorf("unsupported slice element type %s for key %q", fv.Type().Elem().Kind(), key)
+	}
+	return doc.Set(key, val)
+}
 
-	switch elemType.Kind() {
+func primitiveSliceValue(fv reflect.Value) (any, bool) {
+	switch fv.Type().Elem().Kind() {
 	case reflect.Int:
 		s := make([]int, fv.Len())
 		for i := range fv.Len() {
 			s[i] = int(fv.Index(i).Int())
 		}
-		return doc.Set(key, s)
-
+		return s, true
 	case reflect.String:
 		s := make([]string, fv.Len())
 		for i := range fv.Len() {
 			s[i] = fv.Index(i).String()
 		}
-		return doc.Set(key, s)
-
-	case reflect.Struct:
-		return encodeStructSliceField(doc, fv, key)
-
+		return s, true
 	default:
-		return fmt.Errorf("unsupported slice element type %s for key %q", elemType.Kind(), key)
+		return nil, false
 	}
+}
+
+// encodeMapEntries writes a string-keyed map into table: existing keys are
+// updated in place (keeping their comments), keys no longer in the map are
+// removed, and new keys are appended in sorted order for deterministic output.
+func encodeMapEntries(table *cst.Node, fv reflect.Value, key string) error {
+	keyType := fv.Type().Key()
+	if keyType.Kind() != reflect.String {
+		return fmt.Errorf("unsupported map key type %s for key %q (only string keys supported)", keyType.Kind(), key)
+	}
+
+	var stale []string
+	for _, child := range table.Children {
+		if child.Kind != cst.NodeKeyValue {
+			continue
+		}
+		name := cst.KeyValueName(child)
+		if !fv.MapIndex(reflect.ValueOf(name).Convert(keyType)).IsValid() {
+			stale = append(stale, name)
+		}
+	}
+	for _, name := range stale {
+		cst.DeleteValue(table, name)
+	}
+
+	keys := fv.MapKeys()
+	slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
+	for _, k := range keys {
+		ev := fv.MapIndex(k)
+		var val any
+		if ev.Kind() == reflect.Slice {
+			val, _ = primitiveSliceValue(ev)
+		} else {
+			val = encodeFieldValue(ev)
+		}
+		if val == nil {
+			return fmt.Errorf("unsupported map value type %s for key %q", ev.Type(), qualifiedKey(key, k.String()))
+		}
+		if err := cst.SetAny(table, k.String(), val); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string) error {
@@ -362,6 +441,15 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 				continue
 			}
 			fieldVal := elem.Field(j)
+			if fieldVal.Kind() == reflect.Map {
+				if fieldVal.IsNil() {
+					continue
+				}
+				if err := encodeMapEntries(cst.EnsureChildTable(doc.Root(), container, name), fieldVal, name); err != nil {
+					return err
+				}
+				continue
+			}
 			if fieldVal.Kind() == reflect.String && document.IsMultilineStringInContainer(container, name) {
 				if err := doc.SetMultilineInContainer(container, name, fieldVal.String()); err != nil {
 					return err

@@ -98,10 +98,11 @@ type cdArrayTable struct {
 	Children      []cdNode
 }
 
-// cdMapScalar is map[string]string: find [TKey], ExtractStringMap.
+// cdMapScalar is map[string]string, or map[string][]string when StringSlice.
 type cdMapScalar struct {
-	Tgt  TargetPath
-	TKey TOMLKey
+	Tgt         TargetPath
+	TKey        TOMLKey
+	StringSlice bool
 }
 
 // cdMapMap is map[string]map[string]string: iterate [TKey.*] sub-tables.

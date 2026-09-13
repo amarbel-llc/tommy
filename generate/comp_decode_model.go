@@ -289,21 +289,32 @@ func compModelEmptyArrayLeaf(g *jen.Group, tv *jen.Statement, key TOMLKey, fv st
 	})
 }
 
-// compModelMapScalar decodes map[string]string: each leaf entry that extracts to
-// a string is consumed; a non-string entry stays unconsumed (surfaced by #109).
+// compModelMapScalar decodes map[string]string (or map[string][]string): each
+// leaf entry that extracts to the value type is consumed; any other entry stays
+// unconsumed (surfaced by #109).
 func compModelMapScalar(ctx jenCtx, g *jen.Group, n cdMapScalar, tv *jen.Statement, fv string) {
+	valType, extract := jen.String(), "ExtractString"
+	if n.StringSlice {
+		valType, extract = jen.Index().String(), "ExtractStringSlice"
+	}
 	compModelField(g, tv, n.TKey, "VTable", fv, func(b *jen.Group, v *jen.Statement) {
 		b.Add(v.Clone().Dot("MarkSeen").Call())
-		b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).String())
+		b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Add(valType.Clone()))
 		idx := "_i" + n.TKey.VarSuffix()
 		fv := "_f" + n.TKey.VarSuffix()
 		b.For(jen.Id(idx).Op(":=").Range().Add(v.Clone()).Dot("Fields")).BlockFunc(func(lb *jen.Group) {
 			lb.Id(fv).Op(":=").Op("&").Add(v.Clone()).Dot("Fields").Index(jen.Id(idx))
 			lb.If(jen.Id(fv).Dot("Val").Dot("Kind").Op("==").Qual(cstPkg, "VLeaf")).BlockFunc(func(ib *jen.Group) {
-				ib.If(jen.List(jen.Id("_s"), jen.Id("_sok")).Op(":=").Qual(cstPkg, "ExtractString").Call(jen.Id(fv).Dot("Val").Dot("Leaf")), jen.Id("_sok")).Block(
+				body := []jen.Code{}
+				if n.StringSlice {
+					// `k = []` extracts to nil; keep it a present-empty slice (#21).
+					body = append(body, jen.If(jen.Id("_s").Op("==").Nil()).Block(jen.Id("_s").Op("=").Index().String().Values()))
+				}
+				body = append(body,
 					n.Tgt.Jen().Clone().Index(jen.Id(fv).Dot("Key")).Op("=").Id("_s"),
 					jen.Id(fv).Dot("Val").Dot("MarkConsumed").Call(),
 				)
+				ib.If(jen.List(jen.Id("_s"), jen.Id("_sok")).Op(":=").Qual(cstPkg, extract).Call(jen.Id(fv).Dot("Val").Dot("Leaf")), jen.Id("_sok")).Block(body...)
 			})
 		})
 	})

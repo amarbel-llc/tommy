@@ -151,6 +151,7 @@ The code generator handles:
   `[]int`, `[]string`                           Arrays
   `[]Struct`                                    `[[array-of-tables]]`
   `map[string]string`                           `[table]` with string values
+  `map[string][]string`                         `[table]` with string-array values
   `map[string]Struct`                           Sub-tables (`[parent.key]`)
   `TOMLMarshaler`/`TOMLUnmarshaler`             Custom marshal via `any`
   `TextMarshaler`/`TextUnmarshaler`             Custom marshal via string

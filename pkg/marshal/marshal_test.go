@@ -1,6 +1,8 @@
 package marshal
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +29,70 @@ type AllTypesConfig struct {
 	Enabled bool     `toml:"enabled"`
 	Buckets []int    `toml:"buckets"`
 	Tags    []string `toml:"tags"`
+}
+
+type Profile struct {
+	Name            string              `toml:"name"`
+	Env             map[string]string   `toml:"env"`
+	ContextExcluded map[string][]string `toml:"context_excluded"`
+}
+
+type ProfilesFile struct {
+	Groups  map[string][]string `toml:"groups"`
+	Profile []Profile           `toml:"profile"`
+}
+
+func TestUnmarshalMaps(t *testing.T) {
+	input := []byte("[groups]\nadmins = [\"alice\"]\n\n[[profile]]\nname = \"a\"\n\n[profile.env]\nFOO = \"bar\"\n\n[profile.context_excluded]\nmoxy = [\"grit\", \"folio\"]\nnone = []\n\n[[profile]]\nname = \"b\"\n")
+	var f ProfilesFile
+	if _, err := UnmarshalDocument(input, &f); err != nil {
+		t.Fatal(err)
+	}
+	want := ProfilesFile{
+		Groups: map[string][]string{"admins": {"alice"}},
+		Profile: []Profile{
+			{Name: "a", Env: map[string]string{"FOO": "bar"}, ContextExcluded: map[string][]string{"moxy": {"grit", "folio"}, "none": {}}},
+			{Name: "b"},
+		},
+	}
+	if !reflect.DeepEqual(f, want) {
+		t.Fatalf("got %#v", f)
+	}
+}
+
+func TestUnmarshalMapTypeError(t *testing.T) {
+	var f ProfilesFile
+	if _, err := UnmarshalDocument([]byte("[groups]\nadmins = \"alice\"\n"), &f); err == nil {
+		t.Fatal("expected a type error for a non-array map value")
+	}
+}
+
+func TestRoundTripMapsPreservesComments(t *testing.T) {
+	input := []byte("# profiles\n[groups]\nadmins = [\"alice\"]\n\n[[profile]]\nname = \"a\"  # first\n\n[profile.env]\nFOO = \"bar\"\n\n[[profile]]\nname = \"b\"\n")
+	var f ProfilesFile
+	doc, err := UnmarshalDocument(input, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Groups["ops"] = []string{"carol"}
+	f.Profile[0].Env["BAZ"] = "qux"
+	f.Profile[1].ContextExcluded = map[string][]string{"k": {"v"}}
+	out, err := MarshalDocument(doc, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# profiles", "# first"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("lost %q:\n%s", want, out)
+		}
+	}
+	var got ProfilesFile
+	if _, err := UnmarshalDocument(out, &got); err != nil {
+		t.Fatalf("re-unmarshal: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(got, f) {
+		t.Fatalf("round-trip mismatch:\ngot  %#v\nwant %#v\ntoml:\n%s", got, f, out)
+	}
 }
 
 func TestRoundTripPreservesComments(t *testing.T) {

@@ -759,6 +759,12 @@ func classifyTypeExpr(pkg *packages.Package, typ types.Type) (spkType, error) {
 		if val, ok := t.Elem().(*types.Basic); ok && val.Kind() == types.String {
 			return spkMap{Elem: spkScalar{Codec: codecPrim}}, nil
 		}
+		if sl, ok := t.Elem().(*types.Slice); ok {
+			if val, ok := sl.Elem().(*types.Basic); ok && val.Kind() == types.String {
+				return spkMap{Elem: spkSlice{Elem: spkScalar{Codec: codecPrim, TypeName: "string"}}}, nil
+			}
+			return nil, fmt.Errorf("unsupported map value type %s (only []string slices supported)", t.Elem())
+		}
 		// map[string]*Struct: pointer values are supported for same-package
 		// structs (FieldMapStringStruct honors SlicePointer); cross-package
 		// pointer-struct map values would lose their pointer-ness through the

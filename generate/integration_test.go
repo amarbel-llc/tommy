@@ -9526,6 +9526,68 @@ func TestDecode(t *testing.T) {
 	nestingRun(t, dir)
 }
 
+// []Struct > map[string]string + map[string][]string (#141: clown's profiles.toml)
+func TestNestingSliceStructMapStringStringSlice(t *testing.T) {
+	dir, root := nestingSetup(t)
+	nestingGoMod(t, dir, root, "n141")
+	writeFixture(t, dir, "config.go", `package n141
+//go:generate tommy generate
+type File struct {
+	Groups  map[string][]string `+"`toml:\"groups\"`"+`
+	Profile []Profile           `+"`toml:\"profile\"`"+`
+}
+type Profile struct {
+	Name            string              `+"`toml:\"name\"`"+`
+	Env             map[string]string   `+"`toml:\"env,omitempty\"`"+`
+	ContextServers  []string            `+"`toml:\"context_servers,omitempty\"`"+`
+	ContextExcluded map[string][]string `+"`toml:\"context_excluded,omitempty\"`"+`
+}
+`)
+	writeFixture(t, dir, "config_test.go", `package n141
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+const input = "# profiles\n[groups]\nadmins = [\"alice\", \"bob\"]\n\n[[profile]]\nname = \"a\"\ncontext_servers = [\"x\"]\n\n[profile.env]\nFOO = \"bar\"\n\n[profile.context_excluded]\nmoxy = [\"grit\", \"folio\"]  # keep\n\"dotted.key\" = []\n\n[[profile]]\nname = \"b\"\n"
+func TestDecode(t *testing.T) {
+	doc, err := DecodeFile([]byte(input))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	want := File{
+		Groups: map[string][]string{"admins": {"alice", "bob"}},
+		Profile: []Profile{
+			{Name: "a", Env: map[string]string{"FOO": "bar"}, ContextServers: []string{"x"}, ContextExcluded: map[string][]string{"moxy": {"grit", "folio"}, "dotted.key": {}}},
+			{Name: "b"},
+		},
+	}
+	if !reflect.DeepEqual(*d, want) { t.Fatalf("got %#v", *d) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+func TestRoundTrip(t *testing.T) {
+	doc, err := DecodeFile([]byte(input))
+	if err != nil { t.Fatal(err) }
+	d := doc.Data()
+	d.Profile[1].ContextExcluded = map[string][]string{"k 1": {"v"}}
+	d.Groups["ops"] = []string{}
+	out, err := doc.Encode()
+	if err != nil { t.Fatal(err) }
+	if !strings.Contains(string(out), "# profiles") { t.Fatalf("comment lost:\n%s", out) }
+	doc2, err := DecodeFile(out)
+	if err != nil { t.Fatalf("re-decode: %v\n%s", err, out) }
+	if !reflect.DeepEqual(*doc2.Data(), *d) { t.Fatalf("round-trip mismatch:\ngot  %#v\nwant %#v\ntoml:\n%s", *doc2.Data(), *d, out) }
+}
+func TestDecodeInlineTable(t *testing.T) {
+	doc, err := DecodeFile([]byte("groups = { admins = [\"alice\"], empty = [] }\n"))
+	if err != nil { t.Fatal(err) }
+	want := map[string][]string{"admins": {"alice"}, "empty": {}}
+	if !reflect.DeepEqual(doc.Data().Groups, want) { t.Fatalf("got %#v", doc.Data().Groups) }
+	if u := doc.Undecoded(); len(u) != 0 { t.Fatalf("undecoded: %v", u) }
+}
+`)
+	nestingRun(t, dir)
+}
+
 // map[string]Struct > []Struct > primitive
 func TestNestingMapStringStructSliceStruct(t *testing.T) {
 	dir, root := nestingSetup(t)

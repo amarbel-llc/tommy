@@ -66,7 +66,8 @@ own code path for decode and encode.
 	(*[[key]]*).
 
 *FieldMapStringString*
-	*map[string]string*. Encoded as a TOML table of string values.
+	*map[string]string*. Encoded as a TOML table of string values. The same
+	kind covers *map[string][]string*, a TOML table of string-array values.
 
 *FieldMapStringStruct*
 	*map[string]SomeStruct*. Encoded as a TOML table whose values are
