@@ -43,9 +43,8 @@
     }:
     let
       # version.env at repo root is the single source of truth for the release
-      # version. The fork's buildGoApplication auto-injects -X main.version from
-      # this; keeping it out of the flake avoids a version-bump always dirtying
-      # the derivation. See eng-versioning(7).
+      # version. It is passed to buildGoAuto, whose backends inject it as
+      # -X main.version. See eng-versioning(7).
       tommyVersion = builtins.head (
         builtins.match ".*TOMMY_VERSION=([^\n]+).*" (builtins.readFile ./version.env)
       );
@@ -98,54 +97,93 @@
           cp -rL ${tommyVendorEnv} $out/vendor
         '';
 
-        tommyBin = pkgs.buildGoApplication {
-          pname = "tommy";
-          version = tommyVersion;
-          # shortRev when the tree is clean; dirtyShortRev ("<sha>-dirty") when
-          # it isn't — so a dirty build is distinguishable in `tommy version` and
-          # the generated-file header (#125). Flakes expose neither on a non-git
-          # build, hence the "unknown" fallback.
-          commit = self.shortRev or self.dirtyShortRev or "unknown";
-          src = go-pkgs-test;
-          modules = ./gomod2nix.toml;
-          subPackages = [ "cmd/tommy" ];
-          # Skips ./generate/... — those tests scaffold synthetic Go
-          # modules and call go/packages.Load, which needs network or a
-          # pre-populated module cache that the nix sandbox doesn't have.
-          # The bats lane covers the generator end-to-end against the
-          # installed binary.
-          doCheck = true;
-          checkPhase = ''
-            runHook preCheck
-            go test -p $NIX_BUILD_CORES ./pkg/... ./internal/...
-            runHook postCheck
-          '';
+        # shortRev when the tree is clean; dirtyShortRev ("<sha>-dirty") when
+        # it isn't — so a dirty build is distinguishable in `tommy version` and
+        # the generated-file header (#125). Flakes expose neither on a non-git
+        # build, hence the "unknown" fallback.
+        tommyCommit = self.shortRev or self.dirtyShortRev or "unknown";
 
-          nativeBuildInputs = [ pkgs.scdoc ];
+        # tommy's Go build via igloo's buildGoAuto: godyn (per-package,
+        # content-addressed) on igloo's godynSystems, buildGoApplication
+        # elsewhere. Both stay reachable as passthru.native / passthru.bga, and
+        # gates key off passthru.backend rather than a system name (godyn(7)).
+        # The package graph is derived at eval time from gomod2nix.toml (igloo
+        # FDR 0008), so no graph is committed.
+        tommyBin =
+          (pkgs.buildGoAuto {
+            pname = "tommy";
+            version = tommyVersion;
+            src = go-pkgs-test;
+            modules = ./gomod2nix.toml;
+            subPackages = [ "cmd/tommy" ];
 
-          postInstall = ''
-            tmp=$(mktemp)
-            for f in doc/*.1.scd; do
-              [ -e "$f" ] || continue
-              name=$(basename "$f" .scd)
-              scdoc < "$f" > "$tmp"
-              install -Dm644 "$tmp" "$out/share/man/man1/$name"
-            done
-            for f in doc/*.7.scd; do
-              [ -e "$f" ] || continue
-              name=$(basename "$f" .scd)
-              scdoc < "$f" > "$tmp"
-              install -Dm644 "$tmp" "$out/share/man/man7/$name"
-            done
-            rm -f "$tmp"
-          '';
+            # commit has no buildGoAuto slot, so it rides both backends' args.
+            # godyn also derives the test graph, for tommyGoTests below.
+            nativeArgs = {
+              commit = tommyCommit;
+              tests = true;
+            };
+            bgaArgs = {
+              commit = tommyCommit;
+              # Skips ./generate/... — those tests scaffold synthetic Go
+              # modules and call go/packages.Load, which needs network or a
+              # pre-populated module cache that the nix sandbox doesn't have.
+              # The go-generate check and the bats lanes cover the generator.
+              doCheck = true;
+              checkPhase = ''
+                runHook preCheck
+                go test -p $NIX_BUILD_CORES ./pkg/... ./internal/...
+                runHook postCheck
+              '';
+            };
 
-          meta = {
-            description = "A TOML library for Go";
-            homepage = "https://code.linenisgreat.com/tommy";
-            license = pkgs.lib.licenses.mit;
-          };
-        };
+            nativeBuildInputs = [ pkgs.scdoc ];
+
+            postInstall = ''
+              tmp=$(mktemp)
+              for f in doc/*.1.scd; do
+                [ -e "$f" ] || continue
+                name=$(basename "$f" .scd)
+                scdoc < "$f" > "$tmp"
+                install -Dm644 "$tmp" "$out/share/man/man1/$name"
+              done
+              for f in doc/*.7.scd; do
+                [ -e "$f" ] || continue
+                name=$(basename "$f" .scd)
+                scdoc < "$f" > "$tmp"
+                install -Dm644 "$tmp" "$out/share/man/man7/$name"
+              done
+              rm -f "$tmp"
+            '';
+          }).overrideAttrs
+            (old: {
+              meta = (old.meta or { }) // {
+                description = "A TOML library for Go";
+                homepage = "https://code.linenisgreat.com/tommy";
+                license = pkgs.lib.licenses.mit;
+                mainProgram = "tommy";
+              };
+            });
+
+        # godyn's per-package go test lane, scoped to ./pkg and ./internal — what
+        # the bga checkPhase runs. ./generate is left out (its tests need a Go
+        # module cache; see the go-generate check), and runs this manifest doesn't
+        # reference are never built.
+        tommyGoTests =
+          let
+            modPath = "code.linenisgreat.com/tommy";
+            inScope =
+              ip: _:
+              builtins.any (dir: ip == "${modPath}/${dir}" || pkgs.lib.hasPrefix "${modPath}/${dir}/" ip) [
+                "pkg"
+                "internal"
+              ];
+            runs = pkgs.lib.filterAttrs inScope tommyBin.passthru.tests;
+          in
+          pkgs.runCommandLocal "tommy-go-tests" { } (
+            ": > $out\n"
+            + pkgs.lib.concatMapStringsSep "\n" (run: "cat ${run}/result >> $out") (pkgs.lib.attrValues runs)
+          );
 
         # Filter zz-tests_bats so lane store paths only change when
         # actual test inputs change — not on unrelated repo edits. The
@@ -389,11 +427,19 @@
         # generate lane under all four codegen backends (jen/api/cst/legacy).
         # Backend divergence (e.g. #82) now fails CI rather than slipping
         # through on the default backend. See #83.
-        checks = batsLib.batsLaneOutputs // {
-          go-generate = goGenerateCheck;
-          fuzz-sweep = goFuzzSweep;
-          formatting = eval.config.build.check self;
-        };
+        checks =
+          batsLib.batsLaneOutputs
+          // {
+            go-generate = goGenerateCheck;
+            fuzz-sweep = goFuzzSweep;
+            formatting = eval.config.build.check self;
+          }
+          # godyn's per-package tests and vet. On the bga backend the unit tests
+          # run in tommyBin's checkPhase instead, which the bats lanes build.
+          // pkgs.lib.optionalAttrs (tommyBin.passthru.backend == "native") {
+            go-tests = tommyGoTests;
+            go-vet = tommyBin.passthru.vetAll;
+          };
 
         devShells.default = pkgs-master.mkShell {
           packages = [

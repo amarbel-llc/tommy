@@ -182,9 +182,14 @@ multiline string syntax
 
 ## Nix
 
-Built with `gomod2nix`. After changing Go dependencies, run `gomod2nix` to
-regenerate `gomod2nix.toml`. The flake follows the stable-first nixpkgs
-convention (see parent `eng/CLAUDE.md`).
+Built with igloo's `buildGoAuto` (`godyn(7)`): the godyn per-package backend by
+default, which needs the `ca-derivations` nix feature, with the
+buildGoApplication build still reachable as `.#default.passthru.bga`. The godyn
+package graph is derived at eval time from `gomod2nix.toml`, so no graph is
+committed. Unit tests for `./pkg` and `./internal` run per package in the
+`go-tests` check, and `go-vet` vets every package. After changing Go
+dependencies, run `gomod2nix` to regenerate `gomod2nix.toml`. The flake follows
+the stable-first nixpkgs convention (see parent `eng/CLAUDE.md`).
 
 Changing Go dependencies also invalidates `goModCache` (the pinned offline
 module cache the `go-generate` check resolves synthetic modules against). After
