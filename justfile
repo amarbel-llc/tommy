@@ -28,7 +28,9 @@ lint-fmt:
   nix build ".#checks.${system}.formatting" --no-link --print-build-logs
 
 # Impure eng checks (git remotes, sweatfile, agents-md, gomod2nix) against the
-# working tree; conformist comes from the devShell PATH.
+# working tree; conformist comes from the devShell PATH. The profile adds the
+# justfile-* linters via pinned static artifacts (conformist RFC 0005), which
+# must stay out of the sandboxed checks.formatting lane (RFC 0005 §5).
 #
 # run the impure eng conformist checks against the working tree
 [group('lint')]
@@ -36,7 +38,24 @@ lint-worktree:
   #!/usr/bin/env bash
   set -euo pipefail
   cfg=$(nix build --no-link --print-out-paths '.#conformist-impure-config')
-  conformist check --config-file "$cfg" --tree-root .
+  conformist check --config-file "$cfg" --tree-root . --profile conformist.profile
+
+# Like lint-worktree, but resolves the profile into an empty cache so the pinned
+# artifacts are fetched fresh rather than reused from ~/.cache.
+#
+# run the profile check against a fresh artifact cache
+[group('debug')]
+debug-lint-profile-fresh:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cache=$(mktemp -d)
+  trap 'rm -rf "$cache"' EXIT
+  cfg=$(nix build --no-link --print-out-paths '.#conformist-impure-config')
+  XDG_CACHE_HOME="$cache" conformist check --config-file "$cfg" --tree-root . \
+    --no-cache --profile conformist.profile
+  echo "--- fetched artifacts ---"
+  find "$cache/conformist/profile/artifacts" -type f -exec ls -l {} \; -exec file {} \;
+  echo "--- jq on PATH: $(command -v jq || echo MISSING) ---"
 
 # === codemod ===
 
