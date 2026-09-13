@@ -825,62 +825,29 @@ func bodyTrailingTriviaStart(container *cst.Node) int {
 }
 
 // AppendArrayTableEntry adds a new [[key]] section after the last existing
-// one, or at the end of the document. Returns the new node.
+// one and the [key.x] sub-tables that belong to it, or at the end of the
+// document. Returns the new node.
 func (doc *Document) AppendArrayTableEntry(key string) *cst.Node {
-	newNode := &cst.Node{
-		Kind: cst.NodeArrayTable,
-		Children: []*cst.Node{
-			{Kind: cst.NodeBracketOpen, Raw: []byte("[")},
-			{Kind: cst.NodeBracketOpen, Raw: []byte("[")},
-			{Kind: cst.NodeKey, Raw: []byte(key)},
-			{Kind: cst.NodeBracketClose, Raw: []byte("]")},
-			{Kind: cst.NodeBracketClose, Raw: []byte("]")},
-			{Kind: cst.NodeNewline, Raw: []byte("\n")},
-		},
-	}
-
-	// Find the last [[key]] node to insert after it
-	lastIdx := -1
-	for i, child := range doc.root.Children {
-		if child.Kind == cst.NodeArrayTable && tableHeaderKey(child) == key {
-			lastIdx = i
-		}
-	}
-
-	blankLine := &cst.Node{Kind: cst.NodeNewline, Raw: []byte("\n")}
-
-	if lastIdx >= 0 {
-		// Insert after the last entry
-		insertIdx := lastIdx + 1
-		newChildren := make([]*cst.Node, 0, len(doc.root.Children)+2)
-		newChildren = append(newChildren, doc.root.Children[:insertIdx]...)
-		newChildren = append(newChildren, blankLine, newNode)
-		newChildren = append(newChildren, doc.root.Children[insertIdx:]...)
-		doc.root.Children = newChildren
-	} else {
-		// No existing entries — append at end
-		doc.root.Children = append(doc.root.Children, blankLine, newNode)
-	}
-
-	return newNode
+	return cst.AppendArrayTableEntryAfter(doc.root, key)
 }
 
-// RemoveArrayTableEntry removes a [[key]] section and its body from the document.
+// RemoveArrayTableEntry removes a [[key]] section, its body, and the [key.x]
+// sub-tables that belong to it from the document.
 func (doc *Document) RemoveArrayTableEntry(node *cst.Node) error {
-	startIdx := -1
-	for i, child := range doc.root.Children {
-		if child == node {
-			startIdx = i
-			break
-		}
-	}
-	if startIdx < 0 {
+	startIdx, scopeEnd := cst.ChildScope(doc.root, node)
+	if scopeEnd <= startIdx {
 		return fmt.Errorf("node not found in document")
 	}
 
-	// The array-table node contains its key-value body as children,
-	// so removing it removes the entire section.
+	// Table nodes hold their own key-value bodies, so cutting through the last
+	// sub-table in scope removes the whole section. Trailing newlines and
+	// comments stay: they may lead into the next section.
 	endIdx := startIdx + 1
+	for i := startIdx + 1; i < scopeEnd; i++ {
+		if k := doc.root.Children[i].Kind; k == cst.NodeTable || k == cst.NodeArrayTable {
+			endIdx = i + 1
+		}
+	}
 
 	// Remove a preceding blank-line node if present
 	removeFrom := startIdx

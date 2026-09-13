@@ -34,7 +34,55 @@ type AllTypesConfig struct {
 type Profile struct {
 	Name            string              `toml:"name"`
 	Env             map[string]string   `toml:"env"`
+	ContextServers  []string            `toml:"context_servers"`
 	ContextExcluded map[string][]string `toml:"context_excluded"`
+}
+
+func marshalRoundTrip(t *testing.T, input []byte, edit func(*ProfilesFile)) (ProfilesFile, []byte) {
+	t.Helper()
+	var f ProfilesFile
+	doc, err := UnmarshalDocument(input, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit(&f)
+	out, err := MarshalDocument(doc, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got ProfilesFile
+	if _, err := UnmarshalDocument(out, &got); err != nil {
+		t.Fatalf("re-unmarshal: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(got, f) {
+		t.Fatalf("round-trip mismatch:\ngot  %#v\nwant %#v\ntoml:\n%s", got, f, out)
+	}
+	return got, out
+}
+
+func TestRoundTripSliceFieldInArrayEntry(t *testing.T) {
+	marshalRoundTrip(t, []byte("[[profile]]\nname = \"a\"\n"), func(f *ProfilesFile) {
+		f.Profile[0].ContextServers = []string{"moxy", "caldav"}
+	})
+}
+
+func TestRoundTripMapsOnExistingThenAppendedEntry(t *testing.T) {
+	_, out := marshalRoundTrip(t, []byte("# profiles\n[[profile]]\nname = \"or\"\n"), func(f *ProfilesFile) {
+		f.Profile = []Profile{
+			{Name: "or", Env: map[string]string{"FOO": "bar"}, ContextExcluded: map[string][]string{"moxy": {"folio.read"}}},
+			{Name: "second"},
+		}
+	})
+	if !strings.Contains(string(out), "# profiles") {
+		t.Fatalf("comment lost:\n%s", out)
+	}
+}
+
+func TestRoundTripShrinkDropsRemovedEntrySubTables(t *testing.T) {
+	input := []byte("[[profile]]\nname = \"a\"\n\n[[profile]]\nname = \"b\"\n\n[profile.env]\nFOO = \"bar\"\n")
+	marshalRoundTrip(t, input, func(f *ProfilesFile) {
+		f.Profile = f.Profile[:1]
+	})
 }
 
 type ProfilesFile struct {

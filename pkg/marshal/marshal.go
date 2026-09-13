@@ -450,6 +450,20 @@ func encodeStructSliceField(doc *document.Document, fv reflect.Value, key string
 				}
 				continue
 			}
+			if fieldVal.Kind() == reflect.Slice {
+				// As in encodeField, a nil slice writes nothing unless the key is already there.
+				if fieldVal.IsNil() && !doc.HasInContainer(container, name) {
+					continue
+				}
+				sv, ok := primitiveSliceValue(fieldVal)
+				if !ok {
+					return fmt.Errorf("unsupported slice element type %s for key %q", fieldVal.Type().Elem().Kind(), qualifiedKey(key, name))
+				}
+				if err := doc.SetInContainer(container, name, sv); err != nil {
+					return err
+				}
+				continue
+			}
 			if fieldVal.Kind() == reflect.String && document.IsMultilineStringInContainer(container, name) {
 				if err := doc.SetMultilineInContainer(container, name, fieldVal.String()); err != nil {
 					return err
