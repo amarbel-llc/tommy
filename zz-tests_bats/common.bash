@@ -58,7 +58,7 @@ EOF
     chmod -R u+w "$proj_vendor"
     local tommy_vendor_path="$proj_vendor/code.linenisgreat.com/tommy"
     mkdir -p "$tommy_vendor_path"
-    cp -L "$repo_root/go.mod" "$repo_root/go.sum" "$tommy_vendor_path/"
+    cp -L "$repo_root/go.mod" "$tommy_vendor_path/"
     local d
     for d in cmd generate internal pkg; do
       [ -d "$repo_root/$d" ] && cp -rL "$repo_root/$d" "$tommy_vendor_path/$d"

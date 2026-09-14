@@ -32,7 +32,7 @@
   };
 
   outputs =
-    {
+    inputs@{
       conformist,
       self,
       igloo,
@@ -62,9 +62,15 @@
         # downstream consumers that want to run tommy's tests. `extras`
         # keeps doc/*.scd in both outputs so the man-page postInstall
         # can find them. See amarbel-llc/nixpkgs#42, #46.
+        #
+        # tommy is a go.nix producer (igloo FDR 0008): the checkout tracks no
+        # go.mod or gomod2nix.toml; mkGoPkgs renders both from ./go.nix into
+        # go-pkgs and go-pkgs-test, so consumers bridge tommy unchanged.
         inherit
           (pkgs.mkGoPkgs {
             src = self;
+            manifest = ./go.nix;
+            inherit inputs;
             extras = [ "^doc/.*\\.scd$" ];
           })
           go-pkgs
@@ -94,14 +100,16 @@
         # content-addressed) on igloo's godynSystems, buildGoApplication
         # elsewhere. Both stay reachable as passthru.native / passthru.bga, and
         # gates key off passthru.backend rather than a system name (godyn(7)).
-        # The package graph is derived at eval time from gomod2nix.toml (igloo
-        # FDR 0008), so no graph is committed.
+        # A go.nix producer self-consumes its go-pkgs-test from the gomod2nix.toml
+        # mkGoPkgs rendered into it (godyn(7) § Producers), not from `manifest`:
+        # go-pkgs-test carries that rendered go.mod, which a manifest build
+        # rejects. The package graph is derived at eval time, so none is committed.
         tommyBin =
           (pkgs.buildGoAuto {
             pname = "tommy";
             version = tommyVersion;
             src = go-pkgs-test;
-            modules = ./gomod2nix.toml;
+            modules = "${go-pkgs-test}/gomod2nix.toml";
             subPackages = [ "cmd/tommy" ];
 
             # commit has no buildGoAuto slot, so it rides both backends' args.
@@ -151,6 +159,19 @@
                 mainProgram = "tommy";
               };
             });
+
+        # tommy built straight from go.nix (src = the checkout, which tracks no
+        # go.mod). The escape hatch's target: `just update-go-deps` runs godyn-go
+        # against it, whose ingest needs the manifest tommyBin (built from the
+        # rendered toml) does not carry.
+        tommyGoNix = pkgs.buildGodynModule {
+          pname = "tommy";
+          version = tommyVersion;
+          commit = tommyCommit;
+          src = self;
+          manifest = ./go.nix;
+          subPackages = [ "cmd/tommy" ];
+        };
 
         # godyn's per-package go test lane, scoped to ./pkg and ./internal — what
         # the bga checkPhase runs. ./generate is left out (its tests need a Go
@@ -226,6 +247,21 @@
           outputHash = "sha256-2VUHE0FE/062q5QHrgrSrpU3IEAMuANEn5nAQILPkeI=";
         };
 
+        # The ./generate suite builds tommy in -mod=mod, so its module root needs a
+        # go.sum; a go.nix checkout has none (FDR 0008). Record it offline from
+        # goModCache and add it to that suite's source only.
+        goGenerateSrc =
+          pkgs-master.runCommand "tommy-go-generate-src" { nativeBuildInputs = [ pkgs-master.go ]; }
+            ''
+              cp -r --no-preserve=mode ${go-pkgs-test} $out
+              cp -r --no-preserve=mode ${goModCache} $TMPDIR/modcache
+              cd $out
+              HOME=$TMPDIR GOPATH=$TMPDIR/gopath GOCACHE=$TMPDIR/gocache \
+                GOMODCACHE=$TMPDIR/modcache GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off \
+                GOTOOLCHAIN=local go mod download all
+              test -s go.sum
+            '';
+
         # A godyn test run of ./generate, the rich integration suite (incl. the
         # #81/#82 regression tests) the bats matrix's breadth doesn't reach. Its
         # tests scaffold synthetic modules that `replace` tommy with the module
@@ -243,8 +279,8 @@
             pname = "tommy";
             version = tommyVersion;
             commit = tommyCommit;
-            src = go-pkgs-test;
-            modules = ./gomod2nix.toml;
+            src = goGenerateSrc;
+            modules = "${goGenerateSrc}/gomod2nix.toml";
             tests = true;
             nativeCheckInputs = [ pkgs-master.go ];
             testFiles.generate = [
@@ -456,6 +492,7 @@
         packages = batsLib.batsLaneOutputs // {
           default = tommyBin;
           conformist-tommy-codegen = conformistTommyCodegen;
+          tommy-gonix = tommyGoNix;
           inherit go-pkgs go-pkgs-test;
           go-generate = goGenerateCheck;
           fuzz-sweep = goFuzzSweep;
@@ -491,13 +528,15 @@
               version = tommyVersion;
               commit = tommyCommit;
               src = go-pkgs-test;
-              modules = ./gomod2nix.toml;
+              modules = "${go-pkgs-test}/gomod2nix.toml";
             };
           };
 
         devShells.default = pkgs-master.mkShell {
           packages = [
-            (pkgs.mkGoEnv { pwd = ./.; })
+            # go.nix escape hatch and inner test loop (FDR 0008); no ambient go.
+            pkgs.godyn-go
+            pkgs.godyn-test
             pkgs-master.gopls
             pkgs-master.gotools
             pkgs-master.golangci-lint

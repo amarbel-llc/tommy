@@ -24,10 +24,10 @@ just test-fuzz-sweep-nix     # multi-seed fuzz sweep (all 3 fuzzers) offline in 
 just test-codegen-go-nix-nix # tommy codegen in a go.nix module (no go.mod) via igloo's codegenCheck
 just test-bats-nix-tag fmt   # a single tagged lane
 
-# Local fast iteration on the Go test suite (needs network for go/packages):
-go test -v -run TestName ./generate/   # a single Go test
-just debug-test TestName               # one Go test in ./generate/, verbose
-just debug-test TestName ./pkg/document/  # a library unit test (pkg arg; no network)
+# Checkout-side `go` recipes (debug-test, debug-integration, debug-fuzz-*, ...)
+# do not work: the checkout has no go.mod (igloo FDR 0008). Reach a failing
+# ./generate test through the nix lane instead:
+just debug-godyn-generate-verbose -test.run='^TestName$'
 ```
 
 **Codegen renderers & wire-format coverage.** Two jennifer-based renderers fold
@@ -189,20 +189,27 @@ multiline string syntax
 
 Built with igloo's `buildGoAuto` (`godyn(7)`): the godyn per-package backend by
 default, which needs the `ca-derivations` nix feature, with the
-buildGoApplication build still reachable as `.#default.passthru.bga`. The godyn
-package graph is derived at eval time from `gomod2nix.toml`, so no graph is
-committed. Unit tests for `./pkg` and `./internal` run per package in the
+buildGoApplication build still reachable as `.#default.passthru.bga`. Go
+dependencies live in `go.nix` (igloo FDR 0008): the checkout tracks no go.mod,
+go.sum or gomod2nix.toml. `mkGoPkgs` renders go.mod and gomod2nix.toml into
+`go-pkgs`/`go-pkgs-test`, so consumers bridge tommy unchanged, and tommy builds
+from its own `go-pkgs-test` with that rendered toml (`.#tommy-gonix` builds
+straight from go.nix). The godyn package graph is derived at eval time, so no
+graph is committed. Unit tests for `./pkg` and `./internal` run per package in the
 `go-tests` check, `go-vet` vets every package, and `go-lint` runs godyn-lint
 (vet plus staticcheck's defaults; `//nolint` is honored). The `go-generate` and
 `fuzz-sweep` checks are godyn test runs of `./generate` too: `testFiles` places
 the module files the synthetic modules build against at `..`, and `testPreRun`
 stages `goModCache`. godyn keeps no output for passing runs; `just
-debug-godyn-generate-verbose` reruns that test binary verbosely. After changing Go
-dependencies, run `gomod2nix` to regenerate `gomod2nix.toml`. The flake follows
+debug-godyn-generate-verbose` reruns that test binary verbosely. Change Go
+dependencies with `just update-go-deps get <module>@<version>` (or `mod tidy`),
+which runs `godyn-go` against `.#tommy-gonix` and rewrites `go.nix`. The
+`go-generate` suite builds tommy in `-mod=mod`, so `goGenerateSrc` records a
+go.sum offline from `goModCache` for it. The flake follows
 the stable-first nixpkgs convention (see parent `eng/CLAUDE.md`).
 
 Changing Go dependencies also invalidates `goModCache` (the pinned offline
 module cache the `go-generate` check resolves synthetic modules against). After
-`gomod2nix`, run `nix build .#go-generate` once — it fails with a hash mismatch
+changing them, run `nix build .#go-generate` once — it fails with a hash mismatch
 showing the new `got:` hash; paste that into `goModCache.outputHash` in
 `flake.nix`.

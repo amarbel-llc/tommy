@@ -143,12 +143,18 @@ test-codegen-go-nix-nix:
 
 # === maintenance ===
 
-# Run after changing go.mod.
+# Runs a go command (e.g. `get mvdan.cc/gofumpt@latest`, `mod tidy`) inside nix
+# against the module rendered from go.nix and ingests the result back into
+# go.nix (igloo FDR 0008). Needs the impure-derivations nix feature. A dependency
+# change also invalidates goModCache.outputHash in flake.nix.
 #
-# regenerate gomod2nix.toml
+# change Go dependencies through go.nix
 [group('maintenance')]
-update-gomod2nix:
-  gomod2nix
+update-go-deps +args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  system=$(nix eval --raw --impure --expr 'builtins.currentSystem')
+  godyn-go -A "packages.${system}.tommy-gonix" -- go {{args}}
 
 # remove the Go build cache
 [group('maintenance')]
