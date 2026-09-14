@@ -88,27 +88,41 @@ var goimportsOpts = &imports.Options{
 // Best-effort: returns "" (gofumpt's go1 default) when no go.mod or directive
 // is found, or the directive isn't a valid version.
 func detectGoLangVersion(dir string) string {
+	goMod := findGoMod(dir)
+	if goMod == "" {
+		return ""
+	}
+	data, err := os.ReadFile(goMod)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "go" {
+			if v := "go" + fields[1]; version.IsValid(v) {
+				return v
+			}
+			return ""
+		}
+	}
+	return "" // go.mod present but no `go` directive
+}
+
+// findGoMod returns the nearest go.mod walking up from dir, or "" when there is
+// none — as in a go.nix module's checkout (igloo FDR 0008).
+func findGoMod(dir string) string {
 	d, err := filepath.Abs(dir)
 	if err != nil {
 		return ""
 	}
 	for {
-		data, err := os.ReadFile(filepath.Join(d, "go.mod"))
-		if err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && fields[0] == "go" {
-					if v := "go" + fields[1]; version.IsValid(v) {
-						return v
-					}
-					return ""
-				}
-			}
-			return "" // go.mod present but no `go` directive
+		p := filepath.Join(d, "go.mod")
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
-			return "" // reached filesystem root without finding go.mod
+			return ""
 		}
 		d = parent
 	}

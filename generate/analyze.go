@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,6 +34,10 @@ type FieldInfo struct {
 // Analyze inspects the given Go source file for structs with
 // //go:generate tommy generate directives and returns their metadata.
 func Analyze(dir, filename string) ([]StructInfo, error) {
+	if os.Getenv("GO111MODULE") != "off" && findGoMod(dir) == "" {
+		return nil, errNoGoModule(dir)
+	}
+
 	// Ignore tommy's own output during analysis: a stale *_tommy.go (e.g. one
 	// still calling a cst symbol this version removed) must not block the very
 	// regeneration that would replace it — the codegen bootstrap catch-22 (#93).
@@ -118,6 +123,18 @@ func Analyze(dir, filename string) ([]StructInfo, error) {
 	}
 
 	return infos, nil
+}
+
+// errNoGoModule reports analysis without a module. go/packages type-loads
+// through `go list`, which needs a go.mod; a go.nix module (igloo FDR 0008) has
+// none in its checkout, so its codegen runs inside nix against the rendered one.
+// Without this check the failure surfaces as the misleading type-check guidance
+// below.
+func errNoGoModule(dir string) error {
+	return fmt.Errorf("no go.mod in %s or any parent directory: tommy generate type-loads the package with "+
+		"go/packages, which needs a Go module. In a go.nix module (igloo FDR 0008) run codegen inside nix: "+
+		"check drift with passthru.codegenCheck { command = \"go generate ./...\"; nativeBuildInputs = [ tommy ]; }, "+
+		"or write it back through the godyn-go escape hatch with tommy in goRun's nativeBuildInputs", dir)
 }
 
 // blankGeneratedOverlay returns a packages.Load overlay that replaces every

@@ -63,6 +63,26 @@ or one produced by a different *tommy* version, which the header stamp (see
 it in the same *go generate* environment; alternatively a CI step may
 *go generate ./...* and assert a clean *git diff*.
 
+# GO.NIX MODULES
+
+*tommy generate* type-loads the package with *go/packages*, which runs *go list*
+and so needs a Go module: an enclosing *go.mod* and a *go* toolchain. A module
+described by *go.nix* (igloo FDR 0008, see *godyn*(7)) has no go.mod in its
+checkout, so *tommy generate* there exits with an error naming the alternatives.
+Run codegen inside nix instead, where the go.mod is rendered from go.nix and the
+dependencies are vendored, offline:
+
+```
+checks.<system>.codegen = myapp.passthru.codegenCheck {
+  command = "go generate ./...";
+  nativeBuildInputs = [ tommy.packages.<system>.default ];
+};
+```
+
+To write regenerated files back into the checkout, use igloo's escape hatch
+(*godyn-go*) with *tommy*, or the *conformist-tommy-codegen* driver, in
+*goRun*'s *nativeBuildInputs*.
+
 # ENVIRONMENT
 
 *GOFILE*
@@ -148,7 +168,8 @@ kinds, and supported Go interfaces.
 	Generation succeeded.
 
 *1*
-	*GOFILE* unset, working directory unreadable, package analysis failed,
+	*GOFILE* unset, working directory unreadable, no enclosing *go.mod* (see
+	*GO.NIX MODULES*), package analysis failed,
 	or code emission failed. Diagnostic is printed to stderr.
 
 # SEE ALSO

@@ -8,7 +8,7 @@ validate: validate-nix
 
 build: build-nix
 
-test: test-bats-nix test-go-generate-nix test-fuzz-sweep-nix
+test: test-bats-nix test-go-generate-nix test-fuzz-sweep-nix test-codegen-go-nix-nix
 
 codemod: codemod-fmt
 
@@ -124,6 +124,22 @@ test-go-generate-nix:
 [group('post-build')]
 test-fuzz-sweep-nix:
   nix build .#fuzz-sweep --no-link --print-build-logs
+
+# tommy codegen in a go.nix module (igloo FDR 0008), which has no go.mod in its
+# tree: `go generate` and the conformist repair driver inside igloo's
+# codegenCheck, plus the actionable failure outside nix. Already part of `just
+# validate` (flake checks); this runs them in isolation.
+#
+# run the go.nix-module codegen checks in the nix sandbox
+[group('post-build')]
+test-codegen-go-nix-nix:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  system=$(nix eval --raw --impure --expr 'builtins.currentSystem')
+  nix build --no-link --print-build-logs \
+    ".#checks.${system}.codegen-go-nix" \
+    ".#checks.${system}.codegen-go-nix-repair" \
+    ".#checks.${system}.codegen-go-nix-no-gomod"
 
 # === maintenance ===
 

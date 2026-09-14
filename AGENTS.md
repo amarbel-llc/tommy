@@ -21,6 +21,7 @@ just test               # nix lanes: bats (CLI e2e) + the offline Go ./generate 
 just test-bats-nix      # the bats lane (bats-default)
 just test-go-generate-nix    # the Go ./generate suite offline in nix
 just test-fuzz-sweep-nix     # multi-seed fuzz sweep (all 3 fuzzers) offline in nix
+just test-codegen-go-nix-nix # tommy codegen in a go.nix module (no go.mod) via igloo's codegenCheck
 just test-bats-nix-tag fmt   # a single tagged lane
 
 # Local fast iteration on the Go test suite (needs network for go/packages):
@@ -51,7 +52,11 @@ is modeled by the representability fold (`generate/representability.go`, ADR
 2026-06-08) and held to generated-code reality by the conformance harness
 (`representability_conformance_test.go`); the fuzzers derive their nil/empty
 generation policy from that fold (`tdToSpk` + `reprOf`) rather than hand-coded
-exclusions. When adding an emission edge case, add both a
+exclusions. `tommy generate` type-loads through go/packages, so it needs an
+enclosing go.mod; a go.nix module (igloo FDR 0008) runs it inside igloo's
+`passthru.codegenCheck`, which the `codegen-go-nix*` checks exercise against the
+fixture in `zz-tests_nix/testdata/codegen-go-nix` (see `tommy-generate(1)`
+GO.NIX MODULES). When adding an emission edge case, add both a
 bats test under `zz-tests_bats/` (tagged `generate`, e.g. `encode_wire_format.bats`)
 and a Go integration test for depth; when changing encoder suppression/witness
 behavior, flip the matching conformance cell and the model axis together.

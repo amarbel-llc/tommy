@@ -309,15 +309,21 @@
         # directives and runs `tommy generate --check` (check) / `tommy generate`
         # (repair) per file, mirroring `go generate` but scoped to tommy.
         #
-        # `go` is baked into runtimeInputs (pkgs-master.go) rather than taken
-        # from the ambient PATH, so the lane is hermetic and works in a BARE env
-        # — notably spinclass's git pre-commit / pre-merge hooks, which run the
-        # repair command with a plain os.Environ() (no devShell / direnv). An
-        # earlier version relied on ambient go and skipped (exit 0) when it was
-        # missing; that silently no-op'd the repair lane in exactly those bare
+        # `go` comes from the caller's PATH when there is one — inside igloo's
+        # codegenCheck or goRun (a go.nix module, FDR 0008) that is the module's
+        # own toolchain, which must satisfy its go directive under
+        # GOTOOLCHAIN=local — and falls back to the pinned pkgs-master.go only
+        # when none is on PATH, so the lane still works in a BARE env: spinclass's
+        # git pre-commit / pre-merge hooks run the repair command with a plain
+        # os.Environ() (no devShell / direnv). An earlier version skipped (exit 0)
+        # without go; that silently no-op'd the repair lane in exactly those bare
         # hooks, letting codegen drift survive to the merge gate (tommy#138).
         #
-        # Baking a pinned go is safe because `tommy generate`'s output is NOT
+        # Without an enclosing go.mod (a go.nix module's checkout) `tommy
+        # generate` fails per file naming codegenCheck and godyn-go; vendor/ (the
+        # codegenCheck tree) is never walked.
+        #
+        # Either go is safe because `tommy generate`'s output is NOT
         # sensitive to the go *toolchain* version: rendering and gofmt/gofumpt
         # are libraries compiled into tommyBin, and gofumpt's LangVersion is read
         # from the consumer module's go.mod on disk (detectGoLangVersion), not
@@ -327,12 +333,12 @@
           name = "conformist-tommy-codegen";
           runtimeInputs = [
             tommyBin
-            pkgs-master.go
             pkgs.coreutils
             pkgs.findutils
             pkgs.gnugrep
           ];
           text = ''
+            command -v go >/dev/null 2>&1 || PATH="$PATH:${pkgs-master.go}/bin"
             gen_args=(generate)
             if [ "''${1:-}" = "--check" ]; then
               gen_args+=(--check)
@@ -346,9 +352,51 @@
               dir=$(dirname "$f")
               base=$(basename "$f")
               ( cd "$dir" || exit 1; GOFILE="$base" tommy "''${gen_args[@]}"; ) || status=1
-            done < <(grep -rIl --include='*.go' 'go:generate tommy generate' . 2>/dev/null | grep -v '/result' || true)
+            done < <(grep -rIl --include='*.go' --exclude-dir=vendor 'go:generate tommy generate' . 2>/dev/null | grep -v '/result' || true)
             exit "$status"
           '';
+        };
+
+        # A go.nix module (igloo FDR 0008) with no go.mod in its tree. The
+        # codegen-go-nix checks run tommy codegen where such a module runs it —
+        # igloo's passthru.codegenCheck: the go.mod rendered from go.nix, vendored
+        # deps, offline — via `go generate` (the merge-gate shape) and via the
+        # conformist repair driver, and build the result. config_tommy.go is not
+        # committed (exclude), so no golden file tracks tommy's build stamp.
+        # codegen-go-nix-no-gomod asserts the actionable failure outside nix.
+        codegenGoNixSrc = ./zz-tests_nix/testdata/codegen-go-nix;
+        codegenGoNix = pkgs.buildGodynModule {
+          pname = "tommy-codegen-go-nix";
+          version = "0.0.0";
+          src = codegenGoNixSrc;
+          manifest = codegenGoNixSrc + "/go.nix";
+          goFlakeInputOverrides."code.linenisgreat.com/tommy".src = go-pkgs;
+        };
+        codegenGoNixCheck =
+          command: tools:
+          codegenGoNix.passthru.codegenCheck {
+            command = "${command} && test -s config_tommy.go && go build ./...";
+            nativeBuildInputs = tools;
+            exclude = [ "config_tommy.go" ];
+          };
+        codegenGoNixChecks = {
+          codegen-go-nix = codegenGoNixCheck "go generate ./..." [ tommyBin ];
+          codegen-go-nix-repair = codegenGoNixCheck "conformist-tommy-codegen" [ conformistTommyCodegen ];
+          codegen-go-nix-no-gomod =
+            pkgs.runCommandLocal "tommy-codegen-go-nix-no-gomod"
+              {
+                nativeBuildInputs = [ conformistTommyCodegen ];
+              }
+              ''
+                cp -r --no-preserve=mode ${codegenGoNixSrc} work
+                cd work
+                if conformist-tommy-codegen 2> err; then
+                  echo "conformist-tommy-codegen succeeded without a go.mod" >&2
+                  exit 1
+                fi
+                grep -q 'no go.mod' err || { cat err >&2; exit 1; }
+                touch $out
+              '';
         };
 
         # A conformist Nix module wiring both halves of the integration using
@@ -430,6 +478,7 @@
           // {
             formatting = eval.config.build.check self;
           }
+          // codegenGoNixChecks
           # godyn's per-package tests, vet and lint. On the bga backend the unit
           # tests run in tommyBin's checkPhase instead, which the bats lanes build.
           // pkgs.lib.optionalAttrs (tommyBin.passthru.backend == "native") {
