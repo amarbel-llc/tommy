@@ -401,7 +401,7 @@ debug-codegen-go-nix-e2e:
   dir=$(mktemp -d "${TMPDIR:-/tmp}/tommy-codegen-e2e.XXXXXX")
   echo "consumer: $dir" >&2
   cp "$tommy"/zz-tests_nix/testdata/codegen-go-nix-stale/{config.go,config_tommy.go,go.nix} "$dir"/
-  cat > "$dir/flake.nix.in" << 'NIX'
+  sed "s|@tommy@|$tommy|; s|@system@|$system|" > "$dir/flake.nix" << 'NIX'
   {
     inputs.tommy.url = "git+file://@tommy@";
     inputs.igloo.follows = "tommy/igloo";
@@ -435,8 +435,6 @@ debug-codegen-go-nix-e2e:
       };
   }
   NIX
-  sed "s|@tommy@|$tommy|; s|@system@|$system|" "$dir/flake.nix.in" > "$dir/flake.nix"
-  rm "$dir/flake.nix.in"
   cd "$dir"
   git init -q
   git config user.email e2e@example.com
@@ -457,8 +455,9 @@ debug-codegen-go-nix-e2e:
   git diff --cached --name-only | grep -qx config_tommy.go \
     || { echo "FAIL: the restamped companion was not staged" >&2; git status >&2; exit 1; }
   git diff --quiet -- config_tommy.go
-  head -1 config_tommy.go
-  ! head -1 config_tommy.go | grep -q 0000000
+  header=$(head -1 config_tommy.go)
+  echo "$header"
+  case "$header" in *0000000*) echo "FAIL: the header still names 0000000" >&2; exit 1 ;; esac
   git commit -qm touched
   nix build --no-link ".#checks.$system.tommy-codegen"
   echo "PASS: restamped at commit; checks.$system.tommy-codegen passes" >&2

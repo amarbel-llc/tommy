@@ -415,11 +415,9 @@
               apply_args=(-p2)
               prefix=$(git rev-parse --show-prefix)
               [ -z "$prefix" ] || apply_args+=("--directory=$prefix")
-              if ! git apply --check "''${apply_args[@]}" "$patch"; then
-                echo "tommy-codegen: $patch does not apply to the checkout; nothing written" >&2
-                exit 1
-              fi
-              git apply "''${apply_args[@]}" "$patch"
+              # all or nothing: a hunk that fails leaves the checkout untouched
+              git apply "''${apply_args[@]}" "$patch" \
+                || { echo "tommy-codegen: $patch does not apply to the checkout; nothing written" >&2; exit 1; }
               echo "tommy-codegen: applied $patch" >&2
               exit 0
             fi
@@ -454,6 +452,11 @@
         # makes `check` pass by construction. Pure and cached: the repair lane
         # (conformist-tommy-codegen --flake-attr) builds it and applies the patch
         # to the checkout, so the generator never runs outside nix.
+        #
+        # TODO(igloo#80): replace `repair` with module.passthru.codegenPatch. Until
+        # then it mirrors buildGoCheck/codegenCheck internals (the HOME setup, the
+        # vendor/go.mod/go.sum excludes, the -codegen-check pname), which must
+        # track igloo for "passes by construction" to hold.
         goNixCodegen =
           {
             module,
@@ -487,10 +490,8 @@
                 ${command}
                 snapshot "$TMPDIR/tommy-codegen/work"
                 cd "$TMPDIR/tommy-codegen"
-                set +e
-                git diff --no-index --binary src work > "$out/patch"
-                rc=$?
-                set -e
+                rc=0
+                git diff --no-index --binary src work > "$out/patch" || rc=$?
                 [ "$rc" -le 1 ] || { echo "tommy codegen repair: git diff failed ($rc)" >&2; exit "$rc"; }
                 runHook postBuild
               '';
@@ -518,7 +519,7 @@
             pname = "tommy-codegen-go-nix";
             version = "0.0.0";
             inherit src;
-            manifest = codegenGoNixSrc + "/go.nix";
+            manifest = src + "/go.nix";
             goFlakeInputOverrides."code.linenisgreat.com/tommy".src = go-pkgs;
           };
         codegenGoNix = codegenGoNixModule codegenGoNixSrc;
@@ -561,11 +562,10 @@
           tommy.codegen.flakeAttr = "tommy-codegen-repair";
         };
         codegenPrecommitNixStub = pkgs.writeShellScriptBin "nix" ''
-          if [ "$*" != "build --no-link --print-out-paths .#tommy-codegen-repair" ]; then
-            echo "nix stub: unexpected invocation: nix $*" >&2
-            exit 1
-          fi
-          echo ${codegenGoNixStale.repair}
+          case "$*" in
+            "build "*" .#tommy-codegen-repair"*) echo ${codegenGoNixStale.repair} ;;
+            *) echo "nix stub: unexpected invocation: nix $*" >&2; exit 1 ;;
+          esac
         '';
         codegenGoNixCheck =
           command: tools:
@@ -641,7 +641,7 @@
                   || { echo "the restamped companion was not staged" >&2; git status >&2; exit 1; }
                 git diff --quiet -- config_tommy.go \
                   || { echo "the worktree companion differs from the staged one" >&2; exit 1; }
-                git show :config_tommy.go | cmp - ${codegenGoNixFresh}/config_tommy.go
+                git show :config_tommy.go | cmp - ${codegenGoNixRepairedSrc}/config_tommy.go
                 touch $out
               '';
         };

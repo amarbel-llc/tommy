@@ -97,8 +97,10 @@ packages.tommy-codegen-repair = tommyCodegen.repair;
 the same derivation — the same vendored tree, the same *command* — except that it
 writes the difference from the source tree to _$out/patch_ (*git apply -p2*;
 empty when the files are current) instead of failing on it. Applying the patch
-therefore makes *check* pass. *repair* is pure and cached, so it costs nothing
-when the sources and the *tommy* pin are unchanged. The patch is relative to the
+therefore makes *check* pass. *repair* is pure: a rebuild with unchanged sources
+and *tommy* pin is a cache hit, but a change to either (most commits that trigger
+the lane) reruns the command in nix, a build the size of the check's. The patch
+is relative to the
 module's source root, which must be the flake root.
 
 To write regenerated files back by hand, use igloo's escape hatch (*godyn-go*)
@@ -142,7 +144,8 @@ conformist.lib.evalModule pkgs {
 };
 ```
 
-A repo that writes its conformist settings by hand sets the same linter:
+A repo that writes its conformist settings by hand sets the same linter the
+module does (the module is the reference; prefer importing it):
 
 ```
 settings.linter.tommy-codegen = {
