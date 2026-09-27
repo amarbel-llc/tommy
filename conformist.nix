@@ -50,10 +50,12 @@
   # Excludes layered on conformist's default-excludes (*.lock, go.mod, go.sum,
   # LICENSE). Only genuine scratch artifacts: *.md has no enabled formatter here;
   # .tmp/ holds session-local scratch files; result/result-* are nix out-links.
+  # The stale codegen fixture is tommy output, kept byte-for-byte as generated.
   settings.excludes = [
     "*.md"
     ".tmp/**"
     "result"
     "result-*"
+    "zz-tests_nix/testdata/codegen-go-nix-stale/config_tommy.go"
   ];
 }

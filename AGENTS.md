@@ -21,7 +21,7 @@ just test               # nix lanes: bats (CLI e2e) + the offline Go ./generate 
 just test-bats-nix      # the bats lane (bats-default)
 just test-go-generate-nix    # the Go ./generate suite offline in nix
 just test-fuzz-sweep-nix     # multi-seed fuzz sweep (all 3 fuzzers) offline in nix
-just test-codegen-go-nix-nix # tommy codegen in a go.nix module (no go.mod) via igloo's codegenCheck
+just test-codegen-go-nix-nix # tommy codegen in a go.nix module (no go.mod): codegenCheck + the repair lane
 just test-bats-nix-tag fmt   # a single tagged lane
 
 # Checkout-side `go` recipes (debug-test, debug-integration, debug-fuzz-*, ...)
@@ -56,7 +56,15 @@ exclusions. `tommy generate` type-loads through go/packages, so it needs an
 enclosing go.mod; a go.nix module (igloo FDR 0008) runs it inside igloo's
 `passthru.codegenCheck`, which the `codegen-go-nix*` checks exercise against the
 fixture in `zz-tests_nix/testdata/codegen-go-nix` (see `tommy-generate(1)`
-GO.NIX MODULES). When adding an emission edge case, add both a
+GO.NIX MODULES). The flake's `lib.<system>.goNixCodegen` pairs that check with a
+pure `repair` (same derivation, diff written to `$out/patch`), which
+`conformist-tommy-codegen --flake-attr` builds and applies so a go.nix consumer's
+pre-commit hook restamps generated headers at commit (tommy#143;
+`tommy-generate(1)` REPAIR LANE). The `codegen-go-nix-{stale-detected,
+repair-roundtrip,precommit}` checks cover it against the stale-header fixture in
+`zz-tests_nix/testdata/codegen-go-nix-stale`, the last one under conformist's
+real `--staged` hook; `just debug-codegen-go-nix-e2e` runs it end to end with a
+real `nix build` in a scratch consumer. When adding an emission edge case, add both a
 bats test under `zz-tests_bats/` (tagged `generate`, e.g. `encode_wire_format.bats`)
 and a Go integration test for depth; when changing encoder suppression/witness
 behavior, flip the matching conformance cell and the model axis together.

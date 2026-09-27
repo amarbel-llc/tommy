@@ -79,9 +79,87 @@ checks.<system>.codegen = myapp.passthru.codegenCheck {
 };
 ```
 
-To write regenerated files back into the checkout, use igloo's escape hatch
-(*godyn-go*) with *tommy*, or the *conformist-tommy-codegen* driver, in
-*goRun*'s *nativeBuildInputs*.
+tommy's flake packages that check together with a matching repair as
+*tommy.lib.<system>.goNixCodegen*:
+
+```
+tommyCodegen = tommy.lib.${system}.goNixCodegen {
+  module = myapp;   # a buildGodynModule / buildGoAuto result
+  # command ? "go generate -run tommy ./..."
+  # nativeBuildInputs ? [ ]   (tommy is always included)
+  # exclude ? [ ]
+};
+checks.tommy-codegen = tommyCodegen.check;
+packages.tommy-codegen-repair = tommyCodegen.repair;
+```
+
+*check* is the module's *passthru.codegenCheck* with those arguments. *repair* is
+the same derivation — the same vendored tree, the same *command* — except that it
+writes the difference from the source tree to _$out/patch_ (*git apply -p2*;
+empty when the files are current) instead of failing on it. Applying the patch
+therefore makes *check* pass. *repair* is pure and cached, so it costs nothing
+when the sources and the *tommy* pin are unchanged. The patch is relative to the
+module's source root, which must be the flake root.
+
+To write regenerated files back by hand, use igloo's escape hatch (*godyn-go*)
+with *tommy* in *goRun*'s *nativeBuildInputs*, or run the repair lane below.
+
+# REPAIR LANE
+
+The *conformist-tommy-codegen* driver (the *conformist-tommy-codegen* package of
+tommy's flake) is a *conformist* repair command. Run from the tree root, it
+regenerates every file carrying a *//go:generate tommy generate* directive, so
+a *conformist* pre-commit hook keeps the generated files, header stamp
+included, current in every commit. That matters on a *tommy* bump: a lock-only
+commit restamps every generated header (see *OUTPUT*), and the hook's repair
+puts the restamp in that same commit.
+
+```
+conformist-tommy-codegen [--check] [--flake-attr <attr>]
+```
+
+Without *--flake-attr* it runs *tommy generate* per directive file (with
+*--check*, *tommy generate --check*), which needs a go.mod. With *--flake-attr*
+it never runs the generator in the checkout: it builds _.#<attr>_ (a
+*goNixCodegen* *repair*) and applies the patch with *git apply*. With *--check*
+it fails and prints the patch instead. *go*, *nix* and *git* come from PATH when
+present, else from pinned packages, so the lane also works in the bare
+environment of a git hook.
+
+*tommy.conformistModule.<system>* wires it as _[linter.tommy-codegen]_: a
+whole-tree repair (*passes-files* = false) triggered by a staged _\*.go_,
+_flake.lock_ or _go.nix_, whose outputs the _--staged_ hook restages
+(*restage-repair-outputs*, *stage-new-outputs*, *stage-deleted-outputs*).
+
+A go.nix module opts in by exposing the *repair* as a package (above) and
+naming it in its conformist module evaluation:
+
+```
+conformist.lib.evalModule pkgs {
+  imports = [ tommy.conformistModule.${system} ./conformist.nix ];
+  tommy.codegen.flakeAttr = "tommy-codegen-repair";
+  ...
+};
+```
+
+A repo that writes its conformist settings by hand sets the same linter:
+
+```
+settings.linter.tommy-codegen = {
+  command = "true";
+  "repair-command" = lib.getExe tommy.packages.${system}.conformist-tommy-codegen;
+  "repair-options" = [ "--flake-attr" "tommy-codegen-repair" ];
+  includes = [ "*.go" "flake.lock" "go.nix" ];
+  "passes-files" = false;
+  "restage-repair-outputs" = true;
+  "stage-new-outputs" = true;
+  "stage-deleted-outputs" = true;
+};
+```
+
+and runs that evaluation's *build.preCommit* as its git pre-commit hook. The
+build reads the checkout through the flake, which sees only tracked files: a new
+source file must be staged (or *git add -N*'d) before the repair can see it.
 
 # ENVIRONMENT
 

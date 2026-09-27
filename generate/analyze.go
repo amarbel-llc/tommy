@@ -134,7 +134,9 @@ func errNoGoModule(dir string) error {
 	return fmt.Errorf("no go.mod in %s or any parent directory: tommy generate type-loads the package with "+
 		"go/packages, which needs a Go module. In a go.nix module (igloo FDR 0008) run codegen inside nix: "+
 		"check drift with passthru.codegenCheck { command = \"go generate ./...\"; nativeBuildInputs = [ tommy ]; }, "+
-		"or write it back through the godyn-go escape hatch with tommy in goRun's nativeBuildInputs", dir)
+		"or write it back through the godyn-go escape hatch with tommy in goRun's nativeBuildInputs; "+
+		"tommy.lib.<system>.goNixCodegen pairs that check with a repair for conformist-tommy-codegen --flake-attr "+
+		"(see tommy-generate(1) REPAIR LANE)", dir)
 }
 
 // blankGeneratedOverlay returns a packages.Load overlay that replaces every

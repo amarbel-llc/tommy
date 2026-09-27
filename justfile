@@ -127,7 +127,9 @@ test-fuzz-sweep-nix:
 
 # tommy codegen in a go.nix module (igloo FDR 0008), which has no go.mod in its
 # tree: `go generate` and the conformist repair driver inside igloo's
-# codegenCheck, plus the actionable failure outside nix. Already part of `just
+# codegenCheck, plus the actionable failure outside nix, and the goNixCodegen
+# check/repair pair (tommy#143): a stale header detected, repaired, and restamped
+# through conformist's real `--staged` pre-commit hook. Already part of `just
 # validate` (flake checks); this runs them in isolation.
 #
 # run the go.nix-module codegen checks in the nix sandbox
@@ -139,7 +141,10 @@ test-codegen-go-nix-nix:
   nix build --no-link --print-build-logs \
     ".#checks.${system}.codegen-go-nix" \
     ".#checks.${system}.codegen-go-nix-repair" \
-    ".#checks.${system}.codegen-go-nix-no-gomod"
+    ".#checks.${system}.codegen-go-nix-no-gomod" \
+    ".#checks.${system}.codegen-go-nix-stale-detected" \
+    ".#checks.${system}.codegen-go-nix-repair-roundtrip" \
+    ".#checks.${system}.codegen-go-nix-precommit"
 
 # === maintenance ===
 
@@ -375,6 +380,88 @@ debug-godyn-generate-verbose *flags:
     GOMODCACHE="$work/modcache" GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off \
     GOTOOLCHAIN=local TOMMY_TEST_OFFLINE=1 \
     "$bin" -test.v {{flags}} 2>&1 | grep -E '^(--- (PASS|SKIP|FAIL)|PASS$|FAIL$)'
+
+# The tommy#143 repair lane end to end, outside the sandbox where the checks
+# can't reach: scaffolds a go.nix consumer (no go.mod) of THIS checkout in a
+# scratch git repo, commits the stale-header fixture, and asserts that its
+# drift check fails, that the real conformist `--staged` pre-commit hook
+# restamps and stages the companion through a real `nix build .#<attr>`, and
+# that the check then passes. Staged/tracked edits here are seen; untracked
+# files are not (git+file).
+#
+# run the go.nix codegen repair lane end to end in a scratch consumer
+[group('debug')]
+debug-codegen-go-nix-e2e:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  tommy={{justfile_directory()}}
+  system=$(nix eval --raw --impure --expr builtins.currentSystem)
+  # the consumer locks this checkout, which is dirty mid-change
+  export NIX_CONFIG="allow-dirty-locks = true"$'\n'"${NIX_CONFIG:-}"
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/tommy-codegen-e2e.XXXXXX")
+  echo "consumer: $dir" >&2
+  cp "$tommy"/zz-tests_nix/testdata/codegen-go-nix-stale/{config.go,config_tommy.go,go.nix} "$dir"/
+  cat > "$dir/flake.nix.in" << 'NIX'
+  {
+    inputs.tommy.url = "git+file://@tommy@";
+    inputs.igloo.follows = "tommy/igloo";
+    inputs.conformist.follows = "tommy/conformist";
+    outputs =
+      inputs@{ tommy, igloo, conformist, ... }:
+      let
+        system = "@system@";
+        pkgs = import igloo { inherit system; };
+        module = pkgs.buildGodynModule {
+          pname = "tommy-codegen-e2e";
+          version = "0.0.0";
+          src = ./.;
+          manifest = ./go.nix;
+          inherit inputs;
+        };
+        codegen = tommy.lib.${system}.goNixCodegen { inherit module; };
+        eval = conformist.lib.evalModule pkgs {
+          imports = [ tommy.conformistModule.${system} ];
+          package = conformist.packages.${system}.default;
+          projectRootFile = "flake.nix";
+          tommy.codegen.flakeAttr = "tommy-codegen-repair";
+        };
+      in
+      {
+        packages.${system} = {
+          tommy-codegen-repair = codegen.repair;
+          pre-commit = eval.config.build.preCommit;
+        };
+        checks.${system}.tommy-codegen = codegen.check;
+      };
+  }
+  NIX
+  sed "s|@tommy@|$tommy|; s|@system@|$system|" "$dir/flake.nix.in" > "$dir/flake.nix"
+  rm "$dir/flake.nix.in"
+  cd "$dir"
+  git init -q
+  git config user.email e2e@example.com
+  git config user.name e2e
+  git add -A
+  nix flake lock
+  git add flake.lock
+  git commit -qm stale
+  if nix build --no-link ".#checks.$system.tommy-codegen" 2> check.log; then
+    echo "FAIL: the drift check passed on a stale header" >&2
+    exit 1
+  fi
+  grep -q 'godyn codegen drift' check.log
+  rm check.log
+  echo '// touched' >> config.go
+  git add config.go
+  nix run .#pre-commit
+  git diff --cached --name-only | grep -qx config_tommy.go \
+    || { echo "FAIL: the restamped companion was not staged" >&2; git status >&2; exit 1; }
+  git diff --quiet -- config_tommy.go
+  head -1 config_tommy.go
+  ! head -1 config_tommy.go | grep -q 0000000
+  git commit -qm touched
+  nix build --no-link ".#checks.$system.tommy-codegen"
+  echo "PASS: restamped at commit; checks.$system.tommy-codegen passes" >&2
 
 # Inspect generated code.
 #

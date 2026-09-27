@@ -357,7 +357,12 @@
         #
         # Without an enclosing go.mod (a go.nix module's checkout) `tommy
         # generate` fails per file naming codegenCheck and godyn-go; vendor/ (the
-        # codegenCheck tree) is never walked.
+        # codegenCheck tree) is never walked. Such a module passes
+        # `--flake-attr <attr>` instead (tommy#143): the driver then never runs
+        # the generator in the checkout. It builds `.#<attr>` — the module's
+        # goNixCodegen `repair`, the same vendored tree its `check` runs in — and
+        # applies the patch (repair) or fails on a non-empty one (--check). `nix`
+        # and `git`, like `go`, come from PATH when present, else the pinned ones.
         #
         # Either go is safe because `tommy generate`'s output is NOT
         # sensitive to the go *toolchain* version: rendering and gofmt/gofumpt
@@ -374,9 +379,54 @@
             pkgs.gnugrep
           ];
           text = ''
+            usage() {
+              echo "usage: conformist-tommy-codegen [--check] [--flake-attr <attr>]" >&2
+            }
+            check=0
+            flake_attr=""
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                --check) check=1 ;;
+                --flake-attr)
+                  [ "$#" -ge 2 ] || { usage; exit 2; }
+                  flake_attr=$2
+                  shift
+                  ;;
+                --flake-attr=*) flake_attr=''${1#--flake-attr=} ;;
+                *) usage; exit 2 ;;
+              esac
+              shift
+            done
+
+            if [ -n "$flake_attr" ]; then
+              command -v nix >/dev/null 2>&1 || PATH="$PATH:${pkgs.nix}/bin"
+              command -v git >/dev/null 2>&1 || PATH="$PATH:${pkgs.git}/bin"
+              out=$(nix build --no-link --print-out-paths ".#$flake_attr")
+              patch="$out/patch"
+              if [ ! -s "$patch" ]; then
+                exit 0
+              fi
+              if [ "$check" -eq 1 ]; then
+                cat "$patch" >&2
+                echo "tommy-codegen: generated files are stale (the patch above, from .#$flake_attr); run the repair" >&2
+                exit 1
+              fi
+              # the patch is relative to the module root, the tree root conformist runs in
+              apply_args=(-p2)
+              prefix=$(git rev-parse --show-prefix)
+              [ -z "$prefix" ] || apply_args+=("--directory=$prefix")
+              if ! git apply --check "''${apply_args[@]}" "$patch"; then
+                echo "tommy-codegen: $patch does not apply to the checkout; nothing written" >&2
+                exit 1
+              fi
+              git apply "''${apply_args[@]}" "$patch"
+              echo "tommy-codegen: applied $patch" >&2
+              exit 0
+            fi
+
             command -v go >/dev/null 2>&1 || PATH="$PATH:${pkgs-master.go}/bin"
             gen_args=(generate)
-            if [ "''${1:-}" = "--check" ]; then
+            if [ "$check" -eq 1 ]; then
               gen_args+=(--check)
             fi
             if ! command -v tommy >/dev/null 2>&1; then
@@ -393,6 +443,67 @@
           '';
         };
 
+        # tommy codegen for a go.nix module (igloo FDR 0008), which has no go.mod
+        # in its checkout, as a check/repair pair that resolves the module
+        # identically (tommy#143). `check` is the module's own
+        # passthru.codegenCheck: `command` runs in the vendored module tree (go.mod
+        # rendered from go.nix, offline) and any diff from src fails. `repair` is
+        # that same derivation with its build phase swapped: the command runs in
+        # the same tree, and instead of failing on the diff it writes it to
+        # $out/patch (`git apply -p2`, empty when current), so applying the patch
+        # makes `check` pass by construction. Pure and cached: the repair lane
+        # (conformist-tommy-codegen --flake-attr) builds it and applies the patch
+        # to the checkout, so the generator never runs outside nix.
+        goNixCodegen =
+          {
+            module,
+            command ? "go generate -run tommy ./...",
+            nativeBuildInputs ? [ ],
+            exclude ? [ ],
+          }:
+          let
+            check = module.passthru.codegenCheck {
+              inherit command exclude;
+              nativeBuildInputs = [ tommyBin ] ++ nativeBuildInputs;
+            };
+            # the tree minus what codegenCheck's diff ignores (basenames, any depth)
+            snapshotExcludes = pkgs.lib.concatMapStringsSep " " (e: "--exclude=${pkgs.lib.escapeShellArg e}") (
+              [
+                "vendor"
+                "go.mod"
+                "go.sum"
+              ]
+              ++ exclude
+            );
+            repair = check.overrideAttrs (old: {
+              pname = pkgs.lib.removeSuffix "-codegen-check" old.pname + "-tommy-codegen-repair";
+              nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.git ];
+              buildPhase = ''
+                runHook preBuild
+                export HOME="$TMPDIR/home"
+                mkdir -p "$HOME" "$out"
+                snapshot() { mkdir -p "$1"; tar -c ${snapshotExcludes} . | tar -x -C "$1"; }
+                snapshot "$TMPDIR/tommy-codegen/src"
+                ${command}
+                snapshot "$TMPDIR/tommy-codegen/work"
+                cd "$TMPDIR/tommy-codegen"
+                set +e
+                git diff --no-index --binary src work > "$out/patch"
+                rc=$?
+                set -e
+                [ "$rc" -le 1 ] || { echo "tommy codegen repair: git diff failed ($rc)" >&2; exit "$rc"; }
+                runHook postBuild
+              '';
+              installPhase = ''
+                runHook preInstall
+                runHook postInstall
+              '';
+            });
+          in
+          {
+            inherit check repair;
+          };
+
         # A go.nix module (igloo FDR 0008) with no go.mod in its tree. The
         # codegen-go-nix checks run tommy codegen where such a module runs it —
         # igloo's passthru.codegenCheck: the go.mod rendered from go.nix, vendored
@@ -401,13 +512,61 @@
         # committed (exclude), so no golden file tracks tommy's build stamp.
         # codegen-go-nix-no-gomod asserts the actionable failure outside nix.
         codegenGoNixSrc = ./zz-tests_nix/testdata/codegen-go-nix;
-        codegenGoNix = pkgs.buildGodynModule {
-          pname = "tommy-codegen-go-nix";
-          version = "0.0.0";
-          src = codegenGoNixSrc;
-          manifest = codegenGoNixSrc + "/go.nix";
-          goFlakeInputOverrides."code.linenisgreat.com/tommy".src = go-pkgs;
+        codegenGoNixModule =
+          src:
+          pkgs.buildGodynModule {
+            pname = "tommy-codegen-go-nix";
+            version = "0.0.0";
+            inherit src;
+            manifest = codegenGoNixSrc + "/go.nix";
+            goFlakeInputOverrides."code.linenisgreat.com/tommy".src = go-pkgs;
+          };
+        codegenGoNix = codegenGoNixModule codegenGoNixSrc;
+
+        # The goNixCodegen check/repair pair against a stale committed companion
+        # (tommy#143): the fixture with config_tommy.go committed under a header
+        # rev no build carries (0000000) — what a tommy bump leaves behind.
+        # `stale.check` must fail, and `stale.repair`'s patch must restamp it to
+        # exactly what the generator writes into the companion-less fixture
+        # (`fresh`) — the content `check` regenerates and compares against, since
+        # tommy generate overwrites the companion rather than reading it. A module
+        # over a derivation-built src is out: godyn reads its src at eval time,
+        # which a CA placeholder path forbids, so the stale tree is committed.
+        applyPatch =
+          name: src: patch:
+          pkgs.runCommandLocal name { nativeBuildInputs = [ pkgs.git ]; } ''
+            cp -r --no-preserve=mode ${src} $out
+            cd $out
+            [ ! -s ${patch} ] || git apply -p2 ${patch}
+          '';
+        codegenGoNixFresh =
+          applyPatch "tommy-codegen-go-nix-fresh" codegenGoNixSrc
+            "${(goNixCodegen { module = codegenGoNix; }).repair}/patch";
+        codegenGoNixStaleSrc = ./zz-tests_nix/testdata/codegen-go-nix-stale;
+        codegenGoNixStale = goNixCodegen { module = codegenGoNixModule codegenGoNixStaleSrc; };
+        codegenGoNixRepairedSrc =
+          applyPatch "tommy-codegen-go-nix-repaired" codegenGoNixStaleSrc
+            "${codegenGoNixStale.repair}/patch";
+
+        # The repair lane end to end under conformist's real `--staged` pre-commit
+        # hook, built from tommy's conformistModule with tommy.codegen.flakeAttr:
+        # a lock-only commit (the tommy-bump shape) in a checkout holding the stale
+        # companion must restamp it and stage the result. `nix` cannot run inside
+        # the sandbox, so a stub standing in for `nix build .#<attr>` hands the
+        # driver the already-built stale repair (the driver prefers a nix on PATH).
+        codegenPrecommitEval = conformist.lib.evalModule pkgs {
+          imports = [ conformistModule ];
+          package = conformistPkg;
+          projectRootFile = "flake.nix";
+          tommy.codegen.flakeAttr = "tommy-codegen-repair";
         };
+        codegenPrecommitNixStub = pkgs.writeShellScriptBin "nix" ''
+          if [ "$*" != "build --no-link --print-out-paths .#tommy-codegen-repair" ]; then
+            echo "nix stub: unexpected invocation: nix $*" >&2
+            exit 1
+          fi
+          echo ${codegenGoNixStale.repair}
+        '';
         codegenGoNixCheck =
           command: tools:
           codegenGoNix.passthru.codegenCheck {
@@ -433,6 +592,58 @@
                 grep -q 'no go.mod' err || { cat err >&2; exit 1; }
                 touch $out
               '';
+          codegen-go-nix-stale-detected =
+            pkgs.runCommandLocal "tommy-codegen-go-nix-stale-detected"
+              {
+                failed = pkgs.testers.testBuildFailure codegenGoNixStale.check;
+              }
+              ''
+                grep -q 'godyn codegen drift' $failed/testBuildFailure.log
+                grep -q '(0000000)' $failed/testBuildFailure.log
+                touch $out
+              '';
+          codegen-go-nix-repair-roundtrip =
+            pkgs.runCommandLocal "tommy-codegen-go-nix-repair-roundtrip"
+              {
+                patch = "${codegenGoNixStale.repair}/patch";
+              }
+              ''
+                [ -s "$patch" ] || { echo "stale companion produced no repair patch" >&2; exit 1; }
+                [ "$(grep '^diff --git' "$patch")" = "diff --git a/src/config_tommy.go b/work/config_tommy.go" ] \
+                  || { cat "$patch" >&2; exit 1; }
+                grep -q '^-// Code generated by tommy .* (0000000); DO NOT EDIT\.$' "$patch"
+                grep -q '^+// Code generated by tommy .* (${tommyCommit}); DO NOT EDIT\.$' "$patch"
+                cmp ${codegenGoNixRepairedSrc}/config_tommy.go ${codegenGoNixFresh}/config_tommy.go
+                touch $out
+              '';
+          codegen-go-nix-precommit =
+            pkgs.runCommandLocal "tommy-codegen-go-nix-precommit"
+              {
+                nativeBuildInputs = [
+                  pkgs.git
+                  codegenPrecommitNixStub
+                ];
+              }
+              ''
+                export HOME=$TMPDIR
+                cp -r --no-preserve=mode ${codegenGoNixStaleSrc} repo
+                cd repo
+                touch flake.nix # the tree root marker; the stub stands in for its eval
+                git init -q
+                git config user.email tommy@example.com
+                git config user.name tommy
+                git add -A
+                git commit -qm stale
+                echo '{}' > flake.lock
+                git add flake.lock
+                ${pkgs.lib.getExe codegenPrecommitEval.config.build.preCommit}
+                git diff --cached --name-only | grep -qx config_tommy.go \
+                  || { echo "the restamped companion was not staged" >&2; git status >&2; exit 1; }
+                git diff --quiet -- config_tommy.go \
+                  || { echo "the worktree companion differs from the staged one" >&2; exit 1; }
+                git show :config_tommy.go | cmp - ${codegenGoNixFresh}/config_tommy.go
+                touch $out
+              '';
         };
 
         # A conformist Nix module wiring both halves of the integration using
@@ -451,23 +662,61 @@
         # (version-matched to the consumer's go.mod), the generated code is
         # gofumpt-canonical — so enforcing drift, if a consumer wants it, belongs
         # in a go-available lane (`tommy generate` + `git diff`), not here. The
-        # REPAIR command regenerates, so codegen lands in `conformist --commit`.
+        # REPAIR command regenerates, so codegen lands in `conformist --commit`
+        # and, restaged, in the `--staged` pre-commit hook.
+        #
+        # A go.nix module (no go.mod) sets tommy.codegen.flakeAttr to the flake
+        # package holding its goNixCodegen `repair`; the repair command then
+        # builds that and applies its patch instead of running `tommy generate`
+        # in the checkout (tommy#143).
         conformistModule =
-          { lib, ... }:
+          { lib, config, ... }:
+          let
+            cfg = config.tommy.codegen;
+          in
           {
-            settings.formatter.tommy = {
+            options.tommy.codegen.flakeAttr = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              example = "tommy-codegen-repair";
+              description = ''
+                Flake attribute (resolved from the tree root, e.g. `packages.<system>.<name>`
+                via `.#<name>`) of a go.nix module's `tommy.lib.<system>.goNixCodegen`
+                repair. When set, the tommy-codegen repair builds it in nix and applies
+                its patch to the checkout; null runs `tommy generate` per file, which
+                needs a go.mod.
+              '';
+            };
+            config.settings.formatter.tommy = {
               command = lib.getExe tommyBin;
               options = [ "fmt" ];
               includes = [ "*.toml" ];
             };
-            settings.linter.tommy-codegen = {
+            config.settings.linter.tommy-codegen = {
               command = "true";
               "repair-command" = lib.getExe conformistTommyCodegen;
-              # `*.go` alone covers every depth: conformist compiles globs via
-              # gobwas/glob.Compile with no separator arg, so `*` matches across
-              # `/` (same single-pattern convention as conformist's own gofmt).
-              includes = [ "*.go" ];
+              "repair-options" = lib.optionals (cfg.flakeAttr != null) [
+                "--flake-attr"
+                cfg.flakeAttr
+              ];
+              # A trigger gate only (passes-files = false): the repair walks the
+              # whole tree whenever one of these is staged. `*.go` covers every
+              # depth (conformist compiles globs via gobwas/glob.Compile with no
+              # separator, so `*` crosses `/`). flake.lock is there because a
+              # tommy bump restamps every generated header (tommy#125) from a
+              # lock-only commit that stages no .go; go.nix because its go
+              # directive sets gofumpt's language version.
+              includes = [
+                "*.go"
+                "flake.lock"
+                "go.nix"
+              ];
               passes-files = false;
+              # stage what the repair writes, so the commit carries the regen:
+              # modified companions, brand-new ones, and removed ones
+              "restage-repair-outputs" = true;
+              "stage-new-outputs" = true;
+              "stage-deleted-outputs" = true;
             };
           };
 
@@ -504,6 +753,11 @@
         # conformist Nix module (per-system because it bakes this system's
         # tommyBin + driver). Consumers: `imports = [ tommy.conformistModule.${system} ];`.
         inherit conformistModule;
+
+        # goNixCodegen { module; command?; nativeBuildInputs?; exclude? } — the
+        # codegen check/repair pair for a go.nix module (tommy#143). Consumers:
+        # `tommy.lib.${system}.goNixCodegen { module = myapp; }`.
+        lib = { inherit goNixCodegen; };
 
         # Every bats lane is a check, so `nix flake check` (the merge-hook
         # `just validate`) runs the full matrix: each file_tag lane plus the
