@@ -57,7 +57,8 @@ enclosing go.mod; a go.nix module (igloo FDR 0008) runs it inside igloo's
 `passthru.codegenCheck`, which the `codegen-go-nix*` checks exercise against the
 fixture in `zz-tests_nix/testdata/codegen-go-nix` (see `tommy-generate(1)`
 GO.NIX MODULES). The flake's `lib.<system>.goNixCodegen` pairs that check with a
-pure `repair` (same derivation, diff written to `$out/patch`), which
+pure `repair` — igloo's `passthru.codegenPatch` (igloo#80), the check's own diff
+producer, writing to `$out/patch` instead of failing — which
 `conformist-tommy-codegen --flake-attr` builds and applies so a go.nix consumer's
 pre-commit hook restamps generated headers at commit (tommy#143;
 `tommy-generate(1)` REPAIR LANE). The `codegen-go-nix-{stale-detected,

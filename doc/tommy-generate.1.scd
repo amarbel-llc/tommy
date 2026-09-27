@@ -114,27 +114,40 @@ regenerates every file carrying a *//go:generate tommy generate* directive, so
 a *conformist* pre-commit hook keeps the generated files, header stamp
 included, current in every commit. That matters on a *tommy* bump: a lock-only
 commit restamps every generated header (see *OUTPUT*), and the hook's repair
-puts the restamp in that same commit.
+puts the restamp in that same commit. This is the supported repair lane for a
+**go.mod** repo (madder and the like).
 
 ```
 conformist-tommy-codegen [--check] [--flake-attr <attr>]
 ```
 
 Without *--flake-attr* it runs *tommy generate* per directive file (with
-*--check*, *tommy generate --check*), which needs a go.mod. With *--flake-attr*
-it never runs the generator in the checkout: it builds _.#<attr>_ (a
-*goNixCodegen* *repair*) and applies the patch with *git apply*. With *--check*
-it fails and prints the patch instead. *go*, *nix* and *git* come from PATH when
-present, else from pinned packages, so the lane also works in the bare
-environment of a git hook.
+*--check*, *tommy generate --check*), which needs a go.mod — the supported path
+above. With *--flake-attr* it never runs the generator in the checkout: it
+builds _.#<attr>_ (a *goNixCodegen* *repair*) and applies the patch with
+*git apply*. With *--check* it fails and prints the patch instead. *go*, *nix*
+and *git* come from PATH when present, else from pinned packages, so the lane
+also works in the bare environment of a git hook.
 
-*tommy.conformistModule.<system>* wires it as _[linter.tommy-codegen]_: a
-whole-tree repair (*passes-files* = false) triggered by a staged _\*.go_,
-_flake.lock_ or _go.nix_, whose outputs the _--staged_ hook restages
-(*restage-repair-outputs*, *stage-new-outputs*, *stage-deleted-outputs*).
+*tommy.conformistModule.<system>* wires *conformist-tommy-codegen* as
+_[linter.tommy-codegen]_: a whole-tree repair (*passes-files* = false) triggered
+by a staged _\*.go_, _flake.lock_ or _go.nix_, whose outputs the _--staged_ hook
+restages (*restage-repair-outputs*, *stage-new-outputs*, *stage-deleted-outputs*).
+Import it as is for the go.mod path above; a go.nix module additionally sets
+*tommy.codegen.flakeAttr* below.
 
-A go.nix module opts in by exposing the *repair* as a package (above) and
-naming it in its conformist module evaluation:
+*DEPRECATED (tommy#144):* the *--flake-attr* / *tommy.codegen.flakeAttr* route
+below, for a **go.nix** module (no go.mod), in favor of conformist's generic
+codegen-repair linter (conformist#124, in progress). That linter finds any
+*checks.<system>.<name>* carrying *passthru.codegenPatch* — igloo#80's
+*codegenCheck*/*codegenPatch* contract, which every *goNixCodegen.check* already
+carries — and reaches every go.nix repo through conformist's *eng* preset with
+no per-repo flake wiring. No godyn repo has adopted *--flake-attr* yet, so there
+is nothing to migrate off it; a new go.nix consumer should wait for the generic
+linter instead of wiring the option below.
+
+A go.nix module opts in to the deprecated route by exposing the *repair* as a
+package (above) and naming it in its conformist module evaluation:
 
 ```
 conformist.lib.evalModule pkgs {

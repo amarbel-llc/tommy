@@ -446,17 +446,13 @@
         # identically (tommy#143). `check` is the module's own
         # passthru.codegenCheck: `command` runs in the vendored module tree (go.mod
         # rendered from go.nix, offline) and any diff from src fails. `repair` is
-        # that same derivation with its build phase swapped: the command runs in
-        # the same tree, and instead of failing on the diff it writes it to
-        # $out/patch (`git apply -p2`, empty when current), so applying the patch
-        # makes `check` pass by construction. Pure and cached: the repair lane
-        # (conformist-tommy-codegen --flake-attr) builds it and applies the patch
-        # to the checkout, so the generator never runs outside nix.
-        #
-        # TODO(igloo#80): replace `repair` with module.passthru.codegenPatch. Until
-        # then it mirrors buildGoCheck/codegenCheck internals (the HOME setup, the
-        # vendor/go.mod/go.sum excludes, the -codegen-check pname), which must
-        # track igloo for "passes by construction" to hold.
+        # igloo's passthru.codegenPatch (igloo#80): the same check's tree and
+        # command, offline and cached, writing the diff to $out/patch (`git apply
+        # -p2`, empty when current) instead of failing — so applying the patch
+        # makes `check` pass by construction, and check/repair can never diverge
+        # (codegenCheck is itself defined as "codegenPatch is empty"). The repair
+        # lane (conformist-tommy-codegen --flake-attr) builds `repair` and applies
+        # the patch to the checkout, so the generator never runs outside nix.
         goNixCodegen =
           {
             module,
@@ -469,40 +465,10 @@
               inherit command exclude;
               nativeBuildInputs = [ tommyBin ] ++ nativeBuildInputs;
             };
-            # the tree minus what codegenCheck's diff ignores (basenames, any depth)
-            snapshotExcludes = pkgs.lib.concatMapStringsSep " " (e: "--exclude=${pkgs.lib.escapeShellArg e}") (
-              [
-                "vendor"
-                "go.mod"
-                "go.sum"
-              ]
-              ++ exclude
-            );
-            repair = check.overrideAttrs (old: {
-              pname = pkgs.lib.removeSuffix "-codegen-check" old.pname + "-tommy-codegen-repair";
-              nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.git ];
-              buildPhase = ''
-                runHook preBuild
-                export HOME="$TMPDIR/home"
-                mkdir -p "$HOME" "$out"
-                snapshot() { mkdir -p "$1"; tar -c ${snapshotExcludes} . | tar -x -C "$1"; }
-                snapshot "$TMPDIR/tommy-codegen/src"
-                ${command}
-                snapshot "$TMPDIR/tommy-codegen/work"
-                cd "$TMPDIR/tommy-codegen"
-                rc=0
-                git diff --no-index --binary src work > "$out/patch" || rc=$?
-                [ "$rc" -le 1 ] || { echo "tommy codegen repair: git diff failed ($rc)" >&2; exit "$rc"; }
-                runHook postBuild
-              '';
-              installPhase = ''
-                runHook preInstall
-                runHook postInstall
-              '';
-            });
           in
           {
-            inherit check repair;
+            inherit check;
+            repair = check.passthru.codegenPatch;
           };
 
         # A go.nix module (igloo FDR 0008) with no go.mod in its tree. The
