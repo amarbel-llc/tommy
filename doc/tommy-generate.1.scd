@@ -281,9 +281,12 @@ Strict decode does not check escape sequences or control characters inside
 strings, and does not catch an integer that overflows a narrower Go type
 (_int8_, _uint16_, ...). It rejects two things TOML allows or *Encode* writes:
 a date-time with a space between date and time, and an integer in a float
-field (_ratio = 1_), which is how *Encode* writes a whole-number float. A
-*TOMLUnmarshaler* field receives whatever value is present and decides for
-itself. A cross-package struct reports mismatches only once its own package
+field (_ratio = 1_), which is how *Encode* writes a whole-number float. It also
+rejects, as syntax errors, three valid spellings the parser itself misreads:
+_inf_ or _nan_ inside an inline table, a dotted key as the first key of an
+inline table (_{a.b = 1}_), and whitespace before the dot of a dotted key
+(_a .b = 1_). A *TOMLUnmarshaler* field receives whatever scalar or array is
+present and decides for itself; a table there is a type error. A cross-package struct reports mismatches only once its own package
 is regenerated with a *tommy* that has *DecodeTStrict*.
 
 The same checks are available without a generated decoder:

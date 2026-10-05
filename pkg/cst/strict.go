@@ -68,6 +68,10 @@ func ParseStrict(input []byte) (*Node, error) {
 // separators between array and inline-table elements; and the spelling of keys,
 // integers, floats and date-times. It does not check escape sequences or
 // control characters inside strings. Duplicate keys are Decompose's job.
+//
+// It judges the tree the parser built, so it also rejects the few valid
+// spellings the lexer misreads (#146): `inf`/`nan` inside an inline table, a
+// dotted key leading an inline table, and whitespace before a key's dot.
 func Validate(root *Node) error {
 	v := &validator{positions: newPositions(root)}
 	if err := v.statements(root.Children); err != nil {
@@ -492,8 +496,8 @@ func (v *Value) collectTypeErrors(path string, c *typeErrorCollector) {
 func (v *Value) checkType(path string, c *typeErrorCollector) {
 	switch {
 	case v.full:
-		if got := v.kindName(); !v.want.accepts(v) {
-			c.add(path, v, fmt.Sprintf("expected string, got %s", got))
+		if !v.want.accepts(v) {
+			c.add(path, v, fmt.Sprintf("expected string, got %s", v.kindName()))
 		}
 	case v.seen:
 		v.collectTypeErrors(path, c)
