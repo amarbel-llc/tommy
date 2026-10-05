@@ -47,6 +47,10 @@ type Value struct {
 	explicit bool // VTable: defined directly by a header (for #92 dup detection)
 	seen     bool // the decoder recognized this value's key (descend in Undecoded)
 	full     bool // this value AND its whole subtree are accounted for (leaf / map)
+
+	known bool     // a decoder claimed this value's key as a field (see Field)
+	want  leafWant // the value kind a kind-blind extractor expected (see TypeErrors)
+	root  *Node    // the document root, on the model root only (error positions)
 }
 
 // Field is one entry of a VTable.
@@ -147,7 +151,7 @@ func DecomposeBytes(data []byte) (*Value, error) {
 
 // Decompose builds the canonical value model from a parsed document root.
 func Decompose(root *Node) (*Value, error) {
-	t := &Value{Kind: VTable, explicit: true}
+	t := &Value{Kind: VTable, explicit: true, root: root}
 	for _, c := range root.Children {
 		switch c.Kind {
 		case NodeKeyValue:

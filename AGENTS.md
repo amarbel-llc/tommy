@@ -181,6 +181,9 @@ multiline string syntax
   marshal/unmarshal via `any` values
 - `encoding.TextMarshaler` / `TextUnmarshaler` --- Supported for fields and
   slices; round-trips through string representation
+- `Decode<Name>Strict` --- opt-in strict decode (`pkg/cst/strict.go`):
+  `cst.Validate` rejects malformed TOML and `Value.TypeErrors` mistyped values;
+  `Decode<Name>` stays lenient. See `tommy-generate(1)` STRICT DECODE.
 - `Validate() error` --- When a struct implements this method, generated
   `Decode`/`Encode` methods call it automatically. Decode validates after all
   fields are set; Encode validates before writing to the CST.

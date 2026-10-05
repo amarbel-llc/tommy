@@ -14,6 +14,13 @@ import "github.com/dave/jennifer/jen"
 // (its subtree is accounted for), a struct table is MarkSeen (entered, but
 // Undecoded still descends to surface an unknown inner field), a map field is
 // MarkConsumed (it absorbs every entry). cst.Value.Undecoded() walks the rest.
+//
+// The same walk leaves what the opt-in strict decode needs (cst.Value.TypeErrors)
+// without changing what is decoded: a field is looked up with tv.Field, which
+// claims its key, map entries are claimed with MarkEntriesKnown, and a leaf read
+// through the kind-blind ExtractString is MarkConsumedString/Text. A claimed key
+// the decoder then leaves unread, or a non-string consumed as one, is a type
+// mismatch; an unclaimed key is merely undecoded.
 
 // compModelBody decodes children against table tv. fv, when non-empty, is a
 // bool var set true whenever a child matches — used by the #55 flat-key fallback
@@ -49,7 +56,7 @@ func compModelNode(ctx jenCtx, g *jen.Group, c cdNode, tv *jen.Statement, fv str
 	}
 }
 
-// field emits `if v, ok := tv.Get(bk); ok && v.Kind == <kind> { [fv=true]; body(v) }`,
+// field emits `if v, ok := tv.Field(bk); ok && v.Kind == <kind> { [fv=true]; body(v) }`,
 // binding the matched value to a key-unique local. kind is "" to skip the Kind
 // check (used by leaves, which additionally guard VLeaf themselves).
 func compModelField(g *jen.Group, tv *jen.Statement, key TOMLKey, kind, fv string, body func(*jen.Group, *jen.Statement)) {
@@ -59,7 +66,7 @@ func compModelField(g *jen.Group, tv *jen.Statement, key TOMLKey, kind, fv strin
 		cond = jen.Id("_ok").Op("&&").Id(v).Dot("Kind").Op("==").Qual(cstPkg, kind)
 	}
 	g.If(
-		jen.List(jen.Id(v), jen.Id("_ok")).Op(":=").Add(tv.Clone()).Dot("Get").Call(jen.Lit(key.BareKey())),
+		jen.List(jen.Id(v), jen.Id("_ok")).Op(":=").Add(tv.Clone()).Dot("Field").Call(jen.Lit(key.BareKey())),
 		cond,
 	).BlockFunc(func(b *jen.Group) {
 		if fv != "" {
@@ -80,6 +87,9 @@ func compModelLeaf(ctx jenCtx, g *jen.Group, l cdLeaf, tv *jen.Statement, fv str
 		switch l.Kind {
 		case cdLeafPrim:
 			ei := cstExtract(l.TypeName)
+			if ei.fn == "ExtractString" {
+				mark = v.Clone().Dot("MarkConsumedString").Call()
+			}
 			var assign []jen.Code
 			switch {
 			case l.Pointer && ei.cast != "":
@@ -107,7 +117,7 @@ func compModelLeaf(ctx jenCtx, g *jen.Group, l cdLeaf, tv *jen.Statement, fv str
 		case cdLeafText:
 			b.If(jen.List(jen.Id("_x"), jen.Id("_xok")).Op(":=").Qual(cstPkg, "ExtractString").Call(node), jen.Id("_xok")).Block(
 				jen.If(jen.Err().Op(":=").Add(l.Tgt.Jen().Clone()).Dot("UnmarshalText").Call(jen.Index().Byte().Call(jen.Id("_x"))), jen.Err().Op("!=").Nil()).Block(ctx.retErr(bk+": %w", jen.Err())),
-				mark,
+				v.Clone().Dot("MarkConsumedText").Call(),
 			)
 		case cdLeafSlicePrim:
 			compModelSlicePrim(b, l, node, mark)
@@ -175,7 +185,7 @@ func compModelSlicePrim(b *jen.Group, l cdLeaf, node *jen.Statement, mark jen.Co
 func compModelInTable(ctx jenCtx, g *jen.Group, n cdInTable, tv *jen.Statement, fv string) {
 	v := "_v" + n.TKey.VarSuffix()
 	g.If(
-		jen.List(jen.Id(v), jen.Id("_ok")).Op(":=").Add(tv.Clone()).Dot("Get").Call(jen.Lit(n.TKey.BareKey())),
+		jen.List(jen.Id(v), jen.Id("_ok")).Op(":=").Add(tv.Clone()).Dot("Field").Call(jen.Lit(n.TKey.BareKey())),
 		jen.Id("_ok").Op("&&").Id(v).Dot("Kind").Op("==").Qual(cstPkg, "VTable"),
 	).BlockFunc(func(b *jen.Group) {
 		if fv != "" {
@@ -210,7 +220,7 @@ func flatLeafChildren(children []cdNode) []cdNode {
 func compModelNilGuard(ctx jenCtx, g *jen.Group, n cdNilGuard, tv *jen.Statement, fv string) {
 	v := "_v" + n.TKey.VarSuffix()
 	g.If(
-		jen.List(jen.Id(v), jen.Id("_ok")).Op(":=").Add(tv.Clone()).Dot("Get").Call(jen.Lit(n.TKey.BareKey())),
+		jen.List(jen.Id(v), jen.Id("_ok")).Op(":=").Add(tv.Clone()).Dot("Field").Call(jen.Lit(n.TKey.BareKey())),
 		jen.Id("_ok").Op("&&").Id(v).Dot("Kind").Op("==").Qual(cstPkg, "VTable"),
 	).BlockFunc(func(b *jen.Group) {
 		if fv != "" {
@@ -274,7 +284,7 @@ func compModelArrayTable(ctx jenCtx, g *jen.Group, n cdArrayTable, tv *jen.State
 func compModelEmptyArrayLeaf(g *jen.Group, tv *jen.Statement, key TOMLKey, fv string, tgt TargetPath, elem *jen.Statement, slicePtr bool) {
 	v := "_ea" + key.VarSuffix()
 	g.If(
-		jen.List(jen.Id(v), jen.Id("_eaok")).Op(":=").Add(tv.Clone()).Dot("Get").Call(jen.Lit(key.BareKey())),
+		jen.List(jen.Id(v), jen.Id("_eaok")).Op(":=").Add(tv.Clone()).Dot("Field").Call(jen.Lit(key.BareKey())),
 		jen.Id("_eaok").Op("&&").Id(v).Dot("IsEmptyArray").Call(),
 	).BlockFunc(func(b *jen.Group) {
 		if fv != "" {
@@ -293,12 +303,13 @@ func compModelEmptyArrayLeaf(g *jen.Group, tv *jen.Statement, key TOMLKey, fv st
 // leaf entry that extracts to the value type is consumed; any other entry stays
 // unconsumed (surfaced by #109).
 func compModelMapScalar(ctx jenCtx, g *jen.Group, n cdMapScalar, tv *jen.Statement, fv string) {
-	valType, extract := jen.String(), "ExtractString"
+	valType, extract, consume := jen.String(), "ExtractString", "MarkConsumedString"
 	if n.StringSlice {
-		valType, extract = jen.Index().String(), "ExtractStringSlice"
+		valType, extract, consume = jen.Index().String(), "ExtractStringSlice", "MarkConsumed"
 	}
 	compModelField(g, tv, n.TKey, "VTable", fv, func(b *jen.Group, v *jen.Statement) {
 		b.Add(v.Clone().Dot("MarkSeen").Call())
+		b.Add(v.Clone().Dot("MarkEntriesKnown").Call())
 		b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Add(valType.Clone()))
 		idx := "_i" + n.TKey.VarSuffix()
 		fv := "_f" + n.TKey.VarSuffix()
@@ -312,7 +323,7 @@ func compModelMapScalar(ctx jenCtx, g *jen.Group, n cdMapScalar, tv *jen.Stateme
 				}
 				body = append(body,
 					n.Tgt.Jen().Clone().Index(jen.Id(fv).Dot("Key")).Op("=").Id("_s"),
-					jen.Id(fv).Dot("Val").Dot("MarkConsumed").Call(),
+					jen.Id(fv).Dot("Val").Dot(consume).Call(),
 				)
 				ib.If(jen.List(jen.Id("_s"), jen.Id("_sok")).Op(":=").Qual(cstPkg, extract).Call(jen.Id(fv).Dot("Val").Dot("Leaf")), jen.Id("_sok")).Block(body...)
 			})
@@ -330,6 +341,7 @@ func compModelMapMap(ctx jenCtx, g *jen.Group, n cdMapMap, tv *jen.Statement, fv
 	}
 	compModelField(g, tv, n.TKey, "VTable", fv, func(b *jen.Group, v *jen.Statement) {
 		b.Add(v.Clone().Dot("MarkSeen").Call())
+		b.Add(v.Clone().Dot("MarkEntriesKnown").Call())
 		b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Add(innerType()))
 		oi := "_oi" + n.TKey.VarSuffix()
 		of := "_of" + n.TKey.VarSuffix()
@@ -337,6 +349,7 @@ func compModelMapMap(ctx jenCtx, g *jen.Group, n cdMapMap, tv *jen.Statement, fv
 			lb.Id(of).Op(":=").Op("&").Add(v.Clone()).Dot("Fields").Index(jen.Id(oi))
 			lb.If(jen.Id(of).Dot("Val").Dot("Kind").Op("==").Qual(cstPkg, "VTable")).BlockFunc(func(ib *jen.Group) {
 				ib.Add(jen.Id(of).Dot("Val").Dot("MarkSeen").Call())
+				ib.Add(jen.Id(of).Dot("Val").Dot("MarkEntriesKnown").Call())
 				ib.Id("_inner").Op(":=").Make(jen.Map(jen.String()).String())
 				ii := "_ii" + n.TKey.VarSuffix()
 				inf := "_if" + n.TKey.VarSuffix()
@@ -345,7 +358,7 @@ func compModelMapMap(ctx jenCtx, g *jen.Group, n cdMapMap, tv *jen.Statement, fv
 					jb.If(jen.Id(inf).Dot("Val").Dot("Kind").Op("==").Qual(cstPkg, "VLeaf")).Block(
 						jen.If(jen.List(jen.Id("_s"), jen.Id("_sok")).Op(":=").Qual(cstPkg, "ExtractString").Call(jen.Id(inf).Dot("Val").Dot("Leaf")), jen.Id("_sok")).Block(
 							jen.Id("_inner").Index(jen.Id(inf).Dot("Key")).Op("=").Id("_s"),
-							jen.Id(inf).Dot("Val").Dot("MarkConsumed").Call(),
+							jen.Id(inf).Dot("Val").Dot("MarkConsumedString").Call(),
 						),
 					)
 				})
@@ -363,6 +376,7 @@ func compModelMapMap(ctx jenCtx, g *jen.Group, n cdMapMap, tv *jen.Statement, fv
 func compModelMapStruct(ctx jenCtx, g *jen.Group, n cdMapStruct, tv *jen.Statement, fv string) {
 	compModelField(g, tv, n.TKey, "VTable", fv, func(b *jen.Group, v *jen.Statement) {
 		b.Add(v.Clone().Dot("MarkSeen").Call())
+		b.Add(v.Clone().Dot("MarkEntriesKnown").Call())
 		if n.SlicePtr {
 			b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Op("*").Id(n.TypeName))
 		} else {
@@ -438,6 +452,7 @@ func compModelDelMap(ctx jenCtx, g *jen.Group, n cdDelMap, tv *jen.Statement, fv
 	decFn := "Decode" + st + "Into"
 	compModelField(g, tv, n.TKey, "VTable", fv, func(b *jen.Group, v *jen.Statement) {
 		b.Add(v.Clone().Dot("MarkSeen").Call())
+		b.Add(v.Clone().Dot("MarkEntriesKnown").Call())
 		b.Add(n.Tgt.Jen().Clone()).Op("=").Make(jen.Map(jen.String()).Qual(n.ImportPath, st))
 		idx := n.MapVar + "i"
 		ev := n.MapVar + "e"

@@ -582,3 +582,61 @@ GOEOF
   assert_success
   assert_output --partial "PASS"
 }
+
+# Opt-in strict decode: DecodeXStrict rejects input that is not well-formed TOML
+# (with a line/column) and values whose TOML type does not match the Go field,
+# both of which the default DecodeX accepts. DecodeX itself must keep accepting
+# them, so committed lenient blobs stay decodable.
+function generate_strict_decode_rejects_malformed_and_mistyped { # @test
+  cd "$BATS_TEST_TMPDIR/proj" || exit
+  run go generate ./...
+  assert_success
+  run grep -c "func DecodeConfigStrict(" config_tommy.go
+  assert_output "1"
+
+  cat >strict_test.go <<'GOEOF'
+package batstest
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestStrictDecode(t *testing.T) {
+	unterminated := []byte("name = \"md\nport = [unterminated\n")
+	mistyped := []byte("name = 42\n")
+
+	for _, input := range [][]byte{unterminated, mistyped} {
+		if _, err := DecodeConfig(input); err != nil {
+			t.Fatalf("lenient DecodeConfig must keep accepting %q, got %v", input, err)
+		}
+	}
+	if _, err := DecodeConfigStrict(unterminated); err == nil || !strings.Contains(err.Error(), "line 1, column 8: unterminated string") {
+		t.Fatalf("unterminated: got %v", err)
+	}
+	if _, err := DecodeConfigStrict(mistyped); err == nil || !strings.Contains(err.Error(), `key "name": expected string, got integer`) {
+		t.Fatalf("mistyped: got %v", err)
+	}
+
+	input := "# header\nname = \"app\" # inline\nport = 8080\nenabled = true\n"
+	doc, err := DecodeConfigStrict([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := doc.Data(); d.Name != "app" || d.Port != 8080 || !d.Enabled {
+		t.Fatalf("data=%+v", d)
+	}
+	out, err := doc.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != input {
+		t.Fatalf("round-trip changed:\n%s", out)
+	}
+}
+GOEOF
+
+  run go test -v ./...
+  assert_success
+  assert_output --partial "PASS"
+}

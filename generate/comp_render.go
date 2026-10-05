@@ -615,9 +615,29 @@ func compEmitStruct(f *jen.File, si StructInfo) {
 func compEmitDecode(f *jen.File, si StructInfo, dt string) {
 	ctx := receiverJenCtx()
 	nodes := foldCompDecode(&si, compPos{tkey: StaticKey(""), tgt: ReceiverTarget("d", "data"), seq: new(int)}, true)
-	f.Func().Id("Decode"+si.Name).Params(jen.Id("input").Index().Byte()).Params(jen.Op("*").Id(dt), jen.Error()).BlockFunc(func(g *jen.Group) {
-		g.List(jen.Id("doc"), jen.Err()).Op(":=").Qual(docPkg, "Parse").Call(jen.Id("input"))
-		g.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err()))
+	// DecodeX and DecodeXStrict differ only in how they parse and in the type
+	// check the strict one runs afterwards; the decode itself is shared, so the
+	// default path produces exactly what it did before the strict one existed.
+	parsed := "decode" + si.Name + "Parsed"
+	f.Func().Id("Decode"+si.Name).Params(jen.Id("input").Index().Byte()).Params(jen.Op("*").Id(dt), jen.Error()).Block(
+		jen.List(jen.Id("doc"), jen.Err()).Op(":=").Qual(docPkg, "Parse").Call(jen.Id("input")),
+		jen.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err())),
+		jen.Return(jen.Id(parsed).Call(jen.Id("doc"))),
+	)
+	f.Comment("Decode" + si.Name + "Strict is Decode" + si.Name + " for input that must be exactly what it")
+	f.Comment("claims: it returns a *cst.SyntaxError when input is not well-formed TOML and")
+	f.Comment("*cst.TypeError values when a key's TOML type does not match its field, where")
+	f.Comment("Decode" + si.Name + " would decode leniently. Keys no field claims are not errors; they")
+	f.Comment("stay in Undecoded.")
+	f.Func().Id("Decode"+si.Name+"Strict").Params(jen.Id("input").Index().Byte()).Params(jen.Op("*").Id(dt), jen.Error()).Block(
+		jen.List(jen.Id("doc"), jen.Err()).Op(":=").Qual(docPkg, "ParseStrict").Call(jen.Id("input")),
+		jen.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err())),
+		jen.List(jen.Id("d"), jen.Err()).Op(":=").Id(parsed).Call(jen.Id("doc")),
+		jen.If(jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err())),
+		jen.If(jen.Err().Op(":=").Id("d").Dot("model").Dot("TypeErrors").Call(), jen.Err().Op("!=").Nil()).Block(jen.Return(jen.Nil(), jen.Err())),
+		jen.Return(jen.Id("d"), jen.Nil()),
+	)
+	f.Func().Id(parsed).Params(jen.Id("doc").Op("*").Qual(docPkg, "Document")).Params(jen.Op("*").Id(dt), jen.Error()).BlockFunc(func(g *jen.Group) {
 		// Normalize every TOML spelling to one value model; this also rejects
 		// duplicate keys in any spelling (ADR 2026-06-07, subsuming #110).
 		g.List(jen.Id("model"), jen.Err()).Op(":=").Qual(cstPkg, "Decompose").Call(jen.Id("doc").Dot("Root").Call())

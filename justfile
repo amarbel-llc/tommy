@@ -360,7 +360,20 @@ debug-offline-fails:
 #
 # run the godyn ./generate test binary verbose
 [group('debug')]
-debug-godyn-generate-verbose *flags:
+debug-godyn-generate-verbose *flags: (_debug-godyn-generate '^(--- (PASS|SKIP|FAIL)|PASS$|FAIL$)' flags)
+
+# Like debug-godyn-generate-verbose, but prints everything the test binary
+# writes, so a failing test's own message (and the output of the `go test` it
+# ran in its synthetic module) is visible.
+#
+# run the godyn ./generate test binary and print its full output
+[group('debug')]
+debug-godyn-generate-full *flags: (_debug-godyn-generate '' flags)
+
+# run the godyn ./generate test binary, keeping output lines matching filter
+[group('debug')]
+[private]
+_debug-godyn-generate filter *flags:
   #!/usr/bin/env bash
   set -euo pipefail
   system=$(nix eval --raw --impure --expr builtins.currentSystem)
@@ -379,7 +392,7 @@ debug-godyn-generate-verbose *flags:
   env PATH="$go/bin:$PATH" HOME="$work" GOPATH="$work/gopath" GOCACHE="$work/gocache" \
     GOMODCACHE="$work/modcache" GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off \
     GOTOOLCHAIN=local TOMMY_TEST_OFFLINE=1 \
-    "$bin" -test.v {{flags}} 2>&1 | grep -E '^(--- (PASS|SKIP|FAIL)|PASS$|FAIL$)'
+    "$bin" -test.v {{flags}} 2>&1 | grep -E '{{filter}}'
 
 # The tommy#143 repair lane end to end, outside the sandbox where the checks
 # can't reach: scaffolds a go.nix consumer (no go.mod) of THIS checkout in a

@@ -95,6 +95,7 @@ This produces a `config_tommy.go` file with:
 
 ``` go
 func DecodeConfig(input []byte) (*ConfigDocument, error)
+func DecodeConfigStrict(input []byte) (*ConfigDocument, error)
 func (d *ConfigDocument) Data() *Config
 func (d *ConfigDocument) Encode() ([]byte, error)
 func (d *ConfigDocument) Undecoded() []string
@@ -109,6 +110,12 @@ cfg.Port = 9090
 output, err := doc.Encode()
 // output preserves all comments and formatting from input
 ```
+
+`DecodeConfig` is lenient: it never fails on malformed TOML, and it skips or
+coerces a value of the wrong type. `DecodeConfigStrict` decodes the same way
+but returns a `*cst.SyntaxError` (with line and column) for input that is not
+well-formed TOML and `*cst.TypeError`s (naming the key) for values whose type
+does not match the field. See `tommy-generate(1)`, STRICT DECODE.
 
 ### Reflection-based Marshal
 

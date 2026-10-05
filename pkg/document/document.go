@@ -23,6 +23,17 @@ func Parse(input []byte) (*Document, error) {
 	return &Document{root: root}, nil
 }
 
+// ParseStrict is Parse for input that must be well-formed TOML: it returns a
+// *cst.SyntaxError (with line and column) where Parse would build a document
+// from malformed bytes. See cst.Validate for what it checks.
+func ParseStrict(input []byte) (*Document, error) {
+	root, err := cst.ParseStrict(input)
+	if err != nil {
+		return nil, err
+	}
+	return &Document{root: root}, nil
+}
+
 // ParseReader parses TOML from an io.Reader into a Document.
 func ParseReader(r io.Reader) (*Document, error) {
 	root, err := cst.ParseReader(r)

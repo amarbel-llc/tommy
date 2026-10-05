@@ -216,6 +216,10 @@ For each tagged struct *T*, the following package-level symbols are emitted:
 	Parse TOML input, populate a *T*, and return a handle that retains the
 	CST for round-trip editing.
 
+*DecodeTStrict(input []byte) (\*TDocument, error)*
+	*DecodeT* for input that must be exactly what it claims. See STRICT
+	DECODE.
+
 *(\*TDocument) Data() \*T*
 	Return a pointer to the decoded value.
 
@@ -248,6 +252,44 @@ If *T* implements *Validate() error*, both *DecodeT* and *(\*TDocument).Encode*
 call it automatically. *DecodeT* calls it after all fields are set; *Encode*
 calls it before writing to the CST. A non-nil error from *Validate* aborts
 the operation and is returned to the caller.
+
+# STRICT DECODE
+
+*DecodeT* is lenient: it builds a document from any bytes and skips or coerces
+a value it cannot place, so an unterminated string swallows the lines after it
+and _hooks = 42_ decodes into a string field as _"42"_. That behaviour is kept,
+so input written against it stays decodable. *DecodeTStrict* is the opt-in
+alternative. It decodes the same way and returns the same handle, but fails
+where *DecodeT* would guess:
+
+- Input that is not well-formed TOML returns a *\*cst.SyntaxError* carrying
+  *Line*, *Column* and *Msg*, printed as _line 1, column 18: unterminated
+  string_. It covers unterminated strings, arrays, inline tables and table
+  headers, a key-value missing its key, _=_ or value, two statements on one
+  line, missing separators in arrays and inline tables, and malformed keys,
+  integers, floats and date-times.
+- A value whose TOML type does not match its field returns *\*cst.TypeError*
+  values carrying *Key* (the dotted path *Undecoded* uses), *Line*, *Column*
+  and *Msg*, printed as _line 2, column 1: key "hooks": expected string, got
+  integer_. Every mismatch in the input is reported, joined with
+  *errors.Join*; *errors.As* finds the first.
+
+A key no field claims is not an error in either decoder; read *Undecoded* to
+reject those.
+
+Strict decode does not check escape sequences or control characters inside
+strings, and does not catch an integer that overflows a narrower Go type
+(_int8_, _uint16_, ...). It rejects two things TOML allows or *Encode* writes:
+a date-time with a space between date and time, and an integer in a float
+field (_ratio = 1_), which is how *Encode* writes a whole-number float. A
+*TOMLUnmarshaler* field receives whatever value is present and decides for
+itself. A cross-package struct reports mismatches only once its own package
+is regenerated with a *tommy* that has *DecodeTStrict*.
+
+The same checks are available without a generated decoder:
+*document.ParseStrict* and *cst.ParseStrict* parse and validate,
+*cst.Validate* validates a tree already parsed, and *(\*cst.Value).TypeErrors*
+reports mismatches on a model a decoder has walked.
 
 # STRUCT TAG SYNTAX
 
