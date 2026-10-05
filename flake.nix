@@ -483,7 +483,7 @@
           src:
           pkgs.buildGodynModule {
             pname = "tommy-codegen-go-nix";
-            version = "0.0.0";
+            version = "0.6.0";
             inherit src;
             manifest = src + "/go.nix";
             goFlakeInputOverrides."code.linenisgreat.com/tommy".src = go-pkgs;
