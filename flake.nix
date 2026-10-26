@@ -244,7 +244,7 @@
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-2VUHE0FE/062q5QHrgrSrpU3IEAMuANEn5nAQILPkeI=";
+          outputHash = "sha256-cuVIKfyToMehzhx/9iLuiC2Awg1Gy1DzBnyjNFtqLPk=";
         };
 
         # The ./generate suite builds tommy in -mod=mod, so its module root needs a

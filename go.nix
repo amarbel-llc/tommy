@@ -3,7 +3,7 @@
 # the escape hatch (godyn-go) or by hand.
 {
   flakeInputs = { };
-  go = "1.26";
+  go = "1.26.0";
   module = "code.linenisgreat.com/tommy";
   replace = { };
   require = {
@@ -13,21 +13,21 @@
       version = "v1.7.1";
     };
     "golang.org/x/mod" = {
-      go = "1.25.0";
-      hash = "sha256-ICEQxokHywOFInDPqoP+go9l1tZSz3roknF5SXPtNV4=";
+      go = "1.26.0";
+      hash = "sha256-jgjKlIzteE99u8/TbuZTk4cLAwDOVZePXaRwqEpYvPk=";
       indirect = true;
-      version = "v0.35.0";
+      version = "v0.42.0";
     };
     "golang.org/x/sync" = {
-      go = "1.25.0";
-      hash = "sha256-ybcjhCfK6lroUM0yswUvWooW8MOQZBXyiSqoxG6Uy0Y=";
+      go = "1.26.0";
+      hash = "sha256-gViyLpsZFBKTEUtK6Li3m6plz5J/VCAcpTLymQVRpj4=";
       indirect = true;
-      version = "v0.20.0";
+      version = "v0.24.0";
     };
     "golang.org/x/tools" = {
-      go = "1.25.0";
-      hash = "sha256-xuj5FLtSJsAojLLTLXtPdLAIFNTKoVFbDMuqRXmj2W4=";
-      version = "v0.44.0";
+      go = "1.26.0";
+      hash = "sha256-keFn6eH6Oa54T4r9msvMw1q4wqJ2yRadGTb/TbPvmXI=";
+      version = "v0.52.0";
     };
     "mvdan.cc/gofumpt" = {
       go = "1.25.0";
