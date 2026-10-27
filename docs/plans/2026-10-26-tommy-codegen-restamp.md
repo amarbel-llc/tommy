@@ -194,6 +194,10 @@ pushed anywhere.
 
 ## Conclusion (provisional)
 
+Decisive check still open: the cutting-garden step log of nikulin run
+`nikulin-20261026T201701Z` (still-catalpa was asked for the `codegen-repair`
+warn line).
+
 #143 is satisfied for godyn repos by conformist's generic lane (V), not by
 tommy's deprecated `--flake-attr` route (R). The 10-26 miss is not a tommy
 generator or patch defect (V). Most likely a hook-time failure that the
